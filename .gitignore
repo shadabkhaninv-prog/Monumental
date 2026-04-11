@@ -1,0 +1,6 @@
+__pycache__/
+output/
+*.pyc
+kite_token.txt
+~$*.docx
+~$*.xlsx
