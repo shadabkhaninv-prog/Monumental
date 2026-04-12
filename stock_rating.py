@@ -50,6 +50,7 @@ LOOKBACK_12M = 250
 LOOKBACK_6M = 125
 LOOKBACK_3M = 60
 TURNOVER_LOOKBACK = 42
+TURNOVER_LOOKBACK_SHORT = 21
 ATR_LOOKBACK = 21
 RS_SLOPE_LOOKBACK = 21
 SPIKE_LOOKBACK = 125
@@ -83,6 +84,9 @@ SECTOR_TOP30_POINTS = 2
 class WarningLog:
     symbol: str
     message: str
+    avg_turnover_21d: Optional[float] = None
+    avg_turnover_42d: Optional[float] = None
+    median_turnover_42d: Optional[float] = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -139,10 +143,10 @@ def locate_symbol_file(cutoff_date: date, explicit_path: Optional[str], symbols_
 
     expected_name = f"gmlist_{cutoff_date.strftime('%d%b%Y')}.txt"
     candidates = [
-        Path.cwd() / expected_name,
         Path.cwd() / symbols_dir / expected_name,
-        Path(__file__).resolve().parent / expected_name,
         Path(__file__).resolve().parent / symbols_dir / expected_name,
+        Path.cwd() / expected_name,
+        Path(__file__).resolve().parent / expected_name,
     ]
     for candidate in candidates:
         if candidate.exists():
@@ -322,8 +326,11 @@ def load_turnover_map(
     df["turnover"] = pd.to_numeric(df["CLOSE"], errors="coerce") * pd.to_numeric(df["VOLUME"], errors="coerce")
     turnover_map: Dict[str, Dict[str, float]] = {}
     for symbol, group in df.groupby("symbol"):
-        recent = group.sort_values("trade_date").tail(TURNOVER_LOOKBACK)
+        sorted_group = group.sort_values("trade_date")
+        recent = sorted_group.tail(TURNOVER_LOOKBACK)
+        recent_21d = sorted_group.tail(TURNOVER_LOOKBACK_SHORT)
         turnover_map[str(symbol).upper()] = {
+            "avg_turnover_21d": float(recent_21d["turnover"].mean()) / TURNOVER_CRORE_DIVISOR if not recent_21d.empty else math.nan,
             "avg_turnover_42d": float(recent["turnover"].mean()) / TURNOVER_CRORE_DIVISOR if not recent.empty else math.nan,
             "median_turnover_42d": float(recent["turnover"].median()) / TURNOVER_CRORE_DIVISOR if not recent.empty else math.nan,
         }
@@ -339,15 +346,28 @@ def filter_symbols_by_turnover(
     eligible: List[str] = []
     for symbol in symbols:
         turnover_info = turnover_map.get(symbol.upper())
+        avg_turnover_21d = turnover_info.get("avg_turnover_21d", math.nan) if turnover_info else math.nan
         median_turnover = turnover_info.get("median_turnover_42d", math.nan) if turnover_info else math.nan
+        avg_turnover = turnover_info.get("avg_turnover_42d", math.nan) if turnover_info else math.nan
         if pd.isna(median_turnover):
-            warnings.append(WarningLog(symbol, "Median turnover unavailable; excluded from rating universe."))
+            warnings.append(
+                WarningLog(
+                    symbol,
+                    "Median turnover unavailable; excluded from rating universe.",
+                    avg_turnover_21d=None if pd.isna(avg_turnover_21d) else float(avg_turnover_21d),
+                    avg_turnover_42d=None if pd.isna(avg_turnover) else float(avg_turnover),
+                    median_turnover_42d=None if pd.isna(median_turnover) else float(median_turnover),
+                )
+            )
             continue
         if float(median_turnover) < min_median_turnover_crores:
             warnings.append(
                 WarningLog(
                     symbol,
                     f"Median turnover {round(float(median_turnover), 2)} Cr below {min_median_turnover_crores:.2f} Cr; excluded from rating universe.",
+                    avg_turnover_21d=None if pd.isna(avg_turnover_21d) else float(avg_turnover_21d),
+                    avg_turnover_42d=None if pd.isna(avg_turnover) else float(avg_turnover),
+                    median_turnover_42d=float(median_turnover),
                 )
             )
             continue
@@ -551,6 +571,7 @@ def compute_stock_metrics(
     dma50 = history["close"].rolling(50, min_periods=1).mean()
     uptrend_stack = (ema8 > ema21) & (ema21 > dma50)
     uptrend_consistency_pct = float(uptrend_stack.tail(UPTREND_CONSISTENCY_LOOKBACK).mean()) if not uptrend_stack.empty else math.nan
+    days_below_50dma = int((history["close"].tail(LOOKBACK_3M) < dma50.tail(LOOKBACK_3M)).sum()) if not history.empty else 0
 
     spike_window = history.tail(SPIKE_LOOKBACK).copy()
     spike_window["prev_close"] = spike_window["close"].shift(1)
@@ -677,6 +698,7 @@ def compute_stock_metrics(
         "rs_line_slope_21d": rs_line_slope_21d,
         "atr_percent_21d": atr_percent,
         "uptrend_consistency_pct": uptrend_consistency_pct,
+        "daysbelow50dma": days_below_50dma,
         "spike_date": spike_date,
         "spike_volume": spike_volume,
         "spike_price_change_pct": spike_price_change_pct / 100.0 if not pd.isna(spike_price_change_pct) else math.nan,
@@ -732,6 +754,8 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
         "ret3_bottom10": bottom_n_threshold(work["return_3m"], 10),
         "rs12_top10": top_n_threshold(work["rs_12m"], 10),
         "rs12_top30": top_n_threshold(work["rs_12m"], 30),
+        "rs6_top10": top_n_threshold(work["rs_6m"], 10),
+        "rs6_top30": top_n_threshold(work["rs_6m"], 30),
         "rs3_top10": top_n_threshold(work["rs_3m"], 10),
         "rs3_top30": top_n_threshold(work["rs_3m"], 30),
         "atr_bottom30": bottom_n_threshold(work["atr_percent_21d"], 30),
@@ -820,15 +844,19 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
 
     top_rs12_10 = work["rs_12m"] >= thresholds["rs12_top10"]
     top_rs12_30 = work["rs_12m"] >= thresholds["rs12_top30"]
+    top_rs6_10 = work["rs_6m"] >= thresholds["rs6_top10"]
+    top_rs6_30 = work["rs_6m"] >= thresholds["rs6_top30"]
     top_rs3_10 = work["rs_3m"] >= thresholds["rs3_top10"]
     top_rs3_30 = work["rs_3m"] >= thresholds["rs3_top30"]
 
     work["score_rs_12m"] = np.select([top_rs12_10, top_rs12_30], [6, 3], default=0)
+    work["score_rs_6m"] = np.select([top_rs6_10, top_rs6_30], [4, 2], default=0)
     work["score_rs_3m"] = np.select([top_rs3_10, top_rs3_30], [4, 2], default=0)
     work["score_rs_line_high"] = np.where(work["rs_line_at_52w_high"], 2, 0)
     work["score_rs_slope_penalty"] = np.where(work["rs_line_slope_21d"] < 0, -2, 0)
     work["score_rs_total"] = (
         work["score_rs_12m"]
+        + work["score_rs_6m"]
         + work["score_rs_3m"]
         + work["score_rs_line_high"]
         + work["score_rs_slope_penalty"]
@@ -922,57 +950,77 @@ def round_or_blank(value: object, digits: int = 2) -> object:
     return value
 
 
+def score_or_blank(value: object) -> object:
+    if pd.isna(value):
+        return ""
+    if isinstance(value, (int, float, np.integer, np.floating)):
+        return int(round(float(value)))
+    return value
+
+
+def smart_num_fmt(decimals: int = 2) -> str:
+    return "#,##0" if decimals <= 0 else "#,##0." + ("#" * decimals)
+
+
 def force_close_excel_workbook(path: Path) -> None:
+    """
+    Deletes path.  If the file is locked by Excel (PermissionError):
+      1. Tries win32com to close just that workbook.
+      2. Falls back to PowerShell COM automation.
+      3. Retries the delete.
+      4. Hard-exits with a clear message if still locked.
+    """
+    fname = str(path)
     if not path.exists():
         return
-
     try:
-        path.unlink()
+        os.remove(fname)
+        print(f"  Deleted old file: {path.name}")
         return
     except PermissionError:
         pass
 
-    print(f"Workbook is open in Excel, attempting to close it: {path.name}")
-    closed = False
+    print(f"  File is open in Excel — attempting to close it: {path.name}")
 
+    # ── Attempt 1: win32com ───────────────────────────────────────
+    closed = False
     try:
         import win32com.client  # type: ignore
-
-        excel = win32com.client.GetActiveObject("Excel.Application")
-        for workbook in list(excel.Workbooks):
-            if os.path.normcase(str(workbook.FullName)) == os.path.normcase(str(path)):
-                workbook.Close(SaveChanges=False)
+        xl = win32com.client.GetActiveObject("Excel.Application")
+        for wb in list(xl.Workbooks):
+            if os.path.normcase(wb.FullName) == os.path.normcase(fname):
+                wb.Close(SaveChanges=False)
                 closed = True
-                print("Closed workbook via Excel COM")
+                print("  Closed workbook via Excel COM.")
                 break
     except Exception:
         pass
 
+    # ── Attempt 2: PowerShell COM fallback ────────────────────────
     if not closed:
         try:
-            escaped = str(path).replace("'", "''")
             ps = (
-                "$xl = [Runtime.InteropServices.Marshal]::GetActiveObject('Excel.Application'); "
-                f"$xl.Workbooks | Where-Object {{ $_.FullName -eq '{escaped}' }} | "
-                "ForEach-Object { $_.Close($false) }"
+                "$xl = [Runtime.InteropServices.Marshal]"
+                "::GetActiveObject('Excel.Application'); "
+                f"$xl.Workbooks | Where-Object {{ $_.FullName -eq '{fname}' }}"
+                " | ForEach-Object { $_.Close($false) }"
             )
-            subprocess.run(
-                ["powershell", "-Command", ps],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=False,
-            )
+            subprocess.run(["powershell", "-Command", ps],
+                           capture_output=True, timeout=10)
             closed = True
-            print("Closed workbook via PowerShell COM")
+            print("  Closed workbook via PowerShell.")
         except Exception:
             pass
 
+    # ── Retry delete ──────────────────────────────────────────────
     time.sleep(0.5)
     try:
-        path.unlink()
-    except PermissionError as exc:
-        raise SystemExit(f"Could not overwrite open workbook: {path}") from exc
+        os.remove(fname)
+        print(f"  Deleted old file: {path.name}")
+    except PermissionError:
+        print(f"\n  ERROR: Still cannot delete {fname}.")
+        print("  Please close Excel completely and re-run.")
+        sys.exit(1)
 
 
 def export_tradingview_dayone(scored: pd.DataFrame, output_dir: Path, cutoff_date: date) -> Path:
@@ -983,6 +1031,98 @@ def export_tradingview_dayone(scored: pd.DataFrame, output_dir: Path, cutoff_dat
     return out_path
 
 
+def robust_force_close_excel_workbook(path: Path) -> None:
+    fname = str(path)
+    if not path.exists():
+        return
+
+    try:
+        os.remove(fname)
+        print(f"  Deleted old file: {path.name}")
+        return
+    except PermissionError:
+        pass
+
+    print(f"  File is open in Excel - force closing it: {path.name}")
+    resolved_target = os.path.normcase(str(path.resolve()))
+
+    try:
+        import win32com.client  # type: ignore
+
+        xl = win32com.client.GetActiveObject("Excel.Application")
+        for wb in list(xl.Workbooks):
+            try:
+                wb_fullname = os.path.normcase(str(Path(str(wb.FullName)).resolve()))
+            except Exception:
+                wb_fullname = os.path.normcase(str(wb.FullName))
+            if wb_fullname == resolved_target:
+                wb.Close(SaveChanges=False)
+                print("  Closed workbook via Excel COM.")
+                break
+        try:
+            if xl.Workbooks.Count == 0:
+                xl.Quit()
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    try:
+        escaped = fname.replace("'", "''")
+        ps = (
+            f"$target = [System.IO.Path]::GetFullPath('{escaped}'); "
+            "$xl = [Runtime.InteropServices.Marshal]::GetActiveObject('Excel.Application'); "
+            "$matched = @($xl.Workbooks | Where-Object { "
+            "[System.IO.Path]::GetFullPath($_.FullName) -eq $target }); "
+            "$matched | ForEach-Object { $_.Close($false) }; "
+            "if ($xl.Workbooks.Count -eq 0) { $xl.Quit() }"
+        )
+        subprocess.run(
+            ["powershell", "-Command", ps],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        print("  Closed workbook via PowerShell.")
+    except Exception:
+        pass
+
+    for _ in range(6):
+        time.sleep(0.5)
+        try:
+            os.remove(fname)
+            print(f"  Deleted old file: {path.name}")
+            return
+        except PermissionError:
+            continue
+
+    print("  Workbook still locked - force closing Excel.")
+    try:
+        subprocess.run(
+            ["taskkill", "/F", "/IM", "EXCEL.EXE"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except Exception:
+        pass
+
+    for _ in range(8):
+        time.sleep(0.5)
+        try:
+            os.remove(fname)
+            print(f"  Deleted old file: {path.name}")
+            return
+        except PermissionError:
+            continue
+
+    print(f"\n  ERROR: Still cannot delete {fname}.")
+    print("  Please close Excel completely and re-run.")
+    sys.exit(1)
+
+
 def export_workbook(
     scored: pd.DataFrame,
     warnings: List[WarningLog],
@@ -990,60 +1130,303 @@ def export_workbook(
     cutoff_date: date,
     reset_date: date,
     symbol_file: Path,
-) -> Path:
+) -> Path:  # noqa: C901
+    # ── imports needed only here ──────────────────────────────────────
+    from openpyxl.styles import Border, Side
+    from openpyxl.formatting.rule import ColorScaleRule, DataBarRule
+
     output_dir.mkdir(parents=True, exist_ok=True)
     out_path = output_dir / f"stock_rating_{cutoff_date.strftime('%d%b%Y')}.xlsx"
-    force_close_excel_workbook(out_path)
+    robust_force_close_excel_workbook(out_path)
+
+    # ── palette ───────────────────────────────────────────────────────
+    T_FILL   = PatternFill("solid", fgColor="1F3864")   # title bar — deep navy
+    H_FILL   = PatternFill("solid", fgColor="2E4B8F")   # column header — cobalt
+    ALT_FILL = PatternFill("solid", fgColor="EBF3FB")   # alternating row — pale blue
+    WHT_FILL = PatternFill("solid", fgColor="FFFFFF")
+
+    # Score-band row fills + fonts  (fill, font-colour)
+    # All bands use white text on saturated backgrounds — maximum readability
+    SCORE_BAND = [
+        (28, PatternFill("solid", fgColor="C6E0B4"), "1B4332"),
+        (22, PatternFill("solid", fgColor="D9EAD3"), "1B4332"),
+        (14, PatternFill("solid", fgColor="FFF2CC"), "7F6000"),
+        ( 7, PatternFill("solid", fgColor="FCE4D6"), "9E480E"),
+        ( 0, PatternFill("solid", fgColor="F4CCCC"), "9C0006"),
+        (-99,PatternFill("solid", fgColor="F4CCCC"), "9C0006"),
+    ]
+    def score_band(score):
+        for threshold, fill, fc in SCORE_BAND:
+            if score >= threshold:
+                return fill, fc
+        return SCORE_BAND[-1][1], SCORE_BAND[-1][2]
+
+    # Section header fills — one per scoring group
+    SEC_FILLS = {
+        "id":       PatternFill("solid", fgColor="1F3864"),
+        "52w":      PatternFill("solid", fgColor="1A5276"),
+        "liq":      PatternFill("solid", fgColor="145A32"),
+        "perf":     PatternFill("solid", fgColor="784212"),
+        "rs":       PatternFill("solid", fgColor="6C3483"),
+        "trend":    PatternFill("solid", fgColor="0E6655"),
+        "spike":    PatternFill("solid", fgColor="7D6608"),
+        "gapup":    PatternFill("solid", fgColor="7D6608"),
+        "vol":      PatternFill("solid", fgColor="922B21"),
+        "sector":   PatternFill("solid", fgColor="2C3E50"),
+        "total":    PatternFill("solid", fgColor="1F3864"),
+    }
+    # Column header fills (lighter tints)
+    COL_FILLS = {
+        "id":       PatternFill("solid", fgColor="2E4B8F"),
+        "52w":      PatternFill("solid", fgColor="1F618D"),
+        "liq":      PatternFill("solid", fgColor="1E8449"),
+        "perf":     PatternFill("solid", fgColor="A04000"),
+        "rs":       PatternFill("solid", fgColor="884EA0"),
+        "trend":    PatternFill("solid", fgColor="117A65"),
+        "spike":    PatternFill("solid", fgColor="9A7D0A"),
+        "gapup":    PatternFill("solid", fgColor="9A7D0A"),
+        "vol":      PatternFill("solid", fgColor="B03A2E"),
+        "sector":   PatternFill("solid", fgColor="2C3E50"),
+        "total":    PatternFill("solid", fgColor="1F3864"),
+    }
+
+    POS_FILL  = PatternFill("solid", fgColor="D5F5E3")   # score cell — positive
+    NEG_FILL  = PatternFill("solid", fgColor="FADBD8")   # score cell — negative
+    ZERO_FILL = PatternFill("solid", fgColor="F4F6F7")   # score cell — zero
+    YES_FILL  = PatternFill("solid", fgColor="D5F5E3")
+    NO_FILL   = PatternFill("solid", fgColor="FADBD8")
+    GOLD_FILL = PatternFill("solid", fgColor="FFD700")
+    SILV_FILL = PatternFill("solid", fgColor="C0C0C0")
+    BRNZ_FILL = PatternFill("solid", fgColor="CD7F32")
+
+    thin  = Side(style="thin",   color="CCCCCC")
+    med   = Side(style="medium", color="888888")
+    BDR   = Border(left=thin, right=thin, top=thin, bottom=thin)
+    BDR_M = Border(left=med,  right=med,  top=med,  bottom=med)
+
+    def sc(cell, bold=False, italic=False, color="000000", fill=None,
+           align="center", size=11, wrap=False, border=BDR, num_fmt=None):
+        cell.font      = Font(bold=bold, italic=italic, color=color,
+                              name="Arial", size=size)
+        if fill:
+            cell.fill  = fill
+        cell.alignment = Alignment(horizontal=align, vertical="center",
+                                   wrap_text=wrap)
+        cell.border    = border
+        if num_fmt:
+            cell.number_format = num_fmt
+
+    def score_cell(cell, val, bold=True, size=10):
+        """Colour a numeric score cell green/red/grey and write value."""
+        cell.value = val
+        if isinstance(val, (int, float, np.integer, np.floating)):
+            f = POS_FILL if val > 0 else NEG_FILL if val < 0 else ZERO_FILL
+            c = "1F6B3A" if val > 0 else "8B0000" if val < 0 else "555555"
+        else:
+            f, c = ZERO_FILL, "555555"
+        sc(cell, bold=bold, color=c, fill=f, size=size)
+
+    def pct_fmt(v):
+        if pd.isna(v):
+            return ""
+        return round(float(v), 4)
+    def dt_fmt(v):  return date_or_blank(v)
+    def r2(v):      return round_or_blank(v, 2)
 
     wb = Workbook()
-    ws = wb.active
-    ws.title = "Ratings"
+    wb.remove(wb.active)   # sheets added in order below
 
-    title_fill = PatternFill("solid", fgColor="1F4E78")
-    header_fill = PatternFill("solid", fgColor="D9EAF7")
-    good_fill = PatternFill("solid", fgColor="E2F0D9")
-    bad_fill = PatternFill("solid", fgColor="FCE4D6")
-    outcome_fill = PatternFill("solid", fgColor="1F4E78")
-    liquidity_fill = PatternFill("solid", fgColor="CFE2F3")
-    high52_fill = PatternFill("solid", fgColor="D9EAD3")
-    perf_fill = PatternFill("solid", fgColor="FCE5CD")
-    rs_fill = PatternFill("solid", fgColor="EAD1DC")
-    spike_fill = PatternFill("solid", fgColor="FFF2CC")
-    vol_fill = PatternFill("solid", fgColor="F4CCCC")
-    sector_fill = PatternFill("solid", fgColor="D9D2E9")
+    # ══════════════════════════════════════════════════════════════════
+    #  SHEET 1 ── 🏆 DASHBOARD  (Top 20)
+    # ══════════════════════════════════════════════════════════════════
+    dash = wb.create_sheet("🏆 Dashboard")
+    top20 = scored.head(20).reset_index(drop=True)
+    ncols_d = 13
 
-    ws["A1"] = f"Stock Rating Report | cutoff={cutoff_date.isoformat()} | reset={reset_date.isoformat()} | symbols={symbol_file.name}"
-    ws["A1"].font = Font(bold=True, color="FFFFFF")
-    ws["A1"].fill = title_fill
+    dash.merge_cells(f"A1:{get_column_letter(ncols_d)}1")
+    dash["A1"] = (
+        f"NSE STOCK RATING  —  TOP 20 DASHBOARD   |   "
+        f"As of {cutoff_date.strftime('%d-%b-%Y')}   |   "
+        f"Reset: {reset_date.strftime('%d-%b-%Y')}   |   "
+        f"{len(scored)} stocks rated"
+    )
+    sc(dash["A1"], bold=True, color="FFFFFF", fill=T_FILL, size=13, align="center")
+    dash.row_dimensions[1].height = 28
 
-    columns = [
-        "rank",
-        "symbol",
-        "sector",
-        "composite_score",
-        "pre_sector_score",
-        "score_sector",
-        "score_new_listing",
-        "current_close",
-        "listing_date",
-        "listed_days",
-        "high_52w_close",
+    d_hdrs = [
+        "#", "Symbol", "Sector", "Score", "Rating",
+        f"Close\n{cutoff_date.strftime('%d-%b')}",
+        "Avg TO\n42D (Cr)", "Med TO\n42D (Cr)",
+        "Uptrend\nCon", "Spike\nScore", "Gap-Up\nScore",
+        "Sector\nScore", "Criteria Met",
+    ]
+    for ci, h in enumerate(d_hdrs, 1):
+        cell = dash.cell(row=2, column=ci, value=h)
+        sc(cell, bold=True, color="FFFFFF", fill=H_FILL, size=11, wrap=True)
+    dash.row_dimensions[2].height = 30
+
+    medal_fills = [GOLD_FILL, SILV_FILL, BRNZ_FILL]
+    cmap_keys = [
+        ("score_52w_total",          "52W High Proximity/Recency"),
+        ("score_liquidity",          "Liquidity"),
+        ("score_median_turnover",    "Median Turnover"),
+        ("score_performance_total",  "Performance (12M/6M/3M)"),
+        ("score_rs_total",           "Relative Strength"),
+        ("score_uptrend_consistency","Uptrend Consistency"),
+        ("score_spike_total",        "Volume Spike"),
+        ("score_gapup",              "Gap-Up"),
+        ("score_volatility",         "Low Volatility"),
+        ("score_sector",             "Sector Strength"),
+        ("score_new_listing",        "New Listing"),
+    ]
+    for ri, (_, row) in enumerate(top20.iterrows(), start=3):
+        rank  = ri - 2
+        score = score_or_blank(row["composite_score"])
+        s_fill, s_fc = score_band(row["composite_score"])
+        row_bg = medal_fills[rank - 1] if rank <= 3 else (
+            ALT_FILL if rank % 2 == 0 else WHT_FILL)
+
+        rating = row.get("rating", "")
+        met    = [lbl for key, lbl in cmap_keys if (row.get(key, 0) or 0) > 0]
+
+        vals = [
+            rank,
+            row["symbol"],
+            row.get("sector", ""),
+            score,
+            rating,
+            r2(row["current_close"]),
+            r2(row["avg_turnover_42d"]),
+            r2(row["median_turnover_42d"]),
+            round_or_blank(row["score_uptrend_consistency"]),
+            round_or_blank(row["score_spike_total"]),
+            round_or_blank(row["score_gapup"]),
+            round_or_blank(row["score_sector"]),
+            " | ".join(met) if met else "—",
+        ]
+        for ci, val in enumerate(vals, 1):
+            cell = dash.cell(row=ri, column=ci, value=val)
+            if ci == 4:    # Score
+                sc(cell, bold=True, color=s_fc, fill=s_fill, size=11, border=BDR_M)
+            elif ci == 5:  # Rating
+                sc(cell, bold=True, color=s_fc, fill=s_fill, size=11)
+            elif ci == 13: # Criteria Met
+                sc(cell, fill=row_bg, align="left", size=10, wrap=False)
+            elif ci in (2, 3):
+                sc(cell, fill=row_bg, align="left", size=11,
+                   bold=(ci == 2))
+            else:
+                sc(cell, fill=row_bg, size=11)
+                if ci == 6:
+                    cell.number_format = "#,##0.00"
+                elif ci in (7, 8):
+                    cell.number_format = "#,##0.0"
+        dash.row_dimensions[ri].height = 15
+
+    dash.freeze_panes = "D3"
+    dash.auto_filter.ref = f"A2:{get_column_letter(ncols_d)}{max(2, len(top20)+2)}"
+    d_col_w = [5, 18, 22, 7, 14, 9, 10, 10, 8, 7, 8, 7, 55]
+    for ci, w in enumerate(d_col_w, 1):
+        dash.column_dimensions[get_column_letter(ci)].width = w
+
+    # ══════════════════════════════════════════════════════════════════
+    #  SHEET 2 ── 📊 FULL RATINGS
+    # ══════════════════════════════════════════════════════════════════
+    ws = wb.create_sheet("📊 Full Ratings")
+
+    # Column spec:  (data_key,  display_name,  group,  width,  num_fmt)
+    COL_SPEC = [
+        # ── Identity
+        ("rank",                    "#",               "id",    4,  None),
+        ("symbol",                  "Symbol",          "id",   16,  None),
+        ("sector",                  "Sector",          "id",   22,  None),
+        ("composite_score",         "Total\nScore",    "total", 9,  "0"),
+        ("pre_sector_score",        "Pre-Sec\nScore",  "total", 9,  "0"),
+        # ── 52W
+        ("current_close",           "Close",           "52w",   9,  "#,##0.##"),
+        ("high_52w_close",          "52W High",        "52w",   9,  "#,##0.##"),
+        ("high_52w_date",           "52W High\nDate",  "52w",  11,  None),
+        ("pct_from_52w_high",       "% from\n52W Hi",  "52w",   8,  "0.0%"),
+        ("days_since_52w_high",     "Days\n52W Hi",    "52w",   7,  "0"),
+        ("score_52w_price",         "Sc\nProx",        "52w",   5,  "0"),
+        ("score_52w_recency",       "Sc\nRec",         "52w",   5,  "0"),
+        ("score_52w_bonus",         "Sc\nBonus",       "52w",   5,  "0"),
+        ("score_52w_total",         "52W\nTotal",      "52w",   6,  "0"),
+        # ── Liquidity
+        ("listing_date",            "Listed",          "liq",  11,  None),
+        ("listed_days",             "Listed\nDays",    "liq",   7,  "0"),
+        ("avg_turnover_42d",        "Avg TO\n42D(Cr)", "liq",  10,  "#,##0.0"),
+        ("median_turnover_42d",     "Med TO\n42D(Cr)", "liq",  10,  "#,##0.0"),
+        ("score_liquidity",         "Sc\nLiq",         "liq",   5,  "0"),
+        ("score_median_turnover",   "Sc\nTO",          "liq",   5,  "0"),
+        ("score_new_listing",       "Sc\nNew\nList",   "liq",   5,  "0"),
+        # ── Performance
+        ("return_12m",              "Ret\n12M",        "perf",  7,  "0.0%"),
+        ("return_6m",               "Ret\n6M",         "perf",  7,  "0.0%"),
+        ("return_3m",               "Ret\n3M",         "perf",  7,  "0.0%"),
+        ("reset_low",               "Reset\nLow",      "perf",  9,  "#,##0.##"),
+        ("reset_recovery",          "Reset\nRecov",    "perf",  8,  "0.0%"),
+        ("score_reset_recovery",    "Sc\nRecov",       "perf",  5,  "0"),
+        ("score_perf_12m",          "Sc\n12M",         "perf",  5,  "0"),
+        ("score_perf_6m",           "Sc\n6M",          "perf",  5,  "0"),
+        ("score_perf_3m",           "Sc\n3M",          "perf",  5,  "0"),
+        ("score_perf_6m_penalty",   "Pen\n6M",         "perf",  5,  "0"),
+        ("score_perf_3m_penalty",   "Pen\n3M",         "perf",  5,  "0"),
+        ("score_perf_bonus",        "Sc\nBonus",       "perf",  5,  "0"),
+        ("score_performance_total", "Perf\nTotal",     "perf",  6,  "0"),
+        # ── Relative Strength
+        ("rs_12m",                  "RS\n12M",         "rs",    7,  "0.0%"),
+        ("rs_6m",                   "RS\n6M",          "rs",    7,  "0.0%"),
+        ("rs_3m",                   "RS\n3M",          "rs",    7,  "0.0%"),
+        ("rs_line_at_52w_high",     "RS@\n52W Hi",     "rs",    7,  None),
+        ("rs_line_slope_21d",       "RS\nSlope",       "rs",    7,  "0.000"),
+        ("score_rs_12m",            "Sc\n12M",         "rs",    5,  "0"),
+        ("score_rs_6m",             "Sc\n6M",          "rs",    5,  "0"),
+        ("score_rs_3m",             "Sc\n3M",          "rs",    5,  "0"),
+        ("score_rs_line_high",      "Sc\nHi",          "rs",    5,  "0"),
+        ("score_rs_slope_penalty",  "Pen\nSlope",      "rs",    5,  "0"),
+        ("score_rs_total",          "RS\nTotal",       "rs",    6,  "0"),
+        # ── Uptrend
+        ("uptrend_consistency_pct", "Uptrnd\nCon%",    "trend", 9,  "0.0%"),
+        ("score_uptrend_consistency","Sc\nTrend",      "trend", 6,  "0"),
+        ("daysbelow50dma",          "Days<\n50DMA",    "trend", 7,  "0"),
+        # ── Volume Spike
+        ("spike_date",              "Spike\nDate",     "spike",11,  None),
+        ("spike_volume",            "Spike\nVol",      "spike",10,  "#,##0"),
+        ("spike_price_change_pct",  "Spike\nChg%",     "spike", 8,  "0.0%"),
+        ("spike_window_days",       "Spike\nWin",      "spike", 6,  "0"),
+        ("spike_label",             "Spike\nLabel",    "spike", 9,  None),
+        ("score_spike_base",        "Sc\nBase",        "spike", 5,  "0"),
+        ("score_spike_bonus",       "Sc\nBonus",       "spike", 5,  "0"),
+        ("score_spike_total",       "Spike\nTotal",    "spike", 6,  "0"),
+        # ── Gap-Up
+        ("gapup_date",              "GapUp\nDate",     "gapup",11,  None),
+        ("gapup_volume",            "GapUp\nVol",      "gapup",10,  "#,##0"),
+        ("gapup_pct",               "GapUp\n%",        "gapup", 8,  "0.0%"),
+        ("gapup_close_pct",         "GapUp\nClose%",   "gapup", 8,  "0.0%"),
+        ("score_gapup",             "Sc\nGapUp",       "gapup", 6,  "0"),
+        # ── Volatility
+        ("atr_percent_21d",         "ATR%\n21D",       "vol",   9,  "0.00"),
+        ("score_volatility",        "Sc\nATR",         "vol",   5,  "0"),
+        # ── Sector
+        ("sector_stock_count",      "Sec\n#Stk",       "sector",5,  "0"),
+        ("sector_top_quartile_count","Sec\nTop25",     "sector",6,  "0"),
+        ("sector_strength_ratio",   "Sec\nStr%",       "sector",9,  "0.0%"),
+        ("score_sector",            "Sc\nSect",        "sector",7,  "0"),
+    ]
+
+    # Keep the full dataset in the sheet, but open with a cleaner default view.
+    HIDDEN_KEYS = {
         "high_52w_date",
-        "pct_from_52w_high",
         "days_since_52w_high",
         "score_52w_price",
         "score_52w_recency",
         "score_52w_bonus",
-        "score_52w_total",
-        "avg_turnover_42d",
-        "median_turnover_42d",
+        "listing_date",
+        "listed_days",
         "score_liquidity",
         "score_median_turnover",
-        "return_12m",
-        "return_6m",
-        "return_3m",
         "reset_low",
-        "reset_recovery",
         "score_reset_recovery",
         "score_perf_12m",
         "score_perf_6m",
@@ -1051,387 +1434,666 @@ def export_workbook(
         "score_perf_6m_penalty",
         "score_perf_3m_penalty",
         "score_perf_bonus",
-        "score_performance_total",
-        "rs_12m",
-        "rs_6m",
-        "rs_3m",
         "rs_line_at_52w_high",
         "rs_line_slope_21d",
         "score_rs_12m",
         "score_rs_3m",
         "score_rs_line_high",
         "score_rs_slope_penalty",
-        "score_rs_total",
-        "uptrend_consistency_pct",
-        "score_uptrend_consistency",
         "spike_date",
         "spike_volume",
-        "spike_price_change_pct",
         "spike_window_days",
         "spike_label",
         "score_spike_base",
         "score_spike_bonus",
-        "score_spike_total",
         "gapup_date",
         "gapup_volume",
-        "gapup_pct",
-        "gapup_close_pct",
-        "score_gapup",
-        "atr_percent_21d",
         "score_volatility",
         "sector_stock_count",
         "sector_top_quartile_count",
-        "sector_strength_ratio",
-    ]
-    ws.merge_cells(f"A1:{get_column_letter(len(columns))}1")
+    }
 
-    ws.freeze_panes = "E2"
-    ws.auto_filter.ref = f"A1:{get_column_letter(len(columns))}{max(2, len(scored) + 1)}"
+    PCT_COLS  = {"pct_from_52w_high","return_12m","return_6m","return_3m",
+                 "reset_recovery","rs_12m","rs_6m","rs_3m",
+                 "uptrend_consistency_pct","spike_price_change_pct",
+                 "gapup_pct","gapup_close_pct","sector_strength_ratio"}
+    DATE_COLS = {"listing_date","high_52w_date","spike_date","gapup_date"}
+    SCORE_KEYS= {k for k, *_ in COL_SPEC if k.startswith("score_") or k.startswith("pre_")}
+    INT_COLS  = {"rank","listed_days","days_since_52w_high",
+                 "sector_stock_count","sector_top_quartile_count","spike_window_days",
+                 "daysbelow50dma"}
 
-    for col_idx, column in enumerate(columns, start=1):
-        cell = ws.cell(row=2, column=col_idx, value=column)
-        cell.font = Font(bold=True)
-        cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    ncols_r = len(COL_SPEC)
+    groups   = [g for _, _, g, _, _ in COL_SPEC]
 
-    for row_idx, (_, row) in enumerate(scored.iterrows(), start=3):
-        for col_idx, column in enumerate(columns, start=1):
-            value = row[column]
-            if column in {
-                "pct_from_52w_high",
-                "return_12m",
-                "return_6m",
-                "return_3m",
-                "reset_recovery",
-                "rs_12m",
-                "rs_6m",
-                "rs_3m",
-                "uptrend_consistency_pct",
-                "spike_price_change_pct",
-                "gapup_pct",
-                "gapup_close_pct",
-                "sector_strength_ratio",
-            }:
-                value = percent_or_blank(value)
-            elif column in {"listing_date", "high_52w_date", "reset_date_used", "spike_date", "gapup_date"}:
-                value = date_or_blank(value)
-            elif isinstance(value, (int, float, np.integer, np.floating)) and column not in {"rank", "listed_days", "days_since_52w_high", "sector_stock_count", "sector_top_quartile_count"}:
-                value = round_or_blank(value)
-            ws.cell(row=row_idx, column=col_idx, value=value)
+    # ── Row 1: title ──────────────────────────────────────────────────
+    ws.merge_cells(f"A1:{get_column_letter(ncols_r)}1")
+    ws["A1"] = (
+        f"NSE STOCK TECHNICAL RATING  —  Full Data   |   "
+        f"As of {cutoff_date.strftime('%d-%b-%Y')}   |   "
+        f"Reset: {reset_date.strftime('%d-%b-%Y')}   |   "
+        f"Source: {symbol_file.name}   |   {len(scored)} stocks"
+    )
+    sc(ws["A1"], bold=True, color="FFFFFF", fill=T_FILL, size=12, align="center")
+    ws.row_dimensions[1].height = 26
 
-    for cell in ws["A"][1:]:
-        cell.alignment = Alignment(horizontal="center")
+    # ── Row 2: section header groups ─────────────────────────────────
+    GROUP_LABELS = {
+        "id":    "IDENTITY & SCORE",
+        "total": "COMPOSITE",
+        "52w":   "52-WEEK HIGH",
+        "liq":   "LIQUIDITY & TURNOVER",
+        "perf":  "PERFORMANCE",
+        "rs":    "RELATIVE STRENGTH",
+        "trend": "UPTREND",
+        "spike": "VOLUME SPIKE",
+        "gapup": "GAP-UP",
+        "vol":   "VOLATILITY (ATR)",
+        "sector":"SECTOR",
+    }
+    prev_group = None
+    sec_start  = 1
+    for ci, g in enumerate(groups, 1):
+        if g != prev_group:
+            if prev_group is not None:
+                ws.merge_cells(start_row=2, start_column=sec_start,
+                               end_row=2,   end_column=ci - 1)
+            sec_start  = ci
+            prev_group = g
+    ws.merge_cells(start_row=2, start_column=sec_start,
+                   end_row=2,   end_column=ncols_r)
 
-    for col_cells in ws.columns:
-        length = max(len(str(c.value)) if c.value is not None else 0 for c in col_cells)
-        ws.column_dimensions[get_column_letter(col_cells[0].column)].width = min(max(length + 2, 12), 24)
+    ci_cursor = 1
+    prev_group = None
+    for ci, (_, _, g, _, _) in enumerate(COL_SPEC, 1):
+        if g != prev_group:
+            cell = ws.cell(row=2, column=ci, value=GROUP_LABELS.get(g, g.upper()))
+            sc(cell, bold=True, color="FFFFFF", fill=SEC_FILLS.get(g, H_FILL),
+               size=11, align="center")
+            prev_group = g
+    ws.row_dimensions[2].height = 18
+    ws.row_dimensions[2].hidden = True
 
-    for row_idx in range(3, ws.max_row + 1):
-        total_cell = ws.cell(row=row_idx, column=columns.index("composite_score") + 1)
-        total_cell.fill = good_fill if (total_cell.value or 0) >= 0 else bad_fill
-        total_cell.font = Font(bold=True)
-        ws.cell(row=row_idx, column=1).font = Font(bold=True)
-        ws.cell(row=row_idx, column=2).font = Font(bold=True)
-        ws.cell(row=row_idx, column=4).font = Font(bold=True)
+    # ── Row 3: column headers ─────────────────────────────────────────
+    for ci, (_, hdr, grp, _, _) in enumerate(COL_SPEC, 1):
+        cell = ws.cell(row=3, column=ci, value=hdr)
+        sc(cell, bold=True, color="FFFFFF",
+           fill=COL_FILLS.get(grp, H_FILL), size=10, wrap=True)
+    ws.row_dimensions[3].height = 40
 
-    dashboard = wb.create_sheet("Dashboard", 0)
-    dashboard["A1"] = f"Top 20 Dashboard | cutoff={cutoff_date.isoformat()}"
-    dashboard["A1"].font = Font(bold=True, color="FFFFFF")
-    dashboard["A1"].fill = title_fill
-    dashboard.merge_cells("A1:L1")
-    dashboard_columns = [
-        "rank",
-        "symbol",
-        "sector",
-        "composite_score",
-        "score_new_listing",
-        "current_close",
-        "avg_turnover_42d",
-        "median_turnover_42d",
-        "score_uptrend_consistency",
-        "score_spike_total",
-        "score_gapup",
-        "score_sector",
-    ]
-    for idx, column in enumerate(dashboard_columns, start=1):
-        cell = dashboard.cell(row=2, column=idx, value=column)
-        cell.font = Font(bold=True)
-        cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center", vertical="center")
-    top20 = scored.head(20)
-    for row_idx, (_, row) in enumerate(top20.iterrows(), start=3):
-        for col_idx, column in enumerate(dashboard_columns, start=1):
-            value = row[column]
-            if isinstance(value, (int, float, np.integer, np.floating)) and column not in {"rank"}:
-                value = round_or_blank(value)
-            dashboard.cell(row=row_idx, column=col_idx, value=value)
-        score_cell = dashboard.cell(row=row_idx, column=4)
-        score_cell.font = Font(bold=True)
-        score_cell.fill = good_fill if (score_cell.value or 0) >= 20 else header_fill if (score_cell.value or 0) >= 10 else bad_fill
-    dashboard.freeze_panes = "D3"
-    dashboard.auto_filter.ref = f"A2:L{max(2, len(top20) + 2)}"
-    for col_cells in dashboard.columns:
-        length = max(len(str(c.value)) if c.value is not None else 0 for c in col_cells)
-        dashboard.column_dimensions[get_column_letter(col_cells[0].column)].width = min(max(length + 2, 12), 24)
+    # ── Data rows ────────────────────────────────────────────────────
+    for ri, (_, row) in enumerate(scored.iterrows(), start=4):
+        s_fill, s_fc = score_band(row["composite_score"])
+        afill = ALT_FILL if (ri % 2 == 0) else WHT_FILL
 
-    scorecard = wb.create_sheet("Scorecard")
-    scorecard["A1"] = f"Scorecard | cutoff={cutoff_date.isoformat()}"
-    scorecard["A1"].font = Font(bold=True, color="FFFFFF")
-    scorecard["A1"].fill = title_fill
-    scorecard.merge_cells("A1:Q1")
-    scorecard_columns = [
-        "rank",
-        "symbol",
-        "sector",
-        "score_new_listing",
-        "score_52w_total",
-        "score_performance_total",
-        "score_reset_recovery",
-        "score_perf_6m_penalty",
-        "score_perf_3m_penalty",
-        "score_rs_total",
-        "score_uptrend_consistency",
-        "score_spike_total",
-        "score_gapup",
-        "score_volatility",
-        "score_liquidity",
-        "score_sector",
-        "composite_score",
-    ]
-    for idx, column in enumerate(scorecard_columns, start=1):
-        cell = scorecard.cell(row=2, column=idx, value=column)
-        cell.font = Font(bold=True)
-        cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center", vertical="center")
-    for row_idx, (_, row) in enumerate(scored.iterrows(), start=3):
-        for col_idx, column in enumerate(scorecard_columns, start=1):
-            value = row[column]
-            if isinstance(value, (int, float, np.integer, np.floating)) and column != "rank":
-                value = round_or_blank(value)
-            scorecard.cell(row=row_idx, column=col_idx, value=value)
-        scorecard.cell(row=row_idx, column=2).font = Font(bold=True)
-        scorecard.cell(row=row_idx, column=17).font = Font(bold=True)
-    scorecard.freeze_panes = "D3"
-    scorecard.auto_filter.ref = f"A2:Q{max(2, len(scored) + 2)}"
-    for col_cells in scorecard.columns:
-        length = max(len(str(c.value)) if c.value is not None else 0 for c in col_cells)
-        scorecard.column_dimensions[get_column_letter(col_cells[0].column)].width = min(max(length + 2, 12), 24)
+        for ci, (key, _, grp, _, nfmt) in enumerate(COL_SPEC, 1):
+            raw = row.get(key)
+            if key in PCT_COLS:
+                val = pct_fmt(raw)
+            elif key in DATE_COLS:
+                val = dt_fmt(raw)
+            elif key in INT_COLS:
+                val = int(raw) if (raw is not None and not (isinstance(raw, float) and math.isnan(raw))) else ""
+            elif isinstance(raw, (float, np.floating)) and not math.isnan(raw):
+                val = round(float(raw), 4)
+            else:
+                val = raw
 
-    summary = wb.create_sheet("Summary")
-    summary_rows = [
-        ("Metric", "Value"),
-        ("Cutoff Date", cutoff_date.isoformat()),
-        ("Reset Date", reset_date.isoformat()),
-        ("Scoring Window (12M / 52W)", "250 trading candles including cutoff"),
-        ("Scoring Window (6M)", "125 trading candles including cutoff"),
-        ("Scoring Window (3M)", "60 trading candles including cutoff"),
-        ("Turnover Unit", "Crores"),
-        ("Minimum Median Turnover Filter", f"{MIN_MEDIAN_TURNOVER_CRORES:.2f}"),
-        ("Sector Eligibility", "Sector must contain more than 1 stock to qualify for top-sector scoring"),
-        ("52W High Basis", "Daily high, not close"),
-        ("Symbols Rated", int(len(scored))),
-        ("Top Score", round_or_blank(scored["composite_score"].max()) if not scored.empty else ""),
-        ("Bottom Score", round_or_blank(scored["composite_score"].min()) if not scored.empty else ""),
-        ("Liquidity Bottom 30 Threshold", round_or_blank(scored["turnover_bottom30"].iloc[0]) if not scored.empty else ""),
-        ("ATR% Bottom 30 Threshold", round_or_blank(scored["atr_bottom30"].iloc[0]) if not scored.empty else ""),
-        ("Index Return 12M", percent_or_blank(scored["index_return_12m"].iloc[0]) if not scored.empty else ""),
-        ("Index Return 6M", percent_or_blank(scored["index_return_6m"].iloc[0]) if not scored.empty else ""),
-        ("Index Return 3M", percent_or_blank(scored["index_return_3m"].iloc[0]) if not scored.empty else ""),
-        ("12M Top 10 Threshold", percent_or_blank(scored["ret12_top10"].iloc[0]) if not scored.empty else ""),
-        ("12M Top 20 Threshold", percent_or_blank(scored["ret12_top20"].iloc[0]) if not scored.empty else ""),
-        ("12M Top 30 Threshold", percent_or_blank(scored["ret12_top30"].iloc[0]) if not scored.empty else ""),
-        ("6M Top 10 Threshold", percent_or_blank(scored["ret6_top10"].iloc[0]) if not scored.empty else ""),
-        ("6M Top 20 Threshold", percent_or_blank(scored["ret6_top20"].iloc[0]) if not scored.empty else ""),
-        ("6M Top 30 Threshold", percent_or_blank(scored["ret6_top30"].iloc[0]) if not scored.empty else ""),
-        ("3M Top 10 Threshold", percent_or_blank(scored["ret3_top10"].iloc[0]) if not scored.empty else ""),
-        ("3M Top 20 Threshold", percent_or_blank(scored["ret3_top20"].iloc[0]) if not scored.empty else ""),
-        ("3M Top 30 Threshold", percent_or_blank(scored["ret3_top30"].iloc[0]) if not scored.empty else ""),
-        ("RS 12M Top 10 Threshold", percent_or_blank(scored["rs12_top10"].iloc[0]) if not scored.empty else ""),
-        ("RS 12M Top 30 Threshold", percent_or_blank(scored["rs12_top30"].iloc[0]) if not scored.empty else ""),
-        ("RS 3M Top 10 Threshold", percent_or_blank(scored["rs3_top10"].iloc[0]) if not scored.empty else ""),
-        ("RS 3M Top 30 Threshold", percent_or_blank(scored["rs3_top30"].iloc[0]) if not scored.empty else ""),
-        ("Uptrend Consistency Top 20 Threshold", percent_or_blank(scored["uptrend_consistency_top20"].iloc[0]) if not scored.empty else ""),
-        ("Pre-Sector Top Quartile Threshold", round_or_blank(scored["top_quartile_score_threshold"].iloc[0]) if not scored.empty else ""),
-        ("Sector Strength Top 10 Threshold", round_or_blank(scored["sector_top10_threshold"].iloc[0]) if not scored.empty else ""),
-        ("Sector Strength Top 30 Threshold", round_or_blank(scored["sector_top30_threshold"].iloc[0]) if not scored.empty else ""),
-        ("Sector Scoring Assumption", "Top 10% sectors by top-quartile concentration = +4; top 30% = +2"),
-    ]
-    for row_idx, row in enumerate(summary_rows, start=1):
-        summary.append(row)
-        if row_idx == 1:
-            for cell in summary[row_idx]:
-                cell.font = Font(bold=True)
-                cell.fill = header_fill
-    summary.auto_filter.ref = f"A1:B{len(summary_rows)}"
-    summary.column_dimensions["A"].width = 36
-    summary.column_dimensions["B"].width = 40
+            cell = ws.cell(row=ri, column=ci, value=val)
 
-    warning_ws = wb.create_sheet("Warnings")
-    warning_ws.append(["Symbol", "Message"])
-    warning_ws["A1"].font = Font(bold=True)
-    warning_ws["B1"].font = Font(bold=True)
-    warning_ws["A1"].fill = header_fill
-    warning_ws["B1"].fill = header_fill
-    for item in warnings:
-        warning_ws.append([item.symbol, item.message])
-    warning_ws.auto_filter.ref = f"A1:B{max(1, len(warnings) + 1)}"
-    warning_ws.column_dimensions["A"].width = 16
-    warning_ws.column_dimensions["B"].width = 90
+            if key == "composite_score":
+                sc(cell, bold=True, color=s_fc, fill=s_fill, size=11, border=BDR_M)
+                if nfmt: cell.number_format = nfmt
+            elif key in SCORE_KEYS:
+                score_cell(cell, val, size=10)
+                if nfmt: cell.number_format = nfmt
+            elif key == "symbol":
+                sc(cell, bold=True, fill=afill, align="left", size=11)
+            elif key == "sector":
+                sc(cell, fill=afill, align="left", size=10)
+            elif key == "rank":
+                sc(cell, bold=True, fill=s_fill, color=s_fc, size=11)
+            else:
+                sc(cell, fill=afill, size=10)
+                if nfmt: cell.number_format = nfmt
 
-    sector_ws = wb.create_sheet("Sector Summary")
-    sector_columns = [
-        "sector",
-        "sector_stock_count",
-        "sector_top_quartile_count",
-        "sector_strength_ratio",
-        "score_sector",
-        "best_symbol",
-        "best_composite_score",
-        "avg_composite_score",
-        "count_above_20_score",
-        "count_top_20_names",
-        "median_sector_score",
-    ]
-    sector_ws.append(sector_columns)
-    for cell in sector_ws[1]:
-        cell.font = Font(bold=True)
-        cell.fill = header_fill
+        ws.row_dimensions[ri].height = 16
 
-    sector_summary = (
-        scored.sort_values(["sector", "composite_score", "symbol"], ascending=[True, False, True])
-        .groupby("sector", as_index=False)
-        .agg(
-            sector_stock_count=("sector_stock_count", "max"),
-            sector_top_quartile_count=("sector_top_quartile_count", "max"),
-            sector_strength_ratio=("sector_strength_ratio", "max"),
-            score_sector=("score_sector", "max"),
-            best_symbol=("symbol", "first"),
-            best_composite_score=("composite_score", "max"),
-            avg_composite_score=("composite_score", "mean"),
-            count_above_20_score=("composite_score", lambda s: int((s >= 20).sum())),
-            count_top_20_names=("rank", lambda s: int((s <= 20).sum())),
-            median_sector_score=("composite_score", "median"),
+    # ── Column widths ─────────────────────────────────────────────────
+    for ci, (key, _, _, w, _) in enumerate(COL_SPEC, 1):
+        ws.column_dimensions[get_column_letter(ci)].width = w
+        if key in HIDDEN_KEYS:
+            ws.column_dimensions[get_column_letter(ci)].hidden = True
+
+    ws.freeze_panes = "D4"
+    ws.auto_filter.ref = f"A3:{get_column_letter(ncols_r)}{max(3, len(scored)+3)}"
+
+    # ── Color scale on composite_score column ─────────────────────────
+    sc_col = get_column_letter(4)
+    ws.conditional_formatting.add(
+        f"{sc_col}4:{sc_col}{len(scored)+3}",
+        ColorScaleRule(
+            start_type="min", start_color="F1948A",
+            mid_type="num",   mid_value=14, mid_color="FAD7A0",
+            end_type="max",   end_color="82E0AA",
         )
-        .sort_values(["score_sector", "sector_strength_ratio", "avg_composite_score", "sector"], ascending=[False, False, False, True])
     )
 
-    for _, row in sector_summary.iterrows():
-        sector_ws.append(
-            [
-                row["sector"],
-                int(row["sector_stock_count"]),
-                int(row["sector_top_quartile_count"]),
-                round_or_blank(float(row["sector_strength_ratio"]) * 100.0),
-                round_or_blank(row["score_sector"]),
-                row["best_symbol"],
-                round_or_blank(row["best_composite_score"]),
-                round_or_blank(row["avg_composite_score"]),
-                int(row["count_above_20_score"]),
-                int(row["count_top_20_names"]),
-                round_or_blank(row["median_sector_score"]),
-            ]
+    # ══════════════════════════════════════════════════════════════════
+    #  SHEET 3 ── 🎯 SCORECARD
+    # ══════════════════════════════════════════════════════════════════
+    sc_ws = wb.create_sheet("🎯 Scorecard")
+    SC_COLS = [
+        ("rank",                    "#",              4),
+        ("symbol",                  "Symbol",        16),
+        ("sector",                  "Sector",        20),
+        ("score_new_listing",       "New\nList",      8),
+        ("score_52w_total",         "52W\nScore",     8),
+        ("score_performance_total", "Perf\nTotal",    9),
+        ("score_reset_recovery",    "Reset\nScore",   8),
+        ("score_perf_6m_penalty",   "6M\nPen",        7),
+        ("score_perf_3m_penalty",   "3M\nPen",        7),
+        ("score_rs_total",          "RS\nTotal",      8),
+        ("score_rs_6m",             "RS\n6M",         7),
+        ("score_uptrend_consistency","Trend\nScore",  8),
+        ("score_spike_total",       "Spike",          7),
+        ("score_gapup",             "GapUp",          7),
+        ("score_volatility",        "ATR\nPen",       7),
+        ("score_liquidity",         "Liquidity",      8),
+        ("score_median_turnover",   "Median\nTO",     8),
+        ("score_sector",            "Sector",         7),
+        ("composite_score",         "TOTAL\nSCORE",  10),
+    ]
+    ncols_sc = len(SC_COLS)
+
+    sc_ws.merge_cells(f"A1:{get_column_letter(ncols_sc)}1")
+    sc_ws["A1"] = (
+        f"SCORE BREAKDOWN — ALL COMPONENTS   |   "
+        f"As of {cutoff_date.strftime('%d-%b-%Y')}   |   {len(scored)} stocks"
+    )
+    sc(sc_ws["A1"], bold=True, color="FFFFFF", fill=T_FILL, size=12, align="center")
+    sc_ws.row_dimensions[1].height = 26
+
+    for ci, (_, hdr, _) in enumerate(SC_COLS, 1):
+        cell = sc_ws.cell(row=2, column=ci, value=hdr)
+        sc(cell, bold=True, color="FFFFFF", fill=H_FILL, size=11, wrap=True)
+    sc_ws.row_dimensions[2].height = 36
+
+    for ri, (_, row) in enumerate(scored.iterrows(), start=3):
+        s_fill, s_fc = score_band(row["composite_score"])
+        afill = ALT_FILL if ri % 2 == 1 else WHT_FILL
+
+        for ci, (key, _, w) in enumerate(SC_COLS, 1):
+            val = row.get(key)
+            cell = sc_ws.cell(row=ri, column=ci)
+            if key == "composite_score":
+                cell.value = score_or_blank(val)
+                sc(cell, bold=True, color=s_fc, fill=s_fill, size=11, border=BDR_M)
+                cell.number_format = "0"
+            elif key == "rank":
+                cell.value = int(val) if val else ""
+                sc(cell, bold=True, fill=afill, size=11)
+            elif key == "symbol":
+                cell.value = val
+                sc(cell, bold=True, fill=afill, align="left", size=11)
+            elif key == "sector":
+                cell.value = val
+                sc(cell, fill=afill, align="left", size=10)
+            else:
+                score_cell(cell, score_or_blank(val), size=11)
+                cell.number_format = "0"
+        sc_ws.row_dimensions[ri].height = 14
+
+    for ci, (_, _, w) in enumerate(SC_COLS, 1):
+        sc_ws.column_dimensions[get_column_letter(ci)].width = w
+    sc_ws.freeze_panes = "D3"
+    sc_ws.auto_filter.ref = f"A2:{get_column_letter(ncols_sc)}{max(2, len(scored)+2)}"
+
+    # Color scale on Total Score column
+    tot_col = get_column_letter(ncols_sc)
+    sc_ws.conditional_formatting.add(
+        f"{tot_col}3:{tot_col}{len(scored)+2}",
+        ColorScaleRule(
+            start_type="min", start_color="F1948A",
+            mid_type="num",   mid_value=14, mid_color="FAD7A0",
+            end_type="max",   end_color="82E0AA",
         )
+    )
 
-    for col_cells in sector_ws.columns:
-        length = max(len(str(c.value)) if c.value is not None else 0 for c in col_cells)
-        sector_ws.column_dimensions[get_column_letter(col_cells[0].column)].width = min(max(length + 2, 12), 24)
-    sector_ws.auto_filter.ref = f"A1:{get_column_letter(len(sector_columns))}{max(1, len(sector_summary) + 1)}"
+    # ══════════════════════════════════════════════════════════════════
+    #  SHEET 4 ── 🏭 SECTOR VIEW
+    # ══════════════════════════════════════════════════════════════════
+    sv = wb.create_sheet("🏭 Sector View")
+    sv_hdrs = ["Symbol","Close","Score","Rating",
+               "Ret from Low%","1D Ret%","Uptrend Con%"]
+    sv.merge_cells("A1:G1")
+    sv["A1"] = "SECTOR VIEW — stocks ranked by score within sector"
+    sc(sv["A1"], bold=True, color="FFFFFF", fill=T_FILL, size=12, align="center")
+    sv.row_dimensions[1].height = 24
 
+    from collections import defaultdict
+    sector_groups: Dict[str, list] = defaultdict(list)
+    for _, row in scored.iterrows():
+        sector_groups[row.get("sector", "Unknown")].append(row)
+
+    sv_row = 2
+    for sector_name in sorted(sector_groups.keys()):
+        stocks = sorted(sector_groups[sector_name],
+                        key=lambda r: -(r["composite_score"] or 0))
+        sv.merge_cells(f"A{sv_row}:G{sv_row}")
+        cell = sv.cell(row=sv_row, column=1,
+                       value=f"  {sector_name.upper()}  ({len(stocks)} stocks)")
+        sc(cell, bold=True, color="FFFFFF", fill=H_FILL, size=11, align="left")
+        sv.row_dimensions[sv_row].height = 18
+        sv_row += 1
+
+        for hi, hdr in enumerate(sv_hdrs, 1):
+            cell = sv.cell(row=sv_row, column=hi, value=hdr)
+            sc(cell, bold=True, color="FFFFFF",
+               fill=PatternFill("solid", fgColor="3A5F8A"), size=10)
+        sv_row += 1
+
+        for si, row in enumerate(stocks):
+            score = row["composite_score"] or 0
+            s_fill, s_fc = score_band(score)
+            afill = ALT_FILL if si % 2 == 0 else WHT_FILL
+            rating = row.get("rating", "")
+            vals = [
+                row["symbol"],
+                r2(row["current_close"]),
+                round_or_blank(score),
+                rating,
+                pct_fmt(row.get("reset_recovery")),
+                pct_fmt(row.get("return_3m")),
+                pct_fmt(row.get("uptrend_consistency_pct")),
+            ]
+            for ci2, val in enumerate(vals, 1):
+                cell = sv.cell(row=sv_row, column=ci2, value=val)
+                if ci2 in (3, 4):
+                    sc(cell, bold=True, color=s_fc, fill=s_fill, size=11)
+                    if ci2 == 3: cell.number_format = "0.0"
+                else:
+                    sc(cell, fill=afill, align="left" if ci2==1 else "center",
+                       size=11)
+                    if ci2 in (2, 5, 6, 7):
+                        cell.number_format = ("#,##0.00" if ci2 == 2 else "0.0%")
+            sv.row_dimensions[sv_row].height = 14
+            sv_row += 1
+
+        sv_row += 1  # blank separator between sectors
+
+    for ci2, w in enumerate([18, 9, 8, 14, 12, 10, 11], 1):
+        sv.column_dimensions[get_column_letter(ci2)].width = w
+
+    # ══════════════════════════════════════════════════════════════════
+    #  SHEET 5 ── 📋 SECTOR SUMMARY  (aggregated)
+    # ══════════════════════════════════════════════════════════════════
+    ss_ws = wb.create_sheet("📋 Sector Summary")
+
+    sector_summary = (
+        scored.sort_values(["sector","composite_score","symbol"],
+                           ascending=[True, False, True])
+        .groupby("sector", as_index=False)
+        .agg(
+            sector_stock_count       =("sector_stock_count",       "max"),
+            sector_top_quartile_count=("sector_top_quartile_count","max"),
+            sector_strength_ratio    =("sector_strength_ratio",    "max"),
+            score_sector             =("score_sector",             "max"),
+            best_symbol              =("symbol",                   "first"),
+            best_composite_score     =("composite_score",          "max"),
+            avg_composite_score      =("composite_score",          "mean"),
+            count_above_20_score     =("composite_score",
+                                       lambda s: int((s >= 20).sum())),
+            count_top_20             =("symbol",
+                                       lambda s: int(
+                                           sum(1 for sym in s
+                                               if sym in top20["symbol"].values)
+                                       )),
+            median_sector_score      =("composite_score",          "median"),
+        )
+    )
+    sector_summary.sort_values("avg_composite_score", ascending=False, inplace=True)
+    sector_summary.reset_index(drop=True, inplace=True)
+
+    SS_COLS = [
+        ("Rank",               5), ("Sector",            24),
+        ("# Stocks",           7), ("Best Symbol",       14),
+        ("Best Score",         8), ("Avg Score",          8),
+        ("Median Score",       8), ("# Top-20",           7),
+        ("# Score≥20",         7), ("Top-Qrt Count",      9),
+        ("Strength Ratio",     9), ("Sector Pts",         8),
+    ]
+    ncols_ss = len(SS_COLS)
+
+    ss_ws.merge_cells(f"A1:{get_column_letter(ncols_ss)}1")
+    ss_ws["A1"] = (
+        f"SECTOR SUMMARY   |   As of {cutoff_date.strftime('%d-%b-%Y')}   "
+        f"|   Ranked by avg composite score"
+    )
+    sc(ss_ws["A1"], bold=True, color="FFFFFF", fill=T_FILL, size=12, align="center")
+    ss_ws.row_dimensions[1].height = 24
+
+    for ci, (hdr, _) in enumerate(SS_COLS, 1):
+        cell = ss_ws.cell(row=2, column=ci, value=hdr)
+        sc(cell, bold=True, color="FFFFFF", fill=H_FILL, size=11, wrap=True)
+    ss_ws.row_dimensions[2].height = 28
+
+    for ri, (_, srow) in enumerate(sector_summary.iterrows(), start=3):
+        rank2 = ri - 2
+        row_bg = (medal_fills[rank2-1] if rank2 <= 3
+                  else ALT_FILL if rank2 % 2 == 0 else WHT_FILL)
+        avg_sc = round(float(srow.get("avg_composite_score", 0) or 0), 1)
+        s_fill2, s_fc2 = score_band(avg_sc)
+
+        vals = [
+            rank2,
+            srow.get("sector",""),
+            srow.get("sector_stock_count", ""),
+            srow.get("best_symbol",""),
+            round_or_blank(srow.get("best_composite_score")),
+            round(avg_sc, 1),
+            round_or_blank(srow.get("median_sector_score"), 1),
+            srow.get("count_top_20", ""),
+            srow.get("count_above_20_score", ""),
+            srow.get("sector_top_quartile_count", ""),
+            pct_fmt(srow.get("sector_strength_ratio")),
+            round_or_blank(srow.get("score_sector")),
+        ]
+        for ci, (val, (_, w)) in enumerate(zip(vals, SS_COLS), 1):
+            cell = ss_ws.cell(row=ri, column=ci, value=val)
+            if ci == 6:   # Avg Score — colour-coded
+                sc(cell, bold=True, color=s_fc2, fill=s_fill2, size=11,
+                   border=BDR_M)
+                cell.number_format = "0.0"
+            elif ci == 2:
+                sc(cell, bold=(rank2<=3), fill=row_bg, align="left", size=11)
+            elif ci == 1:
+                sc(cell, bold=True, fill=row_bg, size=11)
+            else:
+                sc(cell, fill=row_bg, size=11)
+                if ci in (5, 7, 12):
+                    cell.number_format = "0.0"
+        ss_ws.row_dimensions[ri].height = 14
+
+    for ci, (_, w) in enumerate(SS_COLS, 1):
+        ss_ws.column_dimensions[get_column_letter(ci)].width = w
+    ss_ws.freeze_panes = "B3"
+
+    # ══════════════════════════════════════════════════════════════════
+    #  SHEET 6 ── ℹ️ SUMMARY  (run metadata)
+    # ══════════════════════════════════════════════════════════════════
+    summ = wb.create_sheet("ℹ️ Summary")
+    summary_rows = [
+        ("Metric", "Value"),
+        ("Cutoff Date",                   cutoff_date.isoformat()),
+        ("Reset Date",                    reset_date.isoformat()),
+        ("Symbol File",                   symbol_file.name),
+        ("Symbols Rated",                 int(len(scored))),
+        ("─── Scoring Windows ───",        ""),
+        ("12M / 52W Window",              "250 trading candles"),
+        ("6M Window",                     "125 trading candles"),
+        ("3M Window",                      "60 trading candles"),
+        ("─── Turnover ───",               ""),
+        ("Turnover Unit",                  "Crores"),
+        ("Min Median Turnover Filter",    f"{MIN_MEDIAN_TURNOVER_CRORES:.2f} Cr"),
+        ("─── Thresholds ───",             ""),
+        ("Top Score",                     round_or_blank(scored["composite_score"].max()) if not scored.empty else ""),
+        ("Bottom Score",                  round_or_blank(scored["composite_score"].min()) if not scored.empty else ""),
+        ("Liquidity Bottom-30 Threshold", round_or_blank(scored["turnover_bottom30"].iloc[0])          if not scored.empty else ""),
+        ("ATR% Bottom-30 Threshold",      round_or_blank(scored["atr_bottom30"].iloc[0])               if not scored.empty else ""),
+        ("Index Return 12M",              percent_or_blank(scored["index_return_12m"].iloc[0])          if not scored.empty else ""),
+        ("Index Return 6M",               percent_or_blank(scored["index_return_6m"].iloc[0])           if not scored.empty else ""),
+        ("Index Return 3M",               percent_or_blank(scored["index_return_3m"].iloc[0])           if not scored.empty else ""),
+        ("12M Top-10 Threshold",          percent_or_blank(scored["ret12_top10"].iloc[0])               if not scored.empty else ""),
+        ("12M Top-20 Threshold",          percent_or_blank(scored["ret12_top20"].iloc[0])               if not scored.empty else ""),
+        ("12M Top-30 Threshold",          percent_or_blank(scored["ret12_top30"].iloc[0])               if not scored.empty else ""),
+        ("6M Top-10 Threshold",           percent_or_blank(scored["ret6_top10"].iloc[0])                if not scored.empty else ""),
+        ("6M Top-20 Threshold",           percent_or_blank(scored["ret6_top20"].iloc[0])                if not scored.empty else ""),
+        ("6M Top-30 Threshold",           percent_or_blank(scored["ret6_top30"].iloc[0])                if not scored.empty else ""),
+        ("3M Top-10 Threshold",           percent_or_blank(scored["ret3_top10"].iloc[0])                if not scored.empty else ""),
+        ("3M Top-20 Threshold",           percent_or_blank(scored["ret3_top20"].iloc[0])                if not scored.empty else ""),
+        ("3M Top-30 Threshold",           percent_or_blank(scored["ret3_top30"].iloc[0])                if not scored.empty else ""),
+        ("RS 12M Top-10 Threshold",       percent_or_blank(scored["rs12_top10"].iloc[0])                if not scored.empty else ""),
+        ("RS 12M Top-30 Threshold",       percent_or_blank(scored["rs12_top30"].iloc[0])                if not scored.empty else ""),
+        ("RS 6M Top-10 Threshold",        percent_or_blank(scored["rs6_top10"].iloc[0])                 if not scored.empty else ""),
+        ("RS 6M Top-30 Threshold",        percent_or_blank(scored["rs6_top30"].iloc[0])                 if not scored.empty else ""),
+        ("RS 3M Top-10 Threshold",        percent_or_blank(scored["rs3_top10"].iloc[0])                 if not scored.empty else ""),
+        ("RS 3M Top-30 Threshold",        percent_or_blank(scored["rs3_top30"].iloc[0])                 if not scored.empty else ""),
+        ("Uptrend Top-20 Threshold",      percent_or_blank(scored["uptrend_consistency_top20"].iloc[0]) if not scored.empty else ""),
+        ("Pre-Sector Top-Qtrl Threshold", round_or_blank(scored["top_quartile_score_threshold"].iloc[0])if not scored.empty else ""),
+        ("Sector Strength Top-10",        round_or_blank(scored["sector_top10_threshold"].iloc[0])      if not scored.empty else ""),
+        ("Sector Strength Top-30",        round_or_blank(scored["sector_top30_threshold"].iloc[0])      if not scored.empty else ""),
+        ("─── Assumptions ───",            ""),
+        ("Sector Scoring",                "Top 10% sectors = +4pts;  Top 30% = +2pts"),
+        ("52W High Basis",                "Daily HIGH (not close)"),
+    ]
+    for ri2, (label, val) in enumerate(summary_rows, start=1):
+        cell_a = summ.cell(row=ri2, column=1, value=label)
+        cell_b = summ.cell(row=ri2, column=2, value=val)
+        if ri2 == 1:
+            sc(cell_a, bold=True, color="FFFFFF", fill=H_FILL, size=11)
+            sc(cell_b, bold=True, color="FFFFFF", fill=H_FILL, size=11)
+        elif str(label).startswith("───"):
+            sc(cell_a, bold=True, italic=True, color="FFFFFF",
+               fill=PatternFill("solid", fgColor="3A5F8A"), size=11, align="left")
+            sc(cell_b, bold=False, color="FFFFFF",
+               fill=PatternFill("solid", fgColor="3A5F8A"), size=11)
+        else:
+            sc(cell_a, fill=ALT_FILL if ri2 % 2 == 0 else WHT_FILL,
+               align="left", size=11)
+            sc(cell_b, fill=ALT_FILL if ri2 % 2 == 0 else WHT_FILL,
+               align="left", size=11)
+    summ.column_dimensions["A"].width = 34
+    summ.column_dimensions["B"].width = 42
+
+    # ══════════════════════════════════════════════════════════════════
+    #  SHEET 7 ── ⚠️ WARNINGS
+    # ══════════════════════════════════════════════════════════════════
+    warn_ws = wb.create_sheet("⚠️ Warnings")
+    exclusions = [item for item in warnings if "excluded from rating universe" in item.message.lower()]
+    other_warnings = [item for item in warnings if item not in exclusions]
+
+    excl_ws = wb.create_sheet("Exclusions")
+    for ci, hdr in enumerate(["Symbol", "Reason", "Avg TO 21D (Cr)", "Avg TO 42D (Cr)", "Median TO 42D (Cr)"], 1):
+        cell = excl_ws.cell(row=1, column=ci, value=hdr)
+        sc(cell, bold=True, color="FFFFFF", fill=H_FILL, size=11)
+    for ri2, item in enumerate(exclusions, start=2):
+        row_fill = ALT_FILL if ri2 % 2 == 0 else WHT_FILL
+        sc(excl_ws.cell(row=ri2, column=1, value=item.symbol), fill=row_fill, align="left", size=11)
+        sc(excl_ws.cell(row=ri2, column=2, value=item.message), fill=row_fill, align="left", size=11)
+        avg21_cell = excl_ws.cell(row=ri2, column=3, value=item.avg_turnover_21d)
+        avg42_cell = excl_ws.cell(row=ri2, column=4, value=item.avg_turnover_42d)
+        med_cell = excl_ws.cell(row=ri2, column=5, value=item.median_turnover_42d)
+        sc(avg21_cell, fill=row_fill, size=11, num_fmt="#,##0.00")
+        sc(avg42_cell, fill=row_fill, size=11, num_fmt="#,##0.00")
+        sc(med_cell, fill=row_fill, size=11, num_fmt="#,##0.00")
+    excl_ws.auto_filter.ref = f"A1:E{max(1, len(exclusions)+1)}"
+    excl_ws.freeze_panes = "A2"
+    excl_ws.column_dimensions["A"].width = 16
+    excl_ws.column_dimensions["B"].width = 90
+    excl_ws.column_dimensions["C"].width = 18
+    excl_ws.column_dimensions["D"].width = 18
+    excl_ws.column_dimensions["E"].width = 20
+
+    for ci, hdr in enumerate(["Symbol", "Warning Message"], 1):
+        cell = warn_ws.cell(row=1, column=ci, value=hdr)
+        sc(cell, bold=True, color="FFFFFF", fill=H_FILL, size=11)
+    for ri2, item in enumerate(other_warnings, start=2):
+        sc(warn_ws.cell(row=ri2, column=1, value=item.symbol),
+           fill=ALT_FILL if ri2 % 2 == 0 else WHT_FILL,
+           align="left", size=11)
+        sc(warn_ws.cell(row=ri2, column=2, value=item.message),
+           fill=ALT_FILL if ri2 % 2 == 0 else WHT_FILL,
+           align="left", size=11)
+    warn_ws.auto_filter.ref = f"A1:B{max(1, len(other_warnings)+1)}"
+    warn_ws.freeze_panes = "A2"
+    warn_ws.column_dimensions["A"].width = 16
+    warn_ws.column_dimensions["B"].width = 90
+
+    # ── Set active sheet to Dashboard ────────────────────────────────
+    wb.active = dash
     wb.save(out_path)
     return out_path
 
 
-def main() -> int:
+# ═══════════════════════════════════════════════════════════════════════════
+#  MAIN
+# ═══════════════════════════════════════════════════════════════════════════
+
+def main() -> None:
     args = parse_args()
+    cutoff_date: date = args.cutoff_date
+    reset_date:  date = args.reset_date
+    output_dir        = Path(args.output_dir)
+    token_file        = Path(args.token)
+    index_symbol: str = args.index_symbol
 
-    symbol_file = locate_symbol_file(args.cutoff_date, args.symbols, args.symbols_dir)
-    symbols = read_symbols(symbol_file)
-    token_file = Path(args.token).expanduser().resolve()
-    output_dir = Path(args.output_dir).expanduser().resolve()
+    print("=" * 70)
+    print("  NSE STOCK TECHNICAL RATING")
+    print(f"  Cutoff date  : {cutoff_date.strftime('%d-%b-%Y')}")
+    print(f"  Reset date   : {reset_date.strftime('%d-%b-%Y')}")
+    print(f"  Token file   : {token_file}")
+    print(f"  Output dir   : {output_dir}")
+    print(f"  Index symbol : {index_symbol}")
+    print("=" * 70)
 
-    start_date = min(args.reset_date, args.cutoff_date - timedelta(days=450))
+    # ── Resolve symbol file ───────────────────────────────────────────────
+    symbol_file = locate_symbol_file(cutoff_date, args.symbols, args.symbols_dir)
+    symbols     = read_symbols(symbol_file)
+    print(f"\n  Symbol file  : {symbol_file}  ({len(symbols)} symbols)")
+
+    # ── DB connection ─────────────────────────────────────────────────────
+    conn = get_db_connection()
+    print("  MySQL bhav DB : connected")
+
     warnings: List[WarningLog] = []
 
-    print(f"Using symbol file: {symbol_file}")
-    print(f"Loaded {len(symbols)} symbols")
+    # ── Sector map ────────────────────────────────────────────────────────
+    sector_map = load_sector_map(conn, symbols)
 
+    # ── Date window for history ───────────────────────────────────────────
+    fetch_start = min(reset_date, cutoff_date - timedelta(days=LOOKBACK_52W + 60)) - timedelta(days=30)
+    fetch_start = max(fetch_start, date(2000, 1, 1))
+
+    # ── Index history (for RS) ────────────────────────────────────────────
+    index_df = load_index_history(conn, fetch_start, cutoff_date, index_symbol)
+
+    # ── Turnover map (liquidity filter) ───────────────────────────────────
+    turnover_map = load_turnover_map(conn, symbols, fetch_start, cutoff_date)
+    eligible = filter_symbols_by_turnover(
+        symbols, turnover_map, MIN_MEDIAN_TURNOVER_CRORES, warnings
+    )
+    if len(eligible) < len(symbols):
+        excluded = len(symbols) - len(eligible)
+        print(f"\n  Turnover filter: {excluded} symbol(s) excluded; {len(eligible)} eligible")
+    symbols = eligible
+
+    # ── Kite session ──────────────────────────────────────────────────────
     kite = get_kite_client(token_file)
     instrument_map = build_instrument_map(kite, symbols)
 
-    conn = get_db_connection()
-    try:
-        print("Loading sector and index data from MySQL")
-        sector_map = load_sector_map(conn, symbols)
-        index_df = load_index_history(conn, start_date, args.cutoff_date, args.index_symbol)
-        turnover_map = load_turnover_map(
-            conn,
-            symbols,
-            max(args.cutoff_date - timedelta(days=120), date(args.cutoff_date.year - 1, 1, 1)),
-            args.cutoff_date,
+    # ── Per-symbol fetch + metrics ────────────────────────────────────────
+    total   = len(symbols)
+    metrics_list: List[Dict] = []
+    skipped: List[str] = []
+
+    print(f"\n  Fetching OHLCV history + computing metrics ({total} symbols)...\n")
+
+    for idx, symbol in enumerate(symbols, 1):
+        info = instrument_map.get(symbol)
+        if info is None:
+            warnings.append(WarningLog(symbol, "Not found in Kite NSE instruments; skipped."))
+            skipped.append(symbol)
+            print(f"  [{idx:>3}/{total}] {symbol:<18} — not in Kite instruments, skipped")
+            continue
+
+        instrument_token = int(info["instrument_token"])
+        listing_date     = info.get("listing_date")
+
+        print(f"  [{idx:>3}/{total}] {symbol:<18}", end=" ", flush=True)
+        df = fetch_history_with_retry(
+            kite, instrument_token, symbol, fetch_start, cutoff_date
         )
-    finally:
+        time.sleep(0.35)
+
+        if df is None or df.empty:
+            warnings.append(WarningLog(symbol, "No OHLCV data returned by Kite; skipped."))
+            skipped.append(symbol)
+            print("NO DATA — skipped")
+            continue
+
+        turnover_override = turnover_map.get(symbol.upper())
+        result = compute_stock_metrics(
+            symbol, df, index_df, sector_map.get(symbol, "Unknown"),
+            cutoff_date, reset_date, listing_date,
+            turnover_override, warnings,
+        )
+        if result is None:
+            skipped.append(symbol)
+            print("metrics=None — skipped")
+            continue
+
+        metrics_list.append(result)
+        cs   = result.get("composite_score", "?")
+        rs   = result.get("rs_1m", None)
+        rs_s = f"{rs:+.1f}%" if rs is not None and not (isinstance(rs, float) and math.isnan(rs)) else "N/A"
+        print(f"ok  score={cs}  RS1m={rs_s}")
+
+    # ── Build DataFrame + scoring ─────────────────────────────────────────
+    if not metrics_list:
+        print("\n  No stocks could be rated. Check symbol file, Kite token, and DB.")
         conn.close()
+        return
 
-    symbols = filter_symbols_by_turnover(
-        symbols,
-        turnover_map,
-        MIN_MEDIAN_TURNOVER_CRORES,
-        warnings,
-    )
-    if not symbols:
-        raise SystemExit(
-            f"No symbols remain after applying median turnover filter of {MIN_MEDIAN_TURNOVER_CRORES:.2f} Cr."
-        )
-    print(f"Eligible after median turnover filter: {len(symbols)} symbols")
+    raw_df = pd.DataFrame(metrics_list)
+    print(f"\n  Applying scoring model to {len(raw_df)} stocks...")
+    scored = apply_scoring(raw_df)
+    scored = scored.sort_values("composite_score", ascending=False).reset_index(drop=True)
 
-    rows: List[Dict[str, object]] = []
-    for idx, symbol in enumerate(symbols, start=1):
-        print(f"[{idx}/{len(symbols)}] {symbol}")
-        instrument_info = instrument_map.get(symbol)
-        if instrument_info is None:
-            warnings.append(WarningLog(symbol, "Symbol not found in kite.instruments('NSE'); skipped."))
-            continue
-        token = instrument_info["instrument_token"]
-        listing_date = instrument_info.get("listing_date")
-        history = fetch_history_with_retry(kite, token, symbol, start_date, args.cutoff_date)
-        if history is None or history.empty:
-            warnings.append(WarningLog(symbol, "No historical data returned by Kite; skipped."))
-            continue
-        row = compute_stock_metrics(
-            symbol=symbol,
-            df=history,
-            index_df=index_df,
-            sector=sector_map.get(symbol, "Unknown"),
-            cutoff_date=args.cutoff_date,
-            reset_date=args.reset_date,
-            listing_date=listing_date,
-            turnover_override=turnover_map.get(symbol.upper()),
-            warnings=warnings,
-        )
-        if row is not None:
-            rows.append(row)
+    # ── Console summary ───────────────────────────────────────────────────
+    print(f"\n{'='*70}")
+    print(f"  Rated: {len(scored)}  |  Skipped: {len(skipped)}")
+    if skipped:
+        print(f"  Skipped: {', '.join(skipped)}")
+    print(f"{'='*70}")
+    top_n = min(20, len(scored))
+    print(f"\n  {'#':<4} {'SYMBOL':<18} {'SCORE':>6}  {'SECTOR'}")
+    print(f"  {'─'*60}")
+    for i, row in scored.head(top_n).iterrows():
+        print(f"  {i+1:<4} {str(row.get('symbol','')):<18} "
+              f"{row.get('composite_score', 0):>6.1f}  "
+              f"{row.get('sector', '')}")
 
-    if not rows:
-        raise SystemExit("No stocks could be rated. Check API/data availability.")
+    # ── Export workbook ───────────────────────────────────────────────────
+    output_dir.mkdir(parents=True, exist_ok=True)
+    wb_path = export_workbook(scored, warnings, output_dir, cutoff_date, reset_date, symbol_file)
+    print(f"\n  Excel  → {wb_path}")
 
-    scored = apply_scoring(pd.DataFrame(rows))
-    report_path = export_workbook(
-        scored=scored,
-        warnings=warnings,
-        output_dir=output_dir,
-        cutoff_date=args.cutoff_date,
-        reset_date=args.reset_date,
-        symbol_file=symbol_file,
-    )
-    dayone_path = export_tradingview_dayone(scored, output_dir, args.cutoff_date)
+    # ── Export TradingView day-one list ───────────────────────────────────
+    tv_path = export_tradingview_dayone(scored, output_dir, cutoff_date)
+    print(f"  Day-1  → {tv_path}")
 
-    print(f"Rated {len(scored)} stocks")
-    print(f"Workbook written to: {report_path}")
-    print(f"TradingView file written to: {dayone_path}")
-    if warnings:
-        print(f"Warnings logged: {len(warnings)}")
-    return 0
+    # ── Auto-run sector_discovery2.py if present ──────────────────────────
+    sd2_script = Path(__file__).resolve().parent / "sector_discovery2.py"
+    if sd2_script.exists():
+        print("\n" + "=" * 70)
+        print("  AUTO-RUNNING SECTOR DISCOVERY 2 ...")
+        print("=" * 70)
+        sd2_cmd = [
+            sys.executable, str(sd2_script),
+            "--as-of",   cutoff_date.strftime("%Y-%m-%d"),
+            "--reset",   reset_date.strftime("%Y-%m-%d"),
+            "--symbols", str(symbol_file),
+            "--out",     str(output_dir),
+            "--token",   str(token_file),
+        ]
+        subprocess.run(sd2_cmd)
+    else:
+        print(f"\n  [i] sector_discovery2.py not found — skipping sector discovery run.")
+
+    conn.close()
+    print("\n  Done!")
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
