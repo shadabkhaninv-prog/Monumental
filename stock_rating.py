@@ -59,6 +59,7 @@ SPIKE_WINDOW_60 = 60
 TURNOVER_CRORE_DIVISOR = 10_000_000.0
 MIN_MEDIAN_TURNOVER_CRORES = 15.0
 GAPUP_LOOKBACK = 60
+UPTREND_CONSISTENCY_LOOKBACK = 60
 
 DB_CONFIG = {
     "host": "localhost",
@@ -545,6 +546,12 @@ def compute_stock_metrics(
 
     atr_percent = compute_atr_percent(history, ATR_LOOKBACK)
 
+    ema8 = history["close"].ewm(span=8, adjust=False).mean()
+    ema21 = history["close"].ewm(span=21, adjust=False).mean()
+    dma50 = history["close"].rolling(50, min_periods=1).mean()
+    uptrend_stack = (ema8 > ema21) & (ema21 > dma50)
+    uptrend_consistency_pct = float(uptrend_stack.tail(UPTREND_CONSISTENCY_LOOKBACK).mean()) if not uptrend_stack.empty else math.nan
+
     spike_window = history.tail(SPIKE_LOOKBACK).copy()
     spike_window["prev_close"] = spike_window["close"].shift(1)
     spike_window["price_change_pct"] = np.where(
@@ -560,15 +567,20 @@ def compute_stock_metrics(
     spike_volume = math.nan
     spike_price_change_pct = math.nan
     spike_window_days = math.nan
+    spike_top1_threshold = math.nan
     if not spike_window.empty:
-        max_volume = spike_window["volume"].max()
-        spike_candidates = spike_window[spike_window["volume"] == max_volume]
+        spike_top1_threshold = top_n_threshold(spike_window["volume"], 1)
+        spike_candidates = spike_window[spike_window["volume"] >= spike_top1_threshold].copy()
         if not spike_candidates.empty:
-            spike_row = spike_candidates.iloc[-1]
+            spike_candidates["window_days"] = spike_candidates.index.map(lambda d: len(spike_window.loc[d:]))
+            spike_candidates = spike_candidates[spike_candidates["window_days"] <= SPIKE_WINDOW_60]
+        if not spike_candidates.empty:
+            spike_candidates = spike_candidates.sort_values(["window_days", "volume"], ascending=[True, False])
+            spike_row = spike_candidates.iloc[0]
             spike_date = spike_row.name
             spike_volume = float(spike_row["volume"])
             spike_price_change_pct = float(spike_row["price_change_pct"]) if not pd.isna(spike_row["price_change_pct"]) else math.nan
-            spike_window_days = len(spike_window.loc[spike_date:])
+            spike_window_days = int(spike_row["window_days"])
             if spike_window_days <= SPIKE_WINDOW_10:
                 spike_base_points = 10
                 spike_label = "10D"
@@ -611,13 +623,17 @@ def compute_stock_metrics(
     gapup_volume = math.nan
     gapup_pct = math.nan
     gapup_close_pct = math.nan
+    gapup_top1_threshold = math.nan
     score_gapup = 0
     if not gapup_window.empty:
-        gapup_max_volume = gapup_window["volume"].max()
+        gapup_top1_threshold = top_n_threshold(gapup_window["volume"], 1)
         qualifying_gapups = gapup_window[
             (gapup_window["gap_up_pct"] > 3.0)
             & (gapup_window["close_gain_pct"] > 5.0)
-            & (gapup_window["volume"] >= gapup_max_volume)
+            & (
+                (gapup_window["close_gain_pct"] >= 9.0)
+                | (gapup_window["volume"] >= gapup_top1_threshold)
+            )
         ]
         if not qualifying_gapups.empty:
             gapup_row = qualifying_gapups.iloc[-1]
@@ -660,10 +676,12 @@ def compute_stock_metrics(
         "rs_line_at_52w_high": rs_line_at_high,
         "rs_line_slope_21d": rs_line_slope_21d,
         "atr_percent_21d": atr_percent,
+        "uptrend_consistency_pct": uptrend_consistency_pct,
         "spike_date": spike_date,
         "spike_volume": spike_volume,
         "spike_price_change_pct": spike_price_change_pct / 100.0 if not pd.isna(spike_price_change_pct) else math.nan,
         "spike_window_days": spike_window_days,
+        "spike_top1_threshold": spike_top1_threshold,
         "spike_label": spike_label,
         "score_spike_base": spike_base_points,
         "score_spike_bonus": spike_bonus_points,
@@ -672,6 +690,7 @@ def compute_stock_metrics(
         "gapup_volume": gapup_volume,
         "gapup_pct": gapup_pct / 100.0 if not pd.isna(gapup_pct) else math.nan,
         "gapup_close_pct": gapup_close_pct / 100.0 if not pd.isna(gapup_close_pct) else math.nan,
+        "gapup_top1_threshold": gapup_top1_threshold,
         "score_gapup": score_gapup,
         "score_new_listing": score_new_listing,
     }
@@ -701,16 +720,22 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
         "median_turnover_top10": top_n_threshold(work["median_turnover_42d"], 10),
         "median_turnover_top30": top_n_threshold(work["median_turnover_42d"], 30),
         "ret12_top10": top_n_threshold(work["return_12m"], 10),
+        "ret12_top20": top_n_threshold(work["return_12m"], 20),
         "ret12_top30": top_n_threshold(work["return_12m"], 30),
         "ret6_top10": top_n_threshold(work["return_6m"], 10),
+        "ret6_top20": top_n_threshold(work["return_6m"], 20),
         "ret6_top30": top_n_threshold(work["return_6m"], 30),
+        "ret6_bottom10": bottom_n_threshold(work["return_6m"], 10),
         "ret3_top10": top_n_threshold(work["return_3m"], 10),
+        "ret3_top20": top_n_threshold(work["return_3m"], 20),
         "ret3_top30": top_n_threshold(work["return_3m"], 30),
+        "ret3_bottom10": bottom_n_threshold(work["return_3m"], 10),
         "rs12_top10": top_n_threshold(work["rs_12m"], 10),
         "rs12_top30": top_n_threshold(work["rs_12m"], 30),
         "rs3_top10": top_n_threshold(work["rs_3m"], 10),
         "rs3_top30": top_n_threshold(work["rs_3m"], 30),
         "atr_bottom30": bottom_n_threshold(work["atr_percent_21d"], 30),
+        "uptrend_consistency_top20": top_n_threshold(work["uptrend_consistency_pct"], 20),
     }
 
     eligible_52w = work["listed_days"] > 1
@@ -756,21 +781,41 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     top12_10 = work["return_12m"] >= thresholds["ret12_top10"]
+    top12_20 = work["return_12m"] >= thresholds["ret12_top20"]
     top12_30 = work["return_12m"] >= thresholds["ret12_top30"]
     top6_10 = work["return_6m"] >= thresholds["ret6_top10"]
+    top6_20 = work["return_6m"] >= thresholds["ret6_top20"]
     top6_30 = work["return_6m"] >= thresholds["ret6_top30"]
     top3_10 = work["return_3m"] >= thresholds["ret3_top10"]
+    top3_20 = work["return_3m"] >= thresholds["ret3_top20"]
     top3_30 = work["return_3m"] >= thresholds["ret3_top30"]
+    mature_listing = work["listed_days"] >= LOOKBACK_3M
+    bottom6_10 = mature_listing & (work["return_6m"] <= thresholds["ret6_bottom10"])
+    bottom3_10 = mature_listing & (work["return_3m"] <= thresholds["ret3_bottom10"])
 
-    work["score_perf_12m"] = np.select([top12_10, top12_30], [8, 4], default=0)
-    work["score_perf_6m"] = np.select([top6_10, top6_30], [4, 2], default=0)
-    work["score_perf_3m"] = np.select([top3_10, top3_30], [4, 2], default=0)
+    work["score_perf_12m"] = np.select([top12_10, top12_20, top12_30], [8, 6, 4], default=0)
+    work["score_perf_6m"] = np.select([top6_10, top6_20, top6_30], [6, 4, 2], default=0)
+    work["score_perf_3m"] = np.select([top3_10, top3_20, top3_30], [6, 4, 2], default=0)
+    work["score_perf_6m_penalty"] = np.where(bottom6_10, -2, 0)
+    work["score_perf_3m_penalty"] = np.where(bottom3_10, -4, 0)
     work["score_perf_bonus"] = np.where(top12_10 & (work["days_since_52w_high"] <= 10), 2, 0)
+    reset_rank = work["reset_recovery"].rank(method="min", ascending=False)
+    work["score_reset_recovery"] = np.select(
+        [
+            reset_rank <= 10,
+            reset_rank <= 20,
+        ],
+        [4, 2],
+        default=0,
+    )
     work["score_performance_total"] = (
         work["score_perf_12m"]
         + work["score_perf_6m"]
         + work["score_perf_3m"]
+        + work["score_perf_6m_penalty"]
+        + work["score_perf_3m_penalty"]
         + work["score_perf_bonus"]
+        + work["score_reset_recovery"]
     )
 
     top_rs12_10 = work["rs_12m"] >= thresholds["rs12_top10"]
@@ -794,6 +839,11 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
         -6,
         0,
     )
+    work["score_uptrend_consistency"] = np.where(
+        work["uptrend_consistency_pct"] >= thresholds["uptrend_consistency_top20"],
+        4,
+        0,
+    )
 
     work["pre_sector_score"] = (
         work["score_52w_total"]
@@ -802,6 +852,7 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
         + work["score_performance_total"]
         + work["score_rs_total"]
         + work["score_volatility"]
+        + work["score_uptrend_consistency"]
         + work["score_spike_total"]
         + work["score_gapup"]
         + work["score_new_listing"]
@@ -991,12 +1042,14 @@ def export_workbook(
         "return_12m",
         "return_6m",
         "return_3m",
-        "reset_date_used",
         "reset_low",
         "reset_recovery",
+        "score_reset_recovery",
         "score_perf_12m",
         "score_perf_6m",
         "score_perf_3m",
+        "score_perf_6m_penalty",
+        "score_perf_3m_penalty",
         "score_perf_bonus",
         "score_performance_total",
         "rs_12m",
@@ -1009,6 +1062,8 @@ def export_workbook(
         "score_rs_line_high",
         "score_rs_slope_penalty",
         "score_rs_total",
+        "uptrend_consistency_pct",
+        "score_uptrend_consistency",
         "spike_date",
         "spike_volume",
         "spike_price_change_pct",
@@ -1051,6 +1106,7 @@ def export_workbook(
                 "rs_12m",
                 "rs_6m",
                 "rs_3m",
+                "uptrend_consistency_pct",
                 "spike_price_change_pct",
                 "gapup_pct",
                 "gapup_close_pct",
@@ -1082,7 +1138,7 @@ def export_workbook(
     dashboard["A1"] = f"Top 20 Dashboard | cutoff={cutoff_date.isoformat()}"
     dashboard["A1"].font = Font(bold=True, color="FFFFFF")
     dashboard["A1"].fill = title_fill
-    dashboard.merge_cells("A1:K1")
+    dashboard.merge_cells("A1:L1")
     dashboard_columns = [
         "rank",
         "symbol",
@@ -1092,6 +1148,7 @@ def export_workbook(
         "current_close",
         "avg_turnover_42d",
         "median_turnover_42d",
+        "score_uptrend_consistency",
         "score_spike_total",
         "score_gapup",
         "score_sector",
@@ -1112,7 +1169,7 @@ def export_workbook(
         score_cell.font = Font(bold=True)
         score_cell.fill = good_fill if (score_cell.value or 0) >= 20 else header_fill if (score_cell.value or 0) >= 10 else bad_fill
     dashboard.freeze_panes = "D3"
-    dashboard.auto_filter.ref = f"A2:K{max(2, len(top20) + 2)}"
+    dashboard.auto_filter.ref = f"A2:L{max(2, len(top20) + 2)}"
     for col_cells in dashboard.columns:
         length = max(len(str(c.value)) if c.value is not None else 0 for c in col_cells)
         dashboard.column_dimensions[get_column_letter(col_cells[0].column)].width = min(max(length + 2, 12), 24)
@@ -1121,7 +1178,7 @@ def export_workbook(
     scorecard["A1"] = f"Scorecard | cutoff={cutoff_date.isoformat()}"
     scorecard["A1"].font = Font(bold=True, color="FFFFFF")
     scorecard["A1"].fill = title_fill
-    scorecard.merge_cells("A1:M1")
+    scorecard.merge_cells("A1:Q1")
     scorecard_columns = [
         "rank",
         "symbol",
@@ -1129,7 +1186,11 @@ def export_workbook(
         "score_new_listing",
         "score_52w_total",
         "score_performance_total",
+        "score_reset_recovery",
+        "score_perf_6m_penalty",
+        "score_perf_3m_penalty",
         "score_rs_total",
+        "score_uptrend_consistency",
         "score_spike_total",
         "score_gapup",
         "score_volatility",
@@ -1149,9 +1210,9 @@ def export_workbook(
                 value = round_or_blank(value)
             scorecard.cell(row=row_idx, column=col_idx, value=value)
         scorecard.cell(row=row_idx, column=2).font = Font(bold=True)
-        scorecard.cell(row=row_idx, column=13).font = Font(bold=True)
+        scorecard.cell(row=row_idx, column=17).font = Font(bold=True)
     scorecard.freeze_panes = "D3"
-    scorecard.auto_filter.ref = f"A2:M{max(2, len(scored) + 2)}"
+    scorecard.auto_filter.ref = f"A2:Q{max(2, len(scored) + 2)}"
     for col_cells in scorecard.columns:
         length = max(len(str(c.value)) if c.value is not None else 0 for c in col_cells)
         scorecard.column_dimensions[get_column_letter(col_cells[0].column)].width = min(max(length + 2, 12), 24)
@@ -1177,15 +1238,19 @@ def export_workbook(
         ("Index Return 6M", percent_or_blank(scored["index_return_6m"].iloc[0]) if not scored.empty else ""),
         ("Index Return 3M", percent_or_blank(scored["index_return_3m"].iloc[0]) if not scored.empty else ""),
         ("12M Top 10 Threshold", percent_or_blank(scored["ret12_top10"].iloc[0]) if not scored.empty else ""),
+        ("12M Top 20 Threshold", percent_or_blank(scored["ret12_top20"].iloc[0]) if not scored.empty else ""),
         ("12M Top 30 Threshold", percent_or_blank(scored["ret12_top30"].iloc[0]) if not scored.empty else ""),
         ("6M Top 10 Threshold", percent_or_blank(scored["ret6_top10"].iloc[0]) if not scored.empty else ""),
+        ("6M Top 20 Threshold", percent_or_blank(scored["ret6_top20"].iloc[0]) if not scored.empty else ""),
         ("6M Top 30 Threshold", percent_or_blank(scored["ret6_top30"].iloc[0]) if not scored.empty else ""),
         ("3M Top 10 Threshold", percent_or_blank(scored["ret3_top10"].iloc[0]) if not scored.empty else ""),
+        ("3M Top 20 Threshold", percent_or_blank(scored["ret3_top20"].iloc[0]) if not scored.empty else ""),
         ("3M Top 30 Threshold", percent_or_blank(scored["ret3_top30"].iloc[0]) if not scored.empty else ""),
         ("RS 12M Top 10 Threshold", percent_or_blank(scored["rs12_top10"].iloc[0]) if not scored.empty else ""),
         ("RS 12M Top 30 Threshold", percent_or_blank(scored["rs12_top30"].iloc[0]) if not scored.empty else ""),
         ("RS 3M Top 10 Threshold", percent_or_blank(scored["rs3_top10"].iloc[0]) if not scored.empty else ""),
         ("RS 3M Top 30 Threshold", percent_or_blank(scored["rs3_top30"].iloc[0]) if not scored.empty else ""),
+        ("Uptrend Consistency Top 20 Threshold", percent_or_blank(scored["uptrend_consistency_top20"].iloc[0]) if not scored.empty else ""),
         ("Pre-Sector Top Quartile Threshold", round_or_blank(scored["top_quartile_score_threshold"].iloc[0]) if not scored.empty else ""),
         ("Sector Strength Top 10 Threshold", round_or_blank(scored["sector_top10_threshold"].iloc[0]) if not scored.empty else ""),
         ("Sector Strength Top 30 Threshold", round_or_blank(scored["sector_top30_threshold"].iloc[0]) if not scored.empty else ""),
