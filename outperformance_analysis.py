@@ -2,22 +2,26 @@
 """
 ╔══════════════════════════════════════════════════════════════════════╗
 ║  POST-CUTOFF OUTPERFORMANCE ANALYSER                                 ║
-║  Cutoff   : 02 Apr 2026  (pre-conditions measured ON this date)      ║
-║  Period   : 03 Apr 2026 → today  (performance window)               ║
+║  Cutoff   : supplied via --cutoff YYYY-MM-DD  (or positional arg)   ║
+║  Period   : cutoff+1 → today  (performance window)                  ║
 ║  DB       : bhav  (bhav2025 + bhav2026 + indexbhav + sectors)        ║
 ║                                                                      ║
 ║  RS method    : stock_return% − index_return%  (excess return)       ║
 ║  Index        : Nifty Smallcap 250  (from indexbhav)                 ║
 ║  Volatility   : ATR% 21-day  = ATR_21d / close × 100                ║
+║                                                                      ║
+║  Stock list   : resolved from reports/rated_list_date.txt            ║
 ╚══════════════════════════════════════════════════════════════════════╝
 REQUIREMENTS:  pip install mysql-connector-python pandas openpyxl
-RUN:           python outperformance_analysis.py
+RUN:           python outperformance_analysis.py 2026-04-02
+           or: python outperformance_analysis.py --cutoff 2026-04-02
 """
 
+import argparse
 import math
 import sys
 import warnings
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import mysql.connector
@@ -33,21 +37,91 @@ DB_USER = "root"
 DB_PASS = "root"
 DB_NAME = "bhav"
 
-CUTOFF  = date(2026, 4, 2)
 TODAY   = date.today()
 
-ATR_PERIOD      = 21
+ATR_PERIOD        = 21
 RS_SLOPE_LOOKBACK = 21
 
-STOCKS = [
-    "PFOCUS","MTARTECH","STLTECH","NATIONALUM","GVT&D",
-    "POWERINDIA","BLISSGVS","ATHERENERG","AEROFLEX","DEEDEV",
-    "OMNI","QPOWER","APOLLOPIPE","AVANTIFEED","NETWEB",
-    "TDPOWERSYS","DATAPATTNS","GESHIP","BAJAJCON","GMDCLTD",
-]
+REPORTS_DIR      = Path(r"C:\Users\shada\Monumental\reports")
+RATED_LIST_INDEX = REPORTS_DIR / "rated_list_date.txt"
 
 OUT_DIR = Path(__file__).parent / "output"
 OUT_DIR.mkdir(exist_ok=True)
+
+
+# ── CLI argument parsing ───────────────────────────────────────────────
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Post-cutoff outperformance analyser"
+    )
+    parser.add_argument(
+        "cutoff", nargs="?",
+        help="Cutoff date  YYYY-MM-DD  (positional)"
+    )
+    parser.add_argument(
+        "--cutoff", dest="cutoff_flag", metavar="YYYY-MM-DD",
+        help="Cutoff date  YYYY-MM-DD  (named flag)"
+    )
+    args = parser.parse_args()
+    raw = args.cutoff_flag or args.cutoff
+    if not raw:
+        parser.error("Cutoff date is required.  "
+                     "Usage: python outperformance_analysis.py 2026-04-02")
+    try:
+        return datetime.strptime(raw.strip(), "%Y-%m-%d").date()
+    except ValueError:
+        parser.error(f"Invalid date '{raw}' — expected YYYY-MM-DD format.")
+
+
+# ── Resolve rated-list file from index ────────────────────────────────
+def resolve_rated_list(cutoff: date) -> Path:
+    """
+    Reads RATED_LIST_INDEX (rated_list_date.txt) and returns the Path
+    of the rated-list file whose date matches *cutoff*.
+
+    Index format (one entry per line):
+        YYYY-MM-DD  filename.txt
+    """
+    if not RATED_LIST_INDEX.exists():
+        sys.exit(f"ERROR: index file not found:\n  {RATED_LIST_INDEX}")
+
+    cutoff_str = cutoff.strftime("%Y-%m-%d")
+    with open(RATED_LIST_INDEX, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(None, 1)   # split on first whitespace
+            if len(parts) == 2 and parts[0] == cutoff_str:
+                fname = parts[1].strip()
+                fpath = REPORTS_DIR / fname
+                if not fpath.exists():
+                    sys.exit(f"ERROR: rated-list file not found:\n  {fpath}")
+                return fpath
+
+    sys.exit(
+        f"ERROR: no entry for {cutoff_str} in {RATED_LIST_INDEX}\n"
+        f"  Add a line like:  {cutoff_str}  rated_list_<label>.txt"
+    )
+
+
+# ── Parse symbols from rated-list file ────────────────────────────────
+def load_stocks(rated_list_path: Path) -> list:
+    """
+    Reads a rated-list file and returns a list of ticker symbols
+    (strips leading 'NSE:' prefix, skips comment/section lines).
+    """
+    symbols = []
+    with open(rated_list_path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            sym = line.upper().removeprefix("NSE:")
+            symbols.append(sym)
+    if not symbols:
+        sys.exit(f"ERROR: no symbols found in {rated_list_path}")
+    return symbols
 
 # ── DB ────────────────────────────────────────────────────────────────
 def get_conn():
@@ -142,22 +216,37 @@ def compute_atr_pct(high, low, close, period=21):
     return round(float(atr.iloc[-1] / last_close * 100), 4)
 
 # ── Main ──────────────────────────────────────────────────────────────
-def analyse():
+POST_WINDOW_TD = 10   # trading days after cutoff to measure performance
+
+def analyse(CUTOFF: date, STOCKS: list):
     print("\n" + "═"*65)
     print("  POST-CUTOFF OUTPERFORMANCE ANALYSER")
-    print(f"  Cutoff : {CUTOFF}   |   Today : {TODAY}")
+    print(f"  Cutoff : {CUTOFF}   |   Window : {POST_WINDOW_TD} trading days")
     print("═"*65)
 
     conn = get_conn()
     print("\n  ✓ Connected to MySQL bhav database")
 
-    from_hist = date(2025, 1, 1)   # 15 months → covers 252-td (12M) lookback
+    from_hist = date(min(CUTOFF.year, 2025), 1, 1)   # covers 252-td (12M) lookback
     df_all    = load_history(conn, STOCKS, from_hist, TODAY)
     print(f"  ✓ Loaded {len(df_all):,} rows  |  {df_all['SYMBOL'].nunique()} symbols")
 
     idx_all    = load_index(conn, from_hist, TODAY)
     sector_map = load_sectors(conn, STOCKS)
     conn.close()
+
+    # ── Determine the end date = 10th trading day after cutoff ───────
+    # Use dates that actually appear in the data (any symbol) as the
+    # trading calendar.
+    all_td = sorted(df_all["MKTDATE"].unique())
+    post_td = [d for d in all_td if d > CUTOFF]
+    if len(post_td) < POST_WINDOW_TD:
+        END_DATE = post_td[-1] if post_td else CUTOFF
+        print(f"  ⚠  Only {len(post_td)} trading days available after cutoff "
+              f"(wanted {POST_WINDOW_TD}) — using {END_DATE}")
+    else:
+        END_DATE = post_td[POST_WINDOW_TD - 1]
+    print(f"  ✓ Post window : {CUTOFF} + {POST_WINDOW_TD}td  →  end date {END_DATE}")
 
     # ── Index returns on cutoff date ──────────────────────────────────
     idx_pre = idx_all[idx_all["MKTDATE"] <= CUTOFF].reset_index(drop=True)
@@ -181,7 +270,7 @@ def analyse():
             print(f"  ✗  {sym:15s} — no data"); continue
 
         pre  = g[g["MKTDATE"] <= CUTOFF].reset_index(drop=True)
-        post = g[g["MKTDATE"]  > CUTOFF].reset_index(drop=True)
+        post = g[(g["MKTDATE"] > CUTOFF) & (g["MKTDATE"] <= END_DATE)].reset_index(drop=True)
 
         if pre.empty or post.empty:
             print(f"  ✗  {sym:15s} — missing pre or post data"); continue
@@ -190,7 +279,48 @@ def analyse():
         close_cut    = float(pre.iloc[-1]["CLOSE"])
         close_latest = float(post.iloc[-1]["CLOSE"])
         latest_date  = post.iloc[-1]["MKTDATE"]
-        post_ret     = safe_return(close_latest, close_cut)
+
+        # ── Corporate-action adjustment (split / bonus) ───────────────
+        # Build full price series across the boundary: last pre-close +
+        # all post closes, then look for a single-day drop > CA_THRESHOLD.
+        # When found, scale close_cut by the cumulative adjustment factor
+        # so that post_ret reflects the true price move, not the CA drop.
+        CA_THRESHOLD  = 0.25        # flag a drop of >25% in one session
+        ca_flag       = ""          # e.g. "BONUS ~1:1 on 2026-04-07"
+        adj_factor    = 1.0
+
+        boundary = pd.concat([
+            pre[["MKTDATE","CLOSE"]].tail(1),
+            post[["MKTDATE","CLOSE"]]
+        ]).reset_index(drop=True)
+
+        for i in range(1, len(boundary)):
+            p_prev = float(boundary.loc[i-1, "CLOSE"])
+            p_now  = float(boundary.loc[i,   "CLOSE"])
+            ca_date = boundary.loc[i, "MKTDATE"]
+            if p_prev <= 0:
+                continue
+            day_ret = (p_now - p_prev) / p_prev          # negative for drop
+            if day_ret < -CA_THRESHOLD:
+                ratio = p_now / p_prev                    # e.g. 0.50 for 1:1 bonus
+                adj_factor *= ratio                       # compound if >1 CA
+                # Label the CA type by nearest standard ratio
+                inv = 1.0 / ratio                         # e.g. 2.0 for 1:1 bonus
+                if   abs(inv - 2.0) < 0.12:  ca_type = "BONUS ~1:1"
+                elif abs(inv - 1.5) < 0.10:  ca_type = "BONUS ~1:2"
+                elif abs(inv - 3.0) < 0.20:  ca_type = "SPLIT ~3:1"
+                elif abs(inv - 5.0) < 0.40:  ca_type = "SPLIT ~5:1"
+                elif abs(inv - 4.0) < 0.30:  ca_type = "SPLIT ~4:1"
+                elif abs(inv - 10.) < 0.80:  ca_type = "SPLIT ~10:1"
+                else:                         ca_type = f"CA ~{inv:.2f}x"
+                ca_flag += f"{ca_type} on {ca_date}  "
+                print(f"  ⚡ {sym:12s}  {ca_type} detected on {ca_date}  "
+                      f"(day chg {day_ret*100:+.1f}%,  adj×{ratio:.4f})")
+
+        # Adjust cutoff close so return is on an apples-to-apples basis
+        close_cut_adj = close_cut * adj_factor
+        post_ret      = safe_return(close_latest, close_cut_adj)
+        ca_flag       = ca_flag.strip() or "—"
 
         n  = len(pre)
         pc = pre["CLOSE"]
@@ -292,9 +422,11 @@ def analyse():
             "Symbol"               : sym,
             "Sector"               : sector,
             "Cutoff Close"         : round(close_cut, 2),
+            "Cutoff Close (Adj)"   : round(close_cut_adj, 2),
             "Latest Close"         : round(close_latest, 2),
             "Latest Date"          : str(latest_date),
             "Post Return %"        : round(post_ret, 2),
+            "CA Flag"              : ca_flag,
             # 52-week
             "52wk High"            : round(high_52w, 2),
             "52wk Low"             : round(low_52w, 2),
@@ -332,10 +464,11 @@ def analyse():
             "Streak (td)"          : streak,
         })
 
+        ca_note = f"  [CA: {ca_flag}]" if ca_flag != "—" else ""
         print(f"  ✓  {sym:15s}  post={post_ret:+.1f}%  "
               f"3M={mom_3m:+.1f}%  RS3M={rs_3m:+.1f}pp  "
               f"52wkH={pct_52wh:.1f}%  ATR%={atr_pct:.2f}  "
-              f"RSslope={rs_slope_21d:.5f}")
+              f"RSslope={rs_slope_21d:.5f}{ca_note}")
 
     if not records:
         sys.exit("No records — check symbol names.")
@@ -410,7 +543,7 @@ def analyse():
 
     # ── Terminal top-5 ────────────────────────────────────────────────
     print("\n" + "═"*65)
-    print(f"  TOP PERFORMERS  (03 Apr → {TODAY})")
+    print(f"  TOP PERFORMERS  (cutoff {CUTOFF}  →  {END_DATE}  [{POST_WINDOW_TD}td])")
     print("═"*65)
     for _, row in df.head(5).iterrows():
         print(f"\n  #{int(row['Rank'])}  {row['Symbol']}  →  {row['Post Return %']:+.2f}%  [{row['Sector']}]")
@@ -420,10 +553,10 @@ def analyse():
         print(f"      Momentum  1M={row['1M Momentum %']:+.1f}%  3M={row['3M Momentum %']:+.1f}%  "
               f"6M={row['6M Momentum %']:+.1f}%  12M={row['12M Momentum %']:+.1f}%")
         print(f"      RS (exc.ret vs SC250)  "
-              f"1M={row['RS 1M (exc.ret %)']: +.1f}pp  "
-              f"3M={row['RS 3M (exc.ret %)']: +.1f}pp  "
-              f"6M={row['RS 6M (exc.ret %)']: +.1f}pp  "
-              f"12M={row['RS 12M (exc.ret %)']: +.1f}pp")
+              f"1M={row['RS 1M (exc.ret %)']:+.1f}pp  "
+              f"3M={row['RS 3M (exc.ret %)']:+.1f}pp  "
+              f"6M={row['RS 6M (exc.ret %)']:+.1f}pp  "
+              f"12M={row['RS 12M (exc.ret %)']:+.1f}pp")
         print(f"      RS slope 21d={row['RS Line Slope 21d']:.5f}  "
               f"RS@52wkH={'YES' if row['RS at 52wk High'] else 'no'}")
         print(f"      ATR% 21d={row['ATR% 21d']:.2f}  |  "
@@ -434,13 +567,13 @@ def analyse():
         print(f"      Reasons: {row['Reasons']}")
 
     # ── Outputs ───────────────────────────────────────────────────────
-    xlsx_path = OUT_DIR / f"outperformance_{TODAY}.xlsx"
-    html_path = OUT_DIR / f"outperformance_{TODAY}.html"
+    xlsx_path = OUT_DIR / f"outperformance_{CUTOFF}.xlsx"
+    html_path = OUT_DIR / f"outperformance_{CUTOFF}.html"
 
     _write_excel(df, xlsx_path)
     print(f"\n  ✓  Excel → {xlsx_path}")
 
-    _write_html(df, html_path)
+    _write_html(df, html_path, CUTOFF, END_DATE)
     print(f"  ✓  HTML  → {html_path}\n")
 
 
@@ -452,7 +585,7 @@ def _write_excel(df, path):
     from openpyxl.formatting.rule import ColorScaleRule
 
     SUMMARY_COLS = [
-        "Rank","Symbol","Sector","Post Return %",
+        "Rank","Symbol","Sector","Post Return %","CA Flag",
         "% from 52wk High","Days since 52wk High","52wk Range Pos %",
         "1M Momentum %","3M Momentum %","6M Momentum %","12M Momentum %",
         "RS 1M (exc.ret %)","RS 3M (exc.ret %)","RS 6M (exc.ret %)","RS 12M (exc.ret %)",
@@ -461,7 +594,7 @@ def _write_excel(df, path):
         "Reasons",
     ]
     FULL_COLS = SUMMARY_COLS[:] + [
-        "Cutoff Close","Latest Close","Latest Date",
+        "Cutoff Close","Cutoff Close (Adj)","Latest Close","Latest Date",
         "52wk High","52wk Low","% above 52wk Low","ATH","% from ATH",
         "3M Mom Pctile","RS 3M Pctile","Range Pctile",
         "20 DMA","50 DMA","200 DMA",
@@ -490,9 +623,12 @@ def _write_excel(df, path):
             ws.append([row[c] for c in avail])
 
         pr_i = avail.index("Post Return %") + 1
+        ca_i = avail.index("CA Flag") + 1 if "CA Flag" in avail else None
+        CA   = PatternFill("solid", fgColor="FCE4D6")   # light orange for CA rows
         for ri in range(2, ws.max_row + 1):
-            v = ws.cell(ri, pr_i).value or 0
-            fill = GRN if v > 10 else GOLD if v >= 0 else RED
+            v   = ws.cell(ri, pr_i).value or 0
+            has_ca = ca_i and ws.cell(ri, ca_i).value not in ("—", None, "")
+            fill = CA if has_ca else (GRN if v > 10 else GOLD if v >= 0 else RED)
             for ci in range(1, ws.max_column + 1):
                 ws.cell(ri, ci).fill = fill
 
@@ -505,7 +641,8 @@ def _write_excel(df, path):
                 end_type="max",   end_color="63BE7B",
             )
         )
-        widths = {"Reasons": 62, "Symbol": 14, "Sector": 22, "Latest Date": 13}
+        widths = {"Reasons": 62, "Symbol": 14, "Sector": 22,
+                  "Latest Date": 13, "CA Flag": 32, "Cutoff Close (Adj)": 16}
         for i, h in enumerate(avail, 1):
             ws.column_dimensions[get_column_letter(i)].width = widths.get(h, 13)
         ws.freeze_panes = "D2"
@@ -518,12 +655,13 @@ def _write_excel(df, path):
 
 
 # ── HTML ──────────────────────────────────────────────────────────────
-def _write_html(df, path):
+def _write_html(df, path, CUTOFF, END_DATE):
     rows = ""
     for _, r in df.iterrows():
-        ret = r["Post Return %"]
-        bg  = "#c6efce" if ret > 10 else "#fff2cc" if ret >= 0 else "#ffc7ce"
-        fc  = "#375623" if ret >= 0 else "#9c0006"
+        ret    = r["Post Return %"]
+        has_ca = r.get("CA Flag", "—") not in ("—", None, "")
+        bg     = "#fce4d6" if has_ca else ("#c6efce" if ret > 10 else "#fff2cc" if ret >= 0 else "#ffc7ce")
+        fc     = "#375623" if ret >= 0 else "#9c0006"
 
         def f(v, pct=False, pp=False, dp=2):
             if pd.isna(v): return "—"
@@ -531,12 +669,14 @@ def _write_html(df, path):
             if pp:  return f"{float(v):+.{dp}f}pp"
             return f"{float(v):.{dp}f}"
 
+        ca_cell = f'<td style="font-size:10px;color:#c55a11">{r.get("CA Flag","—")}</td>'
         rows += f"""<tr style="background:{bg}">
           <td style="text-align:center;font-weight:bold">{int(r['Rank'])}</td>
           <td style="font-weight:bold">{r['Symbol']}</td>
           <td style="font-size:11px">{r.get('Sector','—')}</td>
           <td style="text-align:right;font-weight:bold;color:{fc}">{f(ret,pct=True)}</td>
-          <td style="text-align:right">₹{f(r['Cutoff Close'])}</td>
+          {ca_cell}
+          <td style="text-align:right">₹{f(r['Cutoff Close'])} / ₹{f(r['Cutoff Close (Adj)'])}</td>
           <td style="text-align:right">{f(r['% from 52wk High'],pct=True)}</td>
           <td style="text-align:right">{int(r['Days since 52wk High'])}td</td>
           <td style="text-align:right">{f(r['52wk Range Pos %'],dp=1)}%</td>
@@ -557,8 +697,10 @@ def _write_html(df, path):
           <td style="font-size:11px">{r['Reasons']}</td>
         </tr>"""
 
+    cutoff_label = CUTOFF.strftime("%d %b %Y")
+    end_label    = END_DATE.strftime("%d %b %Y")
     html = f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
-<title>Outperformance Report {TODAY}</title>
+<title>Outperformance Report {CUTOFF}</title>
 <style>
 body{{font-family:'Segoe UI',Arial,sans-serif;margin:0;background:#f0f2f8}}
 .hdr{{background:linear-gradient(135deg,#1F4E79,#2E75B6);color:#fff;padding:22px 32px}}
@@ -577,8 +719,8 @@ tr:hover td{{filter:brightness(.96)}}
 </style></head><body>
 <div class="hdr">
   <h1>📈 Post-Cutoff Outperformance Report</h1>
-  <p>Cutoff: <b>02 Apr 2026</b> &nbsp;|&nbsp;
-     Window: <b>03 Apr → {TODAY}</b> &nbsp;|&nbsp;
+  <p>Cutoff: <b>{cutoff_label}</b> &nbsp;|&nbsp;
+     Window: <b>{cutoff_label} → {end_label}  ({POST_WINDOW_TD} trading days)</b> &nbsp;|&nbsp;
      Universe: <b>{len(df)} stocks</b></p>
 </div>
 <div class="sub">
@@ -589,7 +731,7 @@ tr:hover td{{filter:brightness(.96)}}
 <table>
 <thead><tr>
   <th>#</th><th>Symbol</th><th>Sector</th><th>Post Return</th>
-  <th>Cutoff ₹</th>
+  <th>CA</th><th>Cutoff ₹ / Adj ₹</th>
   <th>Δ 52wkH</th><th>Days 52wkH</th><th>52wk Pos</th>
   <th>1M Mom</th><th>3M Mom</th><th>6M Mom</th><th>12M Mom</th>
   <th>RS 1M</th><th>RS 3M</th><th>RS 6M</th><th>RS 12M</th>
@@ -614,4 +756,10 @@ tr:hover td{{filter:brightness(.96)}}
 
 
 if __name__ == "__main__":
-    analyse()
+    cutoff = parse_args()
+    rated_list_path = resolve_rated_list(cutoff)
+    print(f"\n  Cutoff date   : {cutoff}")
+    print(f"  Rated-list    : {rated_list_path.name}")
+    stocks = load_stocks(rated_list_path)
+    print(f"  Symbols loaded: {len(stocks)}  → {stocks}")
+    analyse(cutoff, stocks)
