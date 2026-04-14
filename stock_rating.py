@@ -141,18 +141,19 @@ def locate_symbol_file(cutoff_date: date, explicit_path: Optional[str], symbols_
             raise SystemExit(f"Symbol file not found: {path}")
         return path
 
-    expected_name = f"gmlist_{cutoff_date.strftime('%d%b%Y')}.txt"
+    cutoff_stamp = cutoff_date.strftime('%d%b%Y')
+    preferred_name = f"updated_gmlist_{cutoff_stamp}.txt"
     candidates = [
-        Path.cwd() / symbols_dir / expected_name,
-        Path(__file__).resolve().parent / symbols_dir / expected_name,
-        Path.cwd() / expected_name,
-        Path(__file__).resolve().parent / expected_name,
+        Path.cwd() / symbols_dir / preferred_name,
+        Path(__file__).resolve().parent / symbols_dir / preferred_name,
+        Path.cwd() / preferred_name,
+        Path(__file__).resolve().parent / preferred_name,
     ]
     for candidate in candidates:
         if candidate.exists():
             return candidate.resolve()
     tried = "\n".join(f"  - {p}" for p in candidates)
-    raise SystemExit(f"Could not locate symbol file {expected_name}. Tried:\n{tried}")
+    raise SystemExit(f"Could not locate symbol file {preferred_name}. Tried:\n{tried}")
 
 
 def read_symbols(path: Path) -> List[str]:
@@ -221,6 +222,63 @@ def get_db_connection():
         return mysql.connector.connect(**DB_CONFIG)
     except Exception as exc:
         raise SystemExit(f"Failed to connect to MySQL bhav database: {exc}") from exc
+
+
+def ensure_inactive_symbols_table(conn) -> None:
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS inactive_symbols (
+            symbol VARCHAR(50) NOT NULL,
+            new_symbol VARCHAR(50) NULL,
+            PRIMARY KEY (symbol)
+        )
+        """
+    )
+    conn.commit()
+    cursor.close()
+
+
+def load_symbol_replacements(conn) -> Dict[str, str]:
+    ensure_inactive_symbols_table(conn)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT UPPER(symbol) AS symbol, UPPER(TRIM(new_symbol)) AS new_symbol
+        FROM inactive_symbols
+        WHERE new_symbol IS NOT NULL
+          AND TRIM(new_symbol) <> ''
+        """
+    )
+    rows = cursor.fetchall()
+    cursor.close()
+    return {row[0]: row[1] for row in rows}
+
+
+def record_inactive_symbol(conn, symbol: str) -> None:
+    ensure_inactive_symbols_table(conn)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO inactive_symbols (symbol, new_symbol)
+        VALUES (%s, NULL)
+        ON DUPLICATE KEY UPDATE symbol = VALUES(symbol)
+        """,
+        (symbol.upper(),),
+    )
+    conn.commit()
+    cursor.close()
+
+
+def remap_symbols(symbols: Iterable[str], replacements: Dict[str, str]) -> List[str]:
+    remapped: List[str] = []
+    seen: set[str] = set()
+    for symbol in symbols:
+        effective = replacements.get(symbol.upper(), symbol.upper())
+        if effective not in seen:
+            remapped.append(effective)
+            seen.add(effective)
+    return remapped
 
 
 def load_sector_map(conn, symbols: Iterable[str]) -> Dict[str, str]:
@@ -571,7 +629,13 @@ def compute_stock_metrics(
     dma50 = history["close"].rolling(50, min_periods=1).mean()
     uptrend_stack = (ema8 > ema21) & (ema21 > dma50)
     uptrend_consistency_pct = float(uptrend_stack.tail(UPTREND_CONSISTENCY_LOOKBACK).mean()) if not uptrend_stack.empty else math.nan
-    days_below_50dma = int((history["close"].tail(LOOKBACK_3M) < dma50.tail(LOOKBACK_3M)).sum()) if not history.empty else 0
+    above_50dma = bool(not dma50.empty and not pd.isna(dma50.iloc[-1]) and current_close > float(dma50.iloc[-1]))
+    above_21ema = bool(not ema21.empty and not pd.isna(ema21.iloc[-1]) and current_close > float(ema21.iloc[-1]))
+    above_8ema = bool(not ema8.empty and not pd.isna(ema8.iloc[-1]) and current_close > float(ema8.iloc[-1]))
+    reset_history = history[history.index >= reset_date]
+    reset_dma50 = dma50.loc[reset_history.index] if not reset_history.empty else dma50.iloc[0:0]
+    days_below_50dma = int((reset_history["close"] < reset_dma50).sum()) if not reset_history.empty else 0
+    green_candle_count = int((reset_history["close"] > reset_history["open"]).sum()) if not reset_history.empty else 0
 
     spike_window = history.tail(SPIKE_LOOKBACK).copy()
     spike_window["prev_close"] = spike_window["close"].shift(1)
@@ -697,7 +761,11 @@ def compute_stock_metrics(
         "rs_line_at_52w_high": rs_line_at_high,
         "rs_line_slope_21d": rs_line_slope_21d,
         "atr_percent_21d": atr_percent,
+        "above_50dma": above_50dma,
+        "above_21ema": above_21ema,
+        "above_8ema": above_8ema,
         "uptrend_consistency_pct": uptrend_consistency_pct,
+        "green_candle_count": green_candle_count,
         "daysbelow50dma": days_below_50dma,
         "spike_date": spike_date,
         "spike_volume": spike_volume,
@@ -758,8 +826,11 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
         "rs6_top30": top_n_threshold(work["rs_6m"], 30),
         "rs3_top10": top_n_threshold(work["rs_3m"], 10),
         "rs3_top30": top_n_threshold(work["rs_3m"], 30),
-        "atr_bottom30": bottom_n_threshold(work["atr_percent_21d"], 30),
+        "atr_bottom10": bottom_n_threshold(work["atr_percent_21d"], 10),
         "uptrend_consistency_top20": top_n_threshold(work["uptrend_consistency_pct"], 20),
+        "green_candle_top10": top_n_threshold(work["green_candle_count"], 10),
+        "green_candle_top20": top_n_threshold(work["green_candle_count"], 20),
+        "daysbelow50dma_top10": top_n_threshold(work["daysbelow50dma"], 10),
     }
 
     eligible_52w = work["listed_days"] > 1
@@ -777,7 +848,7 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
             eligible_52w & (work["days_since_52w_high"] <= 10),
             eligible_52w & (work["days_since_52w_high"] <= 15),
         ],
-        [4, 2],
+        [6, 3],
         default=0,
     )
     work["score_52w_bonus"] = np.select(
@@ -791,6 +862,9 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
     work["score_52w_total"] = (
         work["score_52w_price"] + work["score_52w_recency"] + work["score_52w_bonus"]
     )
+    work["score_above_50dma"] = np.where(work["above_50dma"], 4, -4)
+    work["score_above_21ema"] = np.where(work["above_21ema"], 2, 0)
+    work["score_above_8ema"] = np.where(work["above_8ema"], 2, 0)
 
     work["score_liquidity"] = np.where(
         work["avg_turnover_42d"] <= thresholds["turnover_bottom30"], -8, 0
@@ -832,6 +906,11 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
         [4, 2],
         default=0,
     )
+    recent_listing_mask = work["listed_days"] < 60
+    work.loc[recent_listing_mask, "score_perf_12m"] = np.maximum(work.loc[recent_listing_mask, "score_perf_12m"], 2)
+    work.loc[recent_listing_mask, "score_perf_6m"] = np.maximum(work.loc[recent_listing_mask, "score_perf_6m"], 2)
+    work.loc[recent_listing_mask, "score_perf_3m"] = np.maximum(work.loc[recent_listing_mask, "score_perf_3m"], 2)
+    work.loc[recent_listing_mask, "score_reset_recovery"] = np.maximum(work.loc[recent_listing_mask, "score_reset_recovery"], 1)
     work["score_performance_total"] = (
         work["score_perf_12m"]
         + work["score_perf_6m"]
@@ -862,14 +941,33 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
         + work["score_rs_slope_penalty"]
     )
 
-    work["score_volatility"] = np.where(
-        (work["atr_percent_21d"] <= thresholds["atr_bottom30"]) & (work["atr_percent_21d"] < 3.0),
-        -6,
-        0,
+    work["score_volatility"] = np.select(
+        [
+            (work["atr_percent_21d"] <= thresholds["atr_bottom10"]) & (work["atr_percent_21d"] < 3.0),
+            (work["atr_percent_21d"] <= thresholds["atr_bottom10"]) & (work["atr_percent_21d"] < 4.0),
+        ],
+        [-6, -3],
+        default=0,
     )
     work["score_uptrend_consistency"] = np.where(
         work["uptrend_consistency_pct"] >= thresholds["uptrend_consistency_top20"],
         4,
+        0,
+    )
+    work.loc[recent_listing_mask, "score_uptrend_consistency"] = np.maximum(
+        work.loc[recent_listing_mask, "score_uptrend_consistency"], 1
+    )
+    work["score_green_candles"] = np.select(
+        [
+            work["green_candle_count"] >= thresholds["green_candle_top10"],
+            work["green_candle_count"] >= thresholds["green_candle_top20"],
+        ],
+        [4, 2],
+        default=0,
+    )
+    work["score_daysbelow50dma_penalty"] = np.where(
+        work["daysbelow50dma"] >= thresholds["daysbelow50dma_top10"],
+        -8,
         0,
     )
 
@@ -880,34 +978,66 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
         + work["score_performance_total"]
         + work["score_rs_total"]
         + work["score_volatility"]
+        + work["score_above_50dma"]
+        + work["score_above_21ema"]
+        + work["score_above_8ema"]
         + work["score_uptrend_consistency"]
+        + work["score_green_candles"]
+        + work["score_daysbelow50dma_penalty"]
         + work["score_spike_total"]
         + work["score_gapup"]
         + work["score_new_listing"]
     )
     top_quartile_threshold = top_n_threshold(work["pre_sector_score"], 25)
     work["is_top_quartile_pre_sector"] = work["pre_sector_score"] >= top_quartile_threshold
+    work["pre_sector_rank"] = work["pre_sector_score"].rank(method="min", ascending=False)
 
-    sector_stats = (
-        work.groupby("sector")
-        .agg(
-            sector_stock_count=("symbol", "size"),
-            sector_top_quartile_count=("is_top_quartile_pre_sector", "sum"),
+    sector_rows: List[Dict[str, object]] = []
+    for sector_name, grp in work.groupby("sector"):
+        ordered = grp.sort_values(
+            ["pre_sector_score", "score_rs_total", "score_performance_total", "symbol"],
+            ascending=[False, False, False, True],
+        ).reset_index(drop=True)
+        stock_count = int(len(ordered))
+        positive = ordered[ordered["pre_sector_score"] > 0].copy()
+        positive_count = int(len(positive))
+        top_quartile_count = int(ordered["is_top_quartile_pre_sector"].sum())
+        strength_ratio = (top_quartile_count / stock_count) if stock_count > 0 else 0.0
+        weighted_pre = float(positive["pre_sector_score"].mean()) if positive_count > 0 else math.nan
+        weighted_rs = float(positive["score_rs_total"].mean()) if positive_count > 0 else math.nan
+        weighted_perf = float(positive["score_performance_total"].mean()) if positive_count > 0 else math.nan
+        top20_hits = int((positive["pre_sector_rank"] <= 20).sum()) if positive_count > 0 else 0
+        sector_rows.append(
+            {
+                "sector": sector_name,
+                "sector_stock_count": stock_count,
+                "sector_positive_score_count": positive_count,
+                "sector_top_quartile_count": top_quartile_count,
+                "sector_strength_ratio": strength_ratio if stock_count > 1 else -1.0,
+                "sector_weighted_pre_score": weighted_pre,
+                "sector_weighted_rs_score": weighted_rs,
+                "sector_weighted_perf_score": weighted_perf,
+                "sector_top20_hits": top20_hits,
+            }
         )
-        .reset_index()
-    )
-    sector_stats["sector_strength_ratio"] = np.where(
-        sector_stats["sector_stock_count"] > 0,
-        sector_stats["sector_top_quartile_count"] / sector_stats["sector_stock_count"],
-        0.0,
-    )
-    sector_stats.loc[sector_stats["sector_stock_count"] <= 1, "sector_strength_ratio"] = -1.0
-    sector_top10 = top_n_threshold(sector_stats["sector_strength_ratio"], 10)
-    sector_top30 = top_n_threshold(sector_stats["sector_strength_ratio"], 30)
+
+    sector_stats = pd.DataFrame(sector_rows)
+    eligible_sector_mask = sector_stats["sector_positive_score_count"] > 1
+    if eligible_sector_mask.any():
+        sector_stats["sector_leadership_score"] = np.where(
+            eligible_sector_mask,
+            sector_stats["sector_weighted_pre_score"],
+            -1.0,
+        )
+    else:
+        sector_stats["sector_leadership_score"] = -1.0
+
+    sector_top10 = top_n_threshold(sector_stats.loc[eligible_sector_mask, "sector_leadership_score"], 10)
+    sector_top30 = top_n_threshold(sector_stats.loc[eligible_sector_mask, "sector_leadership_score"], 30)
     sector_stats["score_sector"] = np.select(
         [
-            (sector_stats["sector_stock_count"] > 1) & (sector_stats["sector_strength_ratio"] >= sector_top10),
-            (sector_stats["sector_stock_count"] > 1) & (sector_stats["sector_strength_ratio"] >= sector_top30),
+            eligible_sector_mask & (sector_stats["sector_leadership_score"] >= sector_top10),
+            eligible_sector_mask & (sector_stats["sector_leadership_score"] >= sector_top30),
         ],
         [SECTOR_TOP10_POINTS, SECTOR_TOP30_POINTS],
         default=0,
@@ -1023,11 +1153,39 @@ def force_close_excel_workbook(path: Path) -> None:
         sys.exit(1)
 
 
-def export_tradingview_dayone(scored: pd.DataFrame, output_dir: Path, cutoff_date: date) -> Path:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    out_path = output_dir / f"dayone_{cutoff_date.strftime('%d%m')}.txt"
-    lines = [f"NSE:{str(symbol).strip().upper().replace('NSE:', '')}" for symbol in scored.head(20)["symbol"].tolist()]
-    out_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+def export_tradingview_dayone(scored: pd.DataFrame, reports_dir: Path, cutoff_date: date) -> Path:
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    out_path = reports_dir / f"rated_list_{cutoff_date.strftime('%d%b%Y').lower()}.txt"
+
+    top_rows = scored.head(20).copy()
+    if "sector" not in top_rows.columns:
+        top_rows["sector"] = "Unknown"
+    top_rows["sector"] = (
+        top_rows["sector"]
+        .astype(str)
+        .str.strip()
+        .replace({"": "Unknown", "nan": "Unknown", "None": "Unknown"})
+        .fillna("Unknown")
+    )
+
+    sectors: Dict[str, List[str]] = {}
+    for _, row in top_rows.iterrows():
+        sector = str(row.get("sector", "Unknown")).strip() or "Unknown"
+        symbol = str(row.get("symbol", "")).strip().upper().replace("NSE:", "")
+        if not symbol:
+            continue
+        sectors.setdefault(sector, []).append(f"NSE:{symbol}")
+
+    lines = [
+        f"### Rated List - {cutoff_date.strftime('%d %b %Y')} (Top {len(top_rows)})",
+        "",
+    ]
+    for sector in sorted(sectors.keys()):
+        lines.append(f"###{sector}")
+        lines.extend(sectors[sector])
+        lines.append("")
+
+    out_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
     return out_path
 
 
@@ -1272,7 +1430,11 @@ def export_workbook(
         ("score_median_turnover",    "Median Turnover"),
         ("score_performance_total",  "Performance (12M/6M/3M)"),
         ("score_rs_total",           "Relative Strength"),
+        ("score_above_50dma",        "Above 50DMA"),
+        ("score_above_21ema",        "Above 21EMA"),
+        ("score_above_8ema",         "Above 8EMA"),
         ("score_uptrend_consistency","Uptrend Consistency"),
+        ("score_green_candles",      "Green Candles"),
         ("score_spike_total",        "Volume Spike"),
         ("score_gapup",              "Gap-Up"),
         ("score_volatility",         "Low Volatility"),
@@ -1387,9 +1549,18 @@ def export_workbook(
         ("score_rs_slope_penalty",  "Pen\nSlope",      "rs",    5,  "0"),
         ("score_rs_total",          "RS\nTotal",       "rs",    6,  "0"),
         # ── Uptrend
+        ("above_50dma",             "Above\n50DMA",    "trend", 8,  None),
+        ("score_above_50dma",       "Sc\n50DMA",       "trend", 6,  "0"),
+        ("above_21ema",             "Above\n21EMA",    "trend", 8,  None),
+        ("score_above_21ema",       "Sc\n21EMA",       "trend", 6,  "0"),
+        ("above_8ema",              "Above\n8EMA",     "trend", 8,  None),
+        ("score_above_8ema",        "Sc\n8EMA",        "trend", 6,  "0"),
         ("uptrend_consistency_pct", "Uptrnd\nCon%",    "trend", 9,  "0.0%"),
         ("score_uptrend_consistency","Sc\nTrend",      "trend", 6,  "0"),
+        ("green_candle_count",      "Green\nCandles",  "trend", 8,  "0"),
+        ("score_green_candles",     "Sc\nGreen",       "trend", 6,  "0"),
         ("daysbelow50dma",          "Days<\n50DMA",    "trend", 7,  "0"),
+        ("score_daysbelow50dma_penalty","Pen\n<50D",   "trend", 7,  "0"),
         # ── Volume Spike
         ("spike_date",              "Spike\nDate",     "spike",11,  None),
         ("spike_volume",            "Spike\nVol",      "spike",10,  "#,##0"),
@@ -1461,7 +1632,7 @@ def export_workbook(
     SCORE_KEYS= {k for k, *_ in COL_SPEC if k.startswith("score_") or k.startswith("pre_")}
     INT_COLS  = {"rank","listed_days","days_since_52w_high",
                  "sector_stock_count","sector_top_quartile_count","spike_window_days",
-                 "daysbelow50dma"}
+                 "daysbelow50dma","green_candle_count"}
 
     ncols_r = len(COL_SPEC)
     groups   = [g for _, _, g, _, _ in COL_SPEC]
@@ -1595,7 +1766,12 @@ def export_workbook(
         ("score_perf_3m_penalty",   "3M\nPen",        7),
         ("score_rs_total",          "RS\nTotal",      8),
         ("score_rs_6m",             "RS\n6M",         7),
+        ("score_above_50dma",       "50DMA\nScore",   8),
+        ("score_above_21ema",       "21EMA\nScore",   8),
+        ("score_above_8ema",        "8EMA\nScore",    8),
         ("score_uptrend_consistency","Trend\nScore",  8),
+        ("score_green_candles",     "Green\nScore",   8),
+        ("score_daysbelow50dma_penalty","Days<50\nPen",8),
         ("score_spike_total",       "Spike",          7),
         ("score_gapup",             "GapUp",          7),
         ("score_volatility",        "ATR\nPen",       7),
@@ -1726,49 +1902,161 @@ def export_workbook(
         sv.column_dimensions[get_column_letter(ci2)].width = w
 
     # ══════════════════════════════════════════════════════════════════
-    #  SHEET 5 ── 📋 SECTOR SUMMARY  (aggregated)
+    #  SHEET 5 ── SECTOR LEADERS
+    # ══════════════════════════════════════════════════════════════════
+    sector_summary_base = (
+        scored.sort_values(["sector", "pre_sector_score", "score_rs_total", "composite_score", "symbol"],
+                           ascending=[True, False, False, False, True])
+        .groupby("sector", as_index=False)
+        .agg(
+            sector_stock_count=("sector_stock_count", "max"),
+            sector_positive_score_count=("sector_positive_score_count", "max"),
+            sector_top_quartile_count=("sector_top_quartile_count", "max"),
+            sector_strength_ratio=("sector_strength_ratio", "max"),
+            sector_weighted_pre_score=("sector_weighted_pre_score", "max"),
+            sector_weighted_rs_score=("sector_weighted_rs_score", "max"),
+            sector_weighted_perf_score=("sector_weighted_perf_score", "max"),
+            sector_top20_hits=("sector_top20_hits", "max"),
+            sector_leadership_score=("sector_leadership_score", "max"),
+            score_sector=("score_sector", "max"),
+            best_symbol=("symbol", "first"),
+            best_composite_score=("composite_score", "max"),
+            avg_composite_score=("composite_score", "mean"),
+            median_sector_score=("composite_score", "median"),
+            avg_pre_sector_score=("pre_sector_score", "mean"),
+            avg_rs_total=("score_rs_total", "mean"),
+            avg_perf_total=("score_performance_total", "mean"),
+            count_above_20_score=("composite_score", lambda s: int((s >= 20).sum())),
+            count_top_20=("symbol", lambda s: int(sum(1 for sym in s if sym in top20["symbol"].values))),
+        )
+    )
+
+    leader_rows: List[Dict[str, object]] = []
+    for sector_name, grp in (
+        scored.sort_values(["sector", "pre_sector_score", "score_rs_total", "composite_score", "symbol"],
+                           ascending=[True, False, False, False, True])
+        .groupby("sector")
+    ):
+        if len(grp) < 2:
+            continue
+        top2 = grp.head(2)
+        leader_rows.append(
+            {
+                "sector": sector_name,
+                "sector_stock_count": int(len(grp)),
+                "sector_positive_score_count": int(grp["sector_positive_score_count"].iloc[0]),
+                "leader_1": top2.iloc[0]["symbol"],
+                "leader_2": top2.iloc[1]["symbol"],
+                "leader_avg_pre_sector": float(grp["sector_weighted_pre_score"].iloc[0]),
+                "leader_avg_rs_total": float(grp["sector_weighted_rs_score"].iloc[0]),
+                "leader_avg_perf_total": float(grp["sector_weighted_perf_score"].iloc[0]),
+                "leader_strength_ratio": float(grp["sector_strength_ratio"].iloc[0]),
+                "leader_best_score": float(grp["composite_score"].max()),
+                "sector_top20_hits": int(grp["sector_top20_hits"].iloc[0]),
+                "leadership_score": float(grp["sector_leadership_score"].iloc[0]),
+            }
+        )
+
+    sector_leaders = pd.DataFrame(leader_rows)
+    if not sector_leaders.empty:
+        sector_leaders = sector_leaders.sort_values(
+            ["sector_positive_score_count", "leader_avg_pre_sector", "leader_avg_rs_total", "sector"],
+            ascending=[False, False, False, True],
+        ).reset_index(drop=True)
+
+    sl_ws = wb.create_sheet("Sector Leaders")
+    SL_COLS = [
+        ("Rank", 5), ("Sector", 22), ("# Stocks", 7), ("# Pos", 6), ("Leadership", 10),
+        ("Leader 1", 14), ("Leader 2", 14), ("Avg RS", 8), ("Avg Pre-Sec", 10),
+        ("Avg Perf", 9), ("Str%", 8), ("Best Score", 9),
+    ]
+    ncols_sl = len(SL_COLS)
+    sl_ws.merge_cells(f"A1:{get_column_letter(ncols_sl)}1")
+    sl_ws["A1"] = (
+        f"SECTOR LEADERSHIP BOARD   |   As of {cutoff_date.strftime('%d-%b-%Y')}   "
+        f"|   Top 5 sectors | min 2 stocks | stock-count first, then avg stock score"
+    )
+    sc(sl_ws["A1"], bold=True, color="FFFFFF", fill=T_FILL, size=12, align="center")
+    sl_ws.row_dimensions[1].height = 24
+    for ci, (hdr, w) in enumerate(SL_COLS, 1):
+        cell = sl_ws.cell(row=2, column=ci, value=hdr)
+        sc(cell, bold=True, color="FFFFFF", fill=H_FILL, size=10)
+        sl_ws.column_dimensions[get_column_letter(ci)].width = w
+    for ri, (_, lrow) in enumerate(sector_leaders.head(5).iterrows(), start=3):
+        rank2 = ri - 2
+        row_bg = medal_fills[rank2 - 1] if rank2 <= 3 else (ALT_FILL if rank2 % 2 == 0 else WHT_FILL)
+        vals = [
+            rank2,
+            lrow.get("sector", ""),
+            lrow.get("sector_stock_count", ""),
+            lrow.get("sector_positive_score_count", ""),
+            round_or_blank(lrow.get("leadership_score"), 1),
+            lrow.get("leader_1", ""),
+            lrow.get("leader_2", ""),
+            round_or_blank(lrow.get("leader_avg_rs_total"), 1),
+            round_or_blank(lrow.get("leader_avg_pre_sector"), 1),
+            round_or_blank(lrow.get("leader_avg_perf_total"), 1),
+            pct_fmt(lrow.get("leader_strength_ratio")),
+            round_or_blank(lrow.get("leader_best_score"), 1),
+        ]
+        for ci, (val, _) in enumerate(zip(vals, SL_COLS), 1):
+            cell = sl_ws.cell(row=ri, column=ci, value=val)
+            if ci == 5:
+                s_fill, s_fc = score_band(float(lrow.get("leadership_score", 0) or 0))
+                sc(cell, bold=True, color=s_fc, fill=s_fill, size=11)
+            else:
+                sc(cell, fill=row_bg, align="left" if ci in (2, 6, 7) else "center", size=11)
+            if ci == 11:
+                cell.number_format = "0.0%"
+    sl_ws.freeze_panes = "A3"
+    sl_ws.auto_filter.ref = f"A2:{get_column_letter(ncols_sl)}{max(2, min(7, len(sector_leaders)+2))}"
+
+    # ══════════════════════════════════════════════════════════════════
+    #  SHEET 6 ── 📋 SECTOR SUMMARY  (aggregated)
     # ══════════════════════════════════════════════════════════════════
     ss_ws = wb.create_sheet("📋 Sector Summary")
 
-    sector_summary = (
-        scored.sort_values(["sector","composite_score","symbol"],
-                           ascending=[True, False, True])
-        .groupby("sector", as_index=False)
-        .agg(
-            sector_stock_count       =("sector_stock_count",       "max"),
-            sector_top_quartile_count=("sector_top_quartile_count","max"),
-            sector_strength_ratio    =("sector_strength_ratio",    "max"),
-            score_sector             =("score_sector",             "max"),
-            best_symbol              =("symbol",                   "first"),
-            best_composite_score     =("composite_score",          "max"),
-            avg_composite_score      =("composite_score",          "mean"),
-            count_above_20_score     =("composite_score",
-                                       lambda s: int((s >= 20).sum())),
-            count_top_20             =("symbol",
-                                       lambda s: int(
-                                           sum(1 for sym in s
-                                               if sym in top20["symbol"].values)
-                                       )),
-            median_sector_score      =("composite_score",          "median"),
-        )
+    sector_summary = sector_summary_base.merge(
+        sector_leaders[[
+            "sector",
+            "leadership_score",
+            "leader_1",
+            "leader_2",
+            "leader_avg_rs_total",
+            "leader_avg_pre_sector",
+            "leader_avg_perf_total",
+        ]] if not sector_leaders.empty else pd.DataFrame(columns=[
+            "sector", "leadership_score", "leader_1", "leader_2",
+            "leader_avg_rs_total", "leader_avg_pre_sector", "leader_avg_perf_total",
+        ]),
+        on="sector",
+        how="left",
     )
-    sector_summary.sort_values("avg_composite_score", ascending=False, inplace=True)
+    sector_summary["leadership_score"] = sector_summary["leadership_score"].fillna(-1.0)
+    sector_summary.sort_values(
+        ["sector_positive_score_count", "avg_composite_score", "avg_pre_sector_score", "avg_rs_total"],
+        ascending=[False, False, False, False],
+        inplace=True,
+    )
     sector_summary.reset_index(drop=True, inplace=True)
 
     SS_COLS = [
-        ("Rank",               5), ("Sector",            24),
-        ("# Stocks",           7), ("Best Symbol",       14),
-        ("Best Score",         8), ("Avg Score",          8),
-        ("Median Score",       8), ("# Top-20",           7),
-        ("# Score≥20",         7), ("Top-Qrt Count",      9),
-        ("Strength Ratio",     9), ("Sector Pts",         8),
+        ("Rank",               5), ("Sector",            22),
+        ("# Stocks",           7), ("# Pos",             6), ("LeaderScore",      10),
+        ("Leader 1",          14), ("Leader 2",         14),
+        ("Best Symbol",       14), ("Best Score",        8),
+        ("Avg Score",          8), ("Median Score",      8),
+        ("Avg RS",             8), ("Avg Pre-Sec",      10),
+        ("# Top-20",           7), ("# Score≥20",        7),
+        ("Top-Qrt Count",      9), ("Strength Ratio",    9),
+        ("Sector Pts",         8),
     ]
     ncols_ss = len(SS_COLS)
 
     ss_ws.merge_cells(f"A1:{get_column_letter(ncols_ss)}1")
     ss_ws["A1"] = (
         f"SECTOR SUMMARY   |   As of {cutoff_date.strftime('%d-%b-%Y')}   "
-        f"|   Ranked by avg composite score"
+        f"|   Ranked by positive stock count first, then average stock score"
     )
     sc(ss_ws["A1"], bold=True, color="FFFFFF", fill=T_FILL, size=12, align="center")
     ss_ws.row_dimensions[1].height = 24
@@ -1787,12 +2075,18 @@ def export_workbook(
 
         vals = [
             rank2,
-            srow.get("sector",""),
+            srow.get("sector", ""),
             srow.get("sector_stock_count", ""),
-            srow.get("best_symbol",""),
+            srow.get("sector_positive_score_count", ""),
+            round_or_blank(srow.get("leadership_score"), 1) if float(srow.get("leadership_score", -1) or -1) >= 0 else "",
+            srow.get("leader_1", ""),
+            srow.get("leader_2", ""),
+            srow.get("best_symbol", ""),
             round_or_blank(srow.get("best_composite_score")),
             round(avg_sc, 1),
             round_or_blank(srow.get("median_sector_score"), 1),
+            round_or_blank(srow.get("avg_rs_total"), 1),
+            round_or_blank(srow.get("avg_pre_sector_score"), 1),
             srow.get("count_top_20", ""),
             srow.get("count_above_20_score", ""),
             srow.get("sector_top_quartile_count", ""),
@@ -1840,7 +2134,7 @@ def export_workbook(
         ("Top Score",                     round_or_blank(scored["composite_score"].max()) if not scored.empty else ""),
         ("Bottom Score",                  round_or_blank(scored["composite_score"].min()) if not scored.empty else ""),
         ("Liquidity Bottom-30 Threshold", round_or_blank(scored["turnover_bottom30"].iloc[0])          if not scored.empty else ""),
-        ("ATR% Bottom-30 Threshold",      round_or_blank(scored["atr_bottom30"].iloc[0])               if not scored.empty else ""),
+        ("ATR% Bottom-10 Threshold",      round_or_blank(scored["atr_bottom10"].iloc[0])               if not scored.empty else ""),
         ("Index Return 12M",              percent_or_blank(scored["index_return_12m"].iloc[0])          if not scored.empty else ""),
         ("Index Return 6M",               percent_or_blank(scored["index_return_6m"].iloc[0])           if not scored.empty else ""),
         ("Index Return 3M",               percent_or_blank(scored["index_return_3m"].iloc[0])           if not scored.empty else ""),
@@ -1853,6 +2147,9 @@ def export_workbook(
         ("3M Top-10 Threshold",           percent_or_blank(scored["ret3_top10"].iloc[0])                if not scored.empty else ""),
         ("3M Top-20 Threshold",           percent_or_blank(scored["ret3_top20"].iloc[0])                if not scored.empty else ""),
         ("3M Top-30 Threshold",           percent_or_blank(scored["ret3_top30"].iloc[0])                if not scored.empty else ""),
+        ("Days<50DMA Top-10 Threshold",   round_or_blank(scored["daysbelow50dma_top10"].iloc[0])       if not scored.empty else ""),
+        ("Green Candles Top-10 Threshold",round_or_blank(scored["green_candle_top10"].iloc[0])         if not scored.empty else ""),
+        ("Green Candles Top-20 Threshold",round_or_blank(scored["green_candle_top20"].iloc[0])         if not scored.empty else ""),
         ("RS 12M Top-10 Threshold",       percent_or_blank(scored["rs12_top10"].iloc[0])                if not scored.empty else ""),
         ("RS 12M Top-30 Threshold",       percent_or_blank(scored["rs12_top30"].iloc[0])                if not scored.empty else ""),
         ("RS 6M Top-10 Threshold",        percent_or_blank(scored["rs6_top10"].iloc[0])                 if not scored.empty else ""),
@@ -1861,10 +2158,11 @@ def export_workbook(
         ("RS 3M Top-30 Threshold",        percent_or_blank(scored["rs3_top30"].iloc[0])                 if not scored.empty else ""),
         ("Uptrend Top-20 Threshold",      percent_or_blank(scored["uptrend_consistency_top20"].iloc[0]) if not scored.empty else ""),
         ("Pre-Sector Top-Qtrl Threshold", round_or_blank(scored["top_quartile_score_threshold"].iloc[0])if not scored.empty else ""),
-        ("Sector Strength Top-10",        round_or_blank(scored["sector_top10_threshold"].iloc[0])      if not scored.empty else ""),
-        ("Sector Strength Top-30",        round_or_blank(scored["sector_top30_threshold"].iloc[0])      if not scored.empty else ""),
+        ("Sector Leadership Top-10",      round_or_blank(scored["sector_top10_threshold"].iloc[0])      if not scored.empty else ""),
+        ("Sector Leadership Top-30",      round_or_blank(scored["sector_top30_threshold"].iloc[0])      if not scored.empty else ""),
         ("─── Assumptions ───",            ""),
         ("Sector Scoring",                "Top 10% sectors = +4pts;  Top 30% = +2pts"),
+        ("Sector Leaders",                "Top 5 sectors, min 2 positive-score stocks; higher positive-stock count takes precedence, then average stock score"),
         ("52W High Basis",                "Daily HIGH (not close)"),
     ]
     for ri2, (label, val) in enumerate(summary_rows, start=1):
@@ -1965,11 +2263,26 @@ def main() -> None:
     # ── DB connection ─────────────────────────────────────────────────────
     conn = get_db_connection()
     print("  MySQL bhav DB : connected")
+    ensure_inactive_symbols_table(conn)
 
     warnings: List[WarningLog] = []
+    symbol_replacements = load_symbol_replacements(conn)
+    remapped_pairs = [
+        (symbol, symbol_replacements[symbol.upper()])
+        for symbol in symbols
+        if symbol.upper() in symbol_replacements and symbol_replacements[symbol.upper()] != symbol.upper()
+    ]
+    if remapped_pairs:
+        print("  Using mapped replacement symbols from bhav.inactive_symbols for Kite lookups:")
+        for old_symbol, new_symbol in remapped_pairs:
+            print(f"    {old_symbol} -> {new_symbol}  (turnover keeps old bhav symbol)")
+            warnings.append(
+                WarningLog(old_symbol, f"Using active Kite symbol {new_symbol}; bhav turnover remains on original symbol.")
+            )
+    effective_kite_symbols = remap_symbols(symbols, symbol_replacements)
 
     # ── Sector map ────────────────────────────────────────────────────────
-    sector_map = load_sector_map(conn, symbols)
+    sector_map = load_sector_map(conn, list(dict.fromkeys(symbols + effective_kite_symbols)))
 
     # ── Date window for history ───────────────────────────────────────────
     fetch_start = min(reset_date, cutoff_date - timedelta(days=LOOKBACK_52W + 60)) - timedelta(days=30)
@@ -1990,7 +2303,7 @@ def main() -> None:
 
     # ── Kite session ──────────────────────────────────────────────────────
     kite = get_kite_client(token_file)
-    instrument_map = build_instrument_map(kite, symbols)
+    instrument_map = build_instrument_map(kite, effective_kite_symbols)
 
     # ── Per-symbol fetch + metrics ────────────────────────────────────────
     total   = len(symbols)
@@ -2000,8 +2313,10 @@ def main() -> None:
     print(f"\n  Fetching OHLCV history + computing metrics ({total} symbols)...\n")
 
     for idx, symbol in enumerate(symbols, 1):
-        info = instrument_map.get(symbol)
+        kite_symbol = symbol_replacements.get(symbol.upper(), symbol.upper())
+        info = instrument_map.get(kite_symbol)
         if info is None:
+            record_inactive_symbol(conn, symbol)
             warnings.append(WarningLog(symbol, "Not found in Kite NSE instruments; skipped."))
             skipped.append(symbol)
             print(f"  [{idx:>3}/{total}] {symbol:<18} — not in Kite instruments, skipped")
@@ -2010,9 +2325,10 @@ def main() -> None:
         instrument_token = int(info["instrument_token"])
         listing_date     = info.get("listing_date")
 
-        print(f"  [{idx:>3}/{total}] {symbol:<18}", end=" ", flush=True)
+        display_symbol = f"{symbol}->{kite_symbol}" if kite_symbol != symbol.upper() else symbol
+        print(f"  [{idx:>3}/{total}] {display_symbol:<18}", end=" ", flush=True)
         df = fetch_history_with_retry(
-            kite, instrument_token, symbol, fetch_start, cutoff_date
+            kite, instrument_token, kite_symbol, fetch_start, cutoff_date
         )
         time.sleep(0.35)
 
@@ -2022,9 +2338,9 @@ def main() -> None:
             print("NO DATA — skipped")
             continue
 
-        turnover_override = turnover_map.get(symbol.upper())
+        turnover_override = turnover_map.get(symbol.upper()) or turnover_map.get(kite_symbol.upper())
         result = compute_stock_metrics(
-            symbol, df, index_df, sector_map.get(symbol, "Unknown"),
+            kite_symbol, df, index_df, sector_map.get(symbol, sector_map.get(kite_symbol, "Unknown")),
             cutoff_date, reset_date, listing_date,
             turnover_override, warnings,
         )
@@ -2070,7 +2386,8 @@ def main() -> None:
     print(f"\n  Excel  → {wb_path}")
 
     # ── Export TradingView day-one list ───────────────────────────────────
-    tv_path = export_tradingview_dayone(scored, output_dir, cutoff_date)
+    reports_dir = Path(__file__).resolve().parent / "reports"
+    tv_path = export_tradingview_dayone(scored, reports_dir, cutoff_date)
     print(f"  Day-1  → {tv_path}")
 
     # ── Auto-run sector_discovery2.py if present ──────────────────────────
