@@ -58,7 +58,8 @@ SPIKE_WINDOW_10 = 10
 SPIKE_WINDOW_30 = 30
 SPIKE_WINDOW_60 = 60
 TURNOVER_CRORE_DIVISOR = 10_000_000.0
-MIN_MEDIAN_TURNOVER_CRORES = 15.0
+MIN_MEDIAN_TURNOVER_CRORES = 10.0
+MIN_AVG_TURNOVER_42D_CRORES = 25.0
 GAPUP_LOOKBACK = 60
 UPTREND_CONSISTENCY_LOOKBACK = 60
 
@@ -399,6 +400,7 @@ def filter_symbols_by_turnover(
     symbols: Iterable[str],
     turnover_map: Dict[str, Dict[str, float]],
     min_median_turnover_crores: float,
+    min_avg_turnover_42d_crores: float,
     warnings: List[WarningLog],
 ) -> List[str]:
     eligible: List[str] = []
@@ -414,6 +416,28 @@ def filter_symbols_by_turnover(
                     "Median turnover unavailable; excluded from rating universe.",
                     avg_turnover_21d=None if pd.isna(avg_turnover_21d) else float(avg_turnover_21d),
                     avg_turnover_42d=None if pd.isna(avg_turnover) else float(avg_turnover),
+                    median_turnover_42d=None if pd.isna(median_turnover) else float(median_turnover),
+                )
+            )
+            continue
+        if pd.isna(avg_turnover):
+            warnings.append(
+                WarningLog(
+                    symbol,
+                    "Average 42D turnover unavailable; excluded from rating universe.",
+                    avg_turnover_21d=None if pd.isna(avg_turnover_21d) else float(avg_turnover_21d),
+                    avg_turnover_42d=None,
+                    median_turnover_42d=None if pd.isna(median_turnover) else float(median_turnover),
+                )
+            )
+            continue
+        if float(avg_turnover) < min_avg_turnover_42d_crores:
+            warnings.append(
+                WarningLog(
+                    symbol,
+                    f"Average 42D turnover {round(float(avg_turnover), 2)} Cr below {min_avg_turnover_42d_crores:.2f} Cr; excluded from rating universe.",
+                    avg_turnover_21d=None if pd.isna(avg_turnover_21d) else float(avg_turnover_21d),
+                    avg_turnover_42d=float(avg_turnover),
                     median_turnover_42d=None if pd.isna(median_turnover) else float(median_turnover),
                 )
             )
@@ -2117,6 +2141,102 @@ def export_workbook(
     #  SHEET 6 ── ℹ️ SUMMARY  (run metadata)
     # ══════════════════════════════════════════════════════════════════
     summ = wb.create_sheet("ℹ️ Summary")
+    rr_ws = wb.create_sheet("📘 Ready Reckoner")
+
+    def rr_value(key: str, formatter=None) -> object:
+        if scored.empty or key not in scored.columns:
+            return ""
+        value = scored.iloc[0][key]
+        if pd.isna(value):
+            return ""
+        return formatter(value) if formatter else round_or_blank(value, 2)
+
+    RR_COLS = [
+        ("Category", 18),
+        ("Metric", 26),
+        ("Rule", 56),
+        ("Points", 12),
+        ("Current Threshold / Notes", 34),
+    ]
+    rr_ws.merge_cells(f"A1:{get_column_letter(len(RR_COLS))}1")
+    rr_ws["A1"] = (
+        f"READY RECKONER   |   As of {cutoff_date.strftime('%d-%b-%Y')}   "
+        f"|   Summary of points and scoring criteria used by this run"
+    )
+    sc(rr_ws["A1"], bold=True, color="FFFFFF", fill=T_FILL, size=12, align="center")
+    rr_ws.row_dimensions[1].height = 24
+
+    for ci, (hdr, width) in enumerate(RR_COLS, 1):
+        cell = rr_ws.cell(row=2, column=ci, value=hdr)
+        sc(cell, bold=True, color="FFFFFF", fill=H_FILL, size=11, wrap=True)
+        rr_ws.column_dimensions[get_column_letter(ci)].width = width
+    rr_ws.row_dimensions[2].height = 28
+
+    rr_rows = [
+        ("Liquidity", "Universe inclusion", "Average 42D turnover must be available", "Required", "Missing value => excluded"),
+        ("Liquidity", "Universe inclusion", f"Average 42D turnover must be >= {MIN_AVG_TURNOVER_42D_CRORES:.2f} Cr", "Required", f"Current floor = {MIN_AVG_TURNOVER_42D_CRORES:.2f} Cr"),
+        ("Liquidity", "Universe inclusion", "Median 42D turnover must be available", "Required", "Missing value => excluded"),
+        ("Liquidity", "Universe inclusion", f"Median 42D turnover must be >= {MIN_MEDIAN_TURNOVER_CRORES:.2f} Cr", "Required", f"Current floor = {MIN_MEDIAN_TURNOVER_CRORES:.2f} Cr"),
+        ("Liquidity", "Avg turnover 42D", "Bottom 30% of rated universe", "-8", rr_value("turnover_bottom30")),
+        ("Liquidity", "Median turnover 42D", "Top 10% of rated universe", "+6", rr_value("median_turnover_top10")),
+        ("Liquidity", "Median turnover 42D", "Top 30% of rated universe", "+4", rr_value("median_turnover_top30")),
+        ("52W High", "Distance from 52W high", "<= 10% from 52W high", "+6", "Daily high basis"),
+        ("52W High", "Distance from 52W high", "<= 15% from 52W high", "+4", "Daily high basis"),
+        ("52W High", "Distance from 52W high", "<= 20% from 52W high", "+2", "Daily high basis"),
+        ("52W High", "Recency of 52W high", "52W high made within 10 trading days", "+6", ""),
+        ("52W High", "Recency of 52W high", "52W high made within 15 trading days", "+3", ""),
+        ("52W High", "Bonus", "<= 10% from 52W high and within 10 trading days", "+4", ""),
+        ("52W High", "Bonus", "<= 15% from 52W high and within 10 trading days", "+2", ""),
+        ("Trend", "50DMA", "Close above 50DMA", "+4", ""),
+        ("Trend", "50DMA", "Close below 50DMA", "-4", ""),
+        ("Trend", "21EMA", "Close above 21EMA", "+2", ""),
+        ("Trend", "8EMA", "Close above 8EMA", "+2", ""),
+        ("Trend", "Uptrend consistency", "Top 20% of rated universe", "+4", rr_value("uptrend_consistency_top20", percent_or_blank)),
+        ("Trend", "Green candle count", "Top 10% of rated universe", "+4", rr_value("green_candle_top10")),
+        ("Trend", "Green candle count", "Top 20% of rated universe", "+2", rr_value("green_candle_top20")),
+        ("Trend", "Days below 50DMA", "Top 10% of rated universe", "-8", rr_value("daysbelow50dma_top10")),
+        ("Performance", "12M return", "Top 10% of rated universe", "+8", rr_value("ret12_top10", percent_or_blank)),
+        ("Performance", "12M return", "Top 20% of rated universe", "+6", rr_value("ret12_top20", percent_or_blank)),
+        ("Performance", "12M return", "Top 30% of rated universe", "+4", rr_value("ret12_top30", percent_or_blank)),
+        ("Performance", "6M return", "Top 10% of rated universe", "+6", rr_value("ret6_top10", percent_or_blank)),
+        ("Performance", "6M return", "Top 20% of rated universe", "+4", rr_value("ret6_top20", percent_or_blank)),
+        ("Performance", "6M return", "Top 30% of rated universe", "+2", rr_value("ret6_top30", percent_or_blank)),
+        ("Performance", "6M return", "Bottom 10% of mature listings", "-2", rr_value("ret6_bottom10", percent_or_blank)),
+        ("Performance", "3M return", "Top 10% of rated universe", "+6", rr_value("ret3_top10", percent_or_blank)),
+        ("Performance", "3M return", "Top 20% of rated universe", "+4", rr_value("ret3_top20", percent_or_blank)),
+        ("Performance", "3M return", "Top 30% of rated universe", "+2", rr_value("ret3_top30", percent_or_blank)),
+        ("Performance", "3M return", "Bottom 10% of mature listings", "-4", rr_value("ret3_bottom10", percent_or_blank)),
+        ("Performance", "Bonus", "12M top-10 stock with 52W high in last 10 days", "+2", ""),
+        ("Performance", "Reset recovery rank", "Top 10 by reset recovery", "+4", "Rank based"),
+        ("Performance", "Reset recovery rank", "Top 20 by reset recovery", "+2", "Rank based"),
+        ("Relative Strength", "RS 12M", "Top 10% of rated universe", "+6", rr_value("rs12_top10", percent_or_blank)),
+        ("Relative Strength", "RS 12M", "Top 30% of rated universe", "+3", rr_value("rs12_top30", percent_or_blank)),
+        ("Relative Strength", "RS 6M", "Top 10% of rated universe", "+4", rr_value("rs6_top10", percent_or_blank)),
+        ("Relative Strength", "RS 6M", "Top 30% of rated universe", "+2", rr_value("rs6_top30", percent_or_blank)),
+        ("Relative Strength", "RS 3M", "Top 10% of rated universe", "+4", rr_value("rs3_top10", percent_or_blank)),
+        ("Relative Strength", "RS 3M", "Top 30% of rated universe", "+2", rr_value("rs3_top30", percent_or_blank)),
+        ("Relative Strength", "RS line", "RS line at 52W high", "+2", ""),
+        ("Relative Strength", "RS slope 21D", "Negative RS slope", "-2", ""),
+        ("Volatility", "ATR% 21D", "Bottom 10% and ATR% < 3.0", "-6", rr_value("atr_bottom10")),
+        ("Volatility", "ATR% 21D", "Bottom 10% and ATR% < 4.0", "-3", rr_value("atr_bottom10")),
+        ("Event", "Volume spike", "Top 1% volume in lookback, within 10D / 30D / 60D", "+10 / +8 / +6", "Bonus +4 if price change > 6%; +2 if > 3%"),
+        ("Event", "Gap-up", "Gap-up > 3%, close gain > 5%, and either close gain >= 9% or top-1% volume", "+6", "Recent gap-up window"),
+        ("Listing", "New listing", "Listed < 30 days", "+4", ""),
+        ("Listing", "New listing", "Listed < 60 days", "+2", ""),
+        ("Sector", "Sector strength", "Top 10% eligible sectors by leadership score", f"+{SECTOR_TOP10_POINTS}", rr_value("sector_top10_threshold")),
+        ("Sector", "Sector strength", "Top 30% eligible sectors by leadership score", f"+{SECTOR_TOP30_POINTS}", rr_value("sector_top30_threshold")),
+        ("Sector", "Eligibility", "Sector must have more than 1 positive-score stock", "Required", ""),
+        ("Sector", "Top quartile reference", "Pre-sector score top quartile", "Reference", rr_value("top_quartile_score_threshold")),
+    ]
+
+    for ri, row_vals in enumerate(rr_rows, start=3):
+        row_fill = ALT_FILL if ri % 2 == 0 else WHT_FILL
+        for ci, value in enumerate(row_vals, start=1):
+            cell = rr_ws.cell(row=ri, column=ci, value=value)
+            sc(cell, fill=row_fill, align="left", size=11, wrap=(ci in (2, 3, 5)))
+    rr_ws.freeze_panes = "A3"
+    rr_ws.auto_filter.ref = f"A2:E{len(rr_rows) + 2}"
+
     summary_rows = [
         ("Metric", "Value"),
         ("Cutoff Date",                   cutoff_date.isoformat()),
@@ -2129,6 +2249,7 @@ def export_workbook(
         ("3M Window",                      "60 trading candles"),
         ("─── Turnover ───",               ""),
         ("Turnover Unit",                  "Crores"),
+        ("Min Avg Turnover 42D Filter",    f"{MIN_AVG_TURNOVER_42D_CRORES:.2f} Cr"),
         ("Min Median Turnover Filter",    f"{MIN_MEDIAN_TURNOVER_CRORES:.2f} Cr"),
         ("─── Thresholds ───",             ""),
         ("Top Score",                     round_or_blank(scored["composite_score"].max()) if not scored.empty else ""),
@@ -2294,7 +2415,11 @@ def main() -> None:
     # ── Turnover map (liquidity filter) ───────────────────────────────────
     turnover_map = load_turnover_map(conn, symbols, fetch_start, cutoff_date)
     eligible = filter_symbols_by_turnover(
-        symbols, turnover_map, MIN_MEDIAN_TURNOVER_CRORES, warnings
+        symbols,
+        turnover_map,
+        MIN_MEDIAN_TURNOVER_CRORES,
+        MIN_AVG_TURNOVER_42D_CRORES,
+        warnings,
     )
     if len(eligible) < len(symbols):
         excluded = len(symbols) - len(eligible)

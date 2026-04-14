@@ -46,7 +46,7 @@ GM_SQL_FILES = [
     Path(r"C:\Users\shada\workspace\sql\archive_gmlistcreation.sql"),
 ]
 
-OUTPUT_DIR = Path(__file__).parent / "reports"
+OUTPUT_DIR = Path(r"C:\Users\shada\Monumental\gmlist")
 
 
 def parse_date_arg(text: str) -> str:

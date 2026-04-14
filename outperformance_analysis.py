@@ -43,7 +43,6 @@ ATR_PERIOD        = 21
 RS_SLOPE_LOOKBACK = 21
 
 REPORTS_DIR      = Path(r"C:\Users\shada\Monumental\reports")
-RATED_LIST_INDEX = REPORTS_DIR / "rated_list_date.txt"
 
 OUT_DIR = Path(__file__).parent / "output"
 OUT_DIR.mkdir(exist_ok=True)
@@ -75,34 +74,10 @@ def parse_args():
 
 # ── Resolve rated-list file from index ────────────────────────────────
 def resolve_rated_list(cutoff: date) -> Path:
-    """
-    Reads RATED_LIST_INDEX (rated_list_date.txt) and returns the Path
-    of the rated-list file whose date matches *cutoff*.
-
-    Index format (one entry per line):
-        YYYY-MM-DD  filename.txt
-    """
-    if not RATED_LIST_INDEX.exists():
-        sys.exit(f"ERROR: index file not found:\n  {RATED_LIST_INDEX}")
-
-    cutoff_str = cutoff.strftime("%Y-%m-%d")
-    with open(RATED_LIST_INDEX, encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            parts = line.split(None, 1)   # split on first whitespace
-            if len(parts) == 2 and parts[0] == cutoff_str:
-                fname = parts[1].strip()
-                fpath = REPORTS_DIR / fname
-                if not fpath.exists():
-                    sys.exit(f"ERROR: rated-list file not found:\n  {fpath}")
-                return fpath
-
-    sys.exit(
-        f"ERROR: no entry for {cutoff_str} in {RATED_LIST_INDEX}\n"
-        f"  Add a line like:  {cutoff_str}  rated_list_<label>.txt"
-    )
+    expected = REPORTS_DIR / f"rated_list_{cutoff.strftime('%d%b%Y').lower()}.txt"
+    if expected.exists():
+        return expected
+    sys.exit(f"ERROR: rated-list file not found:\n  {expected}")
 
 
 # ── Parse symbols from rated-list file ────────────────────────────────
