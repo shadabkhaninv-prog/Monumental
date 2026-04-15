@@ -9,6 +9,7 @@ Optional flags:
     --token PATH        Kite token file path (default: kite_token.txt)
     --output-dir PATH   Output directory (default: ./output)
     --index-symbol STR  Preferred index symbol in indexbhav
+    --liquid-leader-map JSON  Optional neo liquid bonus map passed inline
 
 Dependencies:
     pip install kiteconnect mysql-connector-python pandas numpy openpyxl
@@ -17,6 +18,7 @@ Dependencies:
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import os
 import subprocess
@@ -25,7 +27,7 @@ import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -59,9 +61,9 @@ SPIKE_WINDOW_30 = 30
 SPIKE_WINDOW_60 = 60
 TURNOVER_CRORE_DIVISOR = 10_000_000.0
 MIN_MEDIAN_TURNOVER_CRORES = 10.0
-MIN_AVG_TURNOVER_42D_CRORES = 25.0
+MIN_AVG_TURNOVER_42D_CRORES = 10.0
 GAPUP_LOOKBACK = 60
-UPTREND_CONSISTENCY_LOOKBACK = 60
+UPTREND_CONSISTENCY_MIN_LOOKBACK = 30
 
 DB_CONFIG = {
     "host": "localhost",
@@ -120,6 +122,11 @@ def parse_args() -> argparse.Namespace:
         default="Nifty Smallcap 250",
         help="Preferred index symbol label in indexbhav (default: Nifty Smallcap 250).",
     )
+    parser.add_argument(
+        "--liquid-leader-map",
+        default="",
+        help="Optional JSON object mapping top neo liquid leaders to bonus points.",
+    )
     args = parser.parse_args()
     args.cutoff_date = parse_iso_date(args.cutoff_date, "cutoff_date")
     args.reset_date = parse_iso_date(args.reset_date, "reset_date")
@@ -173,6 +180,31 @@ def read_symbols(path: Path) -> List[str]:
     if not symbols:
         raise SystemExit(f"Symbol file is empty: {path}")
     return symbols
+
+
+def parse_liquid_leader_bonus_map(raw_value: str, replacements: Dict[str, str]) -> Dict[str, int]:
+    if not raw_value:
+        return {}
+    try:
+        payload = json.loads(raw_value)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"Invalid --liquid-leader-map JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise SystemExit("--liquid-leader-map must be a JSON object")
+
+    bonus_map: Dict[str, int] = {}
+    for raw_symbol, raw_bonus in payload.items():
+        symbol = str(raw_symbol).strip().upper()
+        mapped = replacements.get(symbol, symbol)
+        try:
+            bonus = int(raw_bonus)
+        except (TypeError, ValueError):
+            continue
+        if bonus <= 0 or not symbol:
+            continue
+        bonus_map[symbol] = max(bonus_map.get(symbol, 0), bonus)
+        bonus_map[mapped] = max(bonus_map.get(mapped, 0), bonus)
+    return bonus_map
 
 
 def read_kite_token_file(path: Path) -> Dict[str, str]:
@@ -571,6 +603,7 @@ def compute_stock_metrics(
     reset_date: date,
     listing_date: Optional[date],
     turnover_override: Optional[Dict[str, float]],
+    liquid_leader_bonus: int,
     warnings: List[WarningLog],
 ) -> Optional[Dict[str, object]]:
     history = df[df.index <= cutoff_date].copy()
@@ -612,9 +645,11 @@ def compute_stock_metrics(
     stock_close_12m = trading_lookback_value(history["close"], LOOKBACK_12M)
     stock_close_6m = trading_lookback_value(history["close"], LOOKBACK_6M)
     stock_close_3m = trading_lookback_value(history["close"], LOOKBACK_3M)
+    prev_close = float(history["close"].iloc[-2]) if len(history) >= 2 else math.nan
     ret_12m = safe_return(current_close, stock_close_12m)
     ret_6m = safe_return(current_close, stock_close_6m)
     ret_3m = safe_return(current_close, stock_close_3m)
+    ret_1d = safe_return(current_close, prev_close)
 
     reset_row = first_row_on_or_after(history, reset_date)
     reset_low = float(reset_row["low"]) if reset_row is not None else math.nan
@@ -651,12 +686,55 @@ def compute_stock_metrics(
     ema8 = history["close"].ewm(span=8, adjust=False).mean()
     ema21 = history["close"].ewm(span=21, adjust=False).mean()
     dma50 = history["close"].rolling(50, min_periods=1).mean()
+    ema8_value = float(ema8.iloc[-1]) if not ema8.empty and not pd.isna(ema8.iloc[-1]) else math.nan
+    ema21_value = float(ema21.iloc[-1]) if not ema21.empty and not pd.isna(ema21.iloc[-1]) else math.nan
     uptrend_stack = (ema8 > ema21) & (ema21 > dma50)
-    uptrend_consistency_pct = float(uptrend_stack.tail(UPTREND_CONSISTENCY_LOOKBACK).mean()) if not uptrend_stack.empty else math.nan
-    above_50dma = bool(not dma50.empty and not pd.isna(dma50.iloc[-1]) and current_close > float(dma50.iloc[-1]))
-    above_21ema = bool(not ema21.empty and not pd.isna(ema21.iloc[-1]) and current_close > float(ema21.iloc[-1]))
-    above_8ema = bool(not ema8.empty and not pd.isna(ema8.iloc[-1]) and current_close > float(ema8.iloc[-1]))
     reset_history = history[history.index >= reset_date]
+    uptrend_lookback = max(UPTREND_CONSISTENCY_MIN_LOOKBACK, len(reset_history))
+    uptrend_consistency_pct = float(uptrend_stack.tail(uptrend_lookback).mean()) if not uptrend_stack.empty else math.nan
+    ema21_window = history.tail(uptrend_lookback).copy()
+    ema21_window_series = ema21.loc[ema21_window.index] if not ema21_window.empty else ema21.iloc[0:0]
+    ema21_uptrend_mask = (
+        (ema21_window["close"] > ema21_window_series)
+        & (ema21_window_series.diff() > 0)
+    ).fillna(False) if not ema21_window.empty else pd.Series(dtype=bool)
+    ema21_uptrend_pct = float(ema21_uptrend_mask.mean()) if not ema21_uptrend_mask.empty else math.nan
+    ema21_uptrend_days = 0
+    ema21_uptrend_since = None
+    if not ema21_uptrend_mask.empty:
+        for is_uptrend in reversed(ema21_uptrend_mask.tolist()):
+            if not is_uptrend:
+                break
+            ema21_uptrend_days += 1
+        if ema21_uptrend_days > 0:
+            ema21_uptrend_since = ema21_window.index[-ema21_uptrend_days]
+    above_50dma = bool(not dma50.empty and not pd.isna(dma50.iloc[-1]) and current_close > float(dma50.iloc[-1]))
+    above_21ema = bool(not pd.isna(ema21_value) and current_close > ema21_value)
+    above_8ema = bool(not pd.isna(ema8_value) and current_close > ema8_value)
+    ema8_slope_5d = (
+        float(ema8.iloc[-1] - ema8.iloc[-6])
+        if len(ema8) >= 6 and not pd.isna(ema8.iloc[-1]) and not pd.isna(ema8.iloc[-6])
+        else math.nan
+    )
+    ema21_slope_5d = (
+        float(ema21.iloc[-1] - ema21.iloc[-6])
+        if len(ema21) >= 6 and not pd.isna(ema21.iloc[-1]) and not pd.isna(ema21.iloc[-6])
+        else math.nan
+    )
+    short_trend_bearish = bool(
+        not pd.isna(ema8_slope_5d)
+        and not pd.isna(ema21_slope_5d)
+        and (ema8_slope_5d < 0)
+        and (ema21_slope_5d < 0)
+        and (not above_21ema)
+    )
+    short_trend_breakdown = bool(
+        short_trend_bearish
+        and (not above_8ema)
+        and (not pd.isna(ema8_value))
+        and (not pd.isna(ema21_value))
+        and (ema8_value <= ema21_value)
+    )
     reset_dma50 = dma50.loc[reset_history.index] if not reset_history.empty else dma50.iloc[0:0]
     days_below_50dma = int((reset_history["close"] < reset_dma50).sum()) if not reset_history.empty else 0
     green_candle_count = int((reset_history["close"] > reset_history["open"]).sum()) if not reset_history.empty else 0
@@ -773,6 +851,7 @@ def compute_stock_metrics(
         "return_12m": ret_12m,
         "return_6m": ret_6m,
         "return_3m": ret_3m,
+        "return_1d": ret_1d,
         "reset_date_used": reset_date_used,
         "reset_low": reset_low,
         "reset_recovery": reset_recovery,
@@ -785,10 +864,20 @@ def compute_stock_metrics(
         "rs_line_at_52w_high": rs_line_at_high,
         "rs_line_slope_21d": rs_line_slope_21d,
         "atr_percent_21d": atr_percent,
+        "ema8_value": ema8_value,
+        "ema21_value": ema21_value,
         "above_50dma": above_50dma,
         "above_21ema": above_21ema,
         "above_8ema": above_8ema,
+        "ema8_slope_5d": ema8_slope_5d,
+        "ema21_slope_5d": ema21_slope_5d,
+        "short_trend_bearish": short_trend_bearish,
+        "short_trend_breakdown": short_trend_breakdown,
         "uptrend_consistency_pct": uptrend_consistency_pct,
+        "uptrend_consistency_lookback": uptrend_lookback,
+        "ema21_uptrend_since": ema21_uptrend_since,
+        "ema21_uptrend_days": ema21_uptrend_days,
+        "ema21_uptrend_pct": ema21_uptrend_pct,
         "green_candle_count": green_candle_count,
         "daysbelow50dma": days_below_50dma,
         "spike_date": spike_date,
@@ -807,6 +896,7 @@ def compute_stock_metrics(
         "gapup_top1_threshold": gapup_top1_threshold,
         "score_gapup": score_gapup,
         "score_new_listing": score_new_listing,
+        "score_liquid_leaders_bonus": liquid_leader_bonus,
     }
 
 
@@ -831,8 +921,6 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
 
     thresholds = {
         "turnover_bottom30": bottom_n_threshold(work["avg_turnover_42d"], 30),
-        "median_turnover_top10": top_n_threshold(work["median_turnover_42d"], 10),
-        "median_turnover_top30": top_n_threshold(work["median_turnover_42d"], 30),
         "ret12_top10": top_n_threshold(work["return_12m"], 10),
         "ret12_top20": top_n_threshold(work["return_12m"], 20),
         "ret12_top30": top_n_threshold(work["return_12m"], 30),
@@ -844,6 +932,9 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
         "ret3_top20": top_n_threshold(work["return_3m"], 20),
         "ret3_top30": top_n_threshold(work["return_3m"], 30),
         "ret3_bottom10": bottom_n_threshold(work["return_3m"], 10),
+        "ret1_top10": top_n_threshold(work["return_1d"], 10),
+        "ret1_top20": top_n_threshold(work["return_1d"], 20),
+        "ret1_bottom20": bottom_n_threshold(work["return_1d"], 20),
         "rs12_top10": top_n_threshold(work["rs_12m"], 10),
         "rs12_top30": top_n_threshold(work["rs_12m"], 30),
         "rs6_top10": top_n_threshold(work["rs_6m"], 10),
@@ -851,38 +942,46 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
         "rs3_top10": top_n_threshold(work["rs_3m"], 10),
         "rs3_top30": top_n_threshold(work["rs_3m"], 30),
         "atr_bottom10": bottom_n_threshold(work["atr_percent_21d"], 10),
-        "uptrend_consistency_top20": top_n_threshold(work["uptrend_consistency_pct"], 20),
+        "uptrend_consistency_top30": top_n_threshold(work["uptrend_consistency_pct"], 30),
         "green_candle_top10": top_n_threshold(work["green_candle_count"], 10),
         "green_candle_top20": top_n_threshold(work["green_candle_count"], 20),
-        "daysbelow50dma_top10": top_n_threshold(work["daysbelow50dma"], 10),
     }
 
     eligible_52w = work["listed_days"] > 1
+    within_10 = eligible_52w & (work["pct_from_52w_high"] <= 0.10)
+    within_15 = eligible_52w & (work["pct_from_52w_high"] > 0.10) & (work["pct_from_52w_high"] <= 0.15)
+    within_20 = eligible_52w & (work["pct_from_52w_high"] > 0.15) & (work["pct_from_52w_high"] <= 0.20)
+    off_20 = eligible_52w & (work["pct_from_52w_high"] > 0.20) & (work["pct_from_52w_high"] < 0.25)
+    off_25 = eligible_52w & (work["pct_from_52w_high"] >= 0.25) & (work["pct_from_52w_high"] < 0.30)
+    off_30 = eligible_52w & (work["pct_from_52w_high"] >= 0.30)
+    recent_10 = eligible_52w & (work["days_since_52w_high"] <= 10)
+
+    # Distance is the base 52W score and also carries the negative penalty once a stock
+    # rolls over too far from the high.
     work["score_52w_price"] = np.select(
         [
-            eligible_52w & (work["pct_from_52w_high"] <= 0.10),
-            eligible_52w & (work["pct_from_52w_high"] <= 0.15),
-            eligible_52w & (work["pct_from_52w_high"] <= 0.20),
+            within_10,
+            within_15,
+            within_20,
+            off_20,
+            off_25,
+            off_30,
         ],
-        [6, 4, 2],
+        [10, 6, 2, -4, -10, -16],
         default=0,
     )
+    # Recency only matters if the stock is still within 20% of the 52W high, which
+    # avoids the old stacked recency/bonus behavior for names already well off the top.
     work["score_52w_recency"] = np.select(
         [
-            eligible_52w & (work["days_since_52w_high"] <= 10),
-            eligible_52w & (work["days_since_52w_high"] <= 15),
+            recent_10 & within_10,
+            recent_10 & within_15,
+            recent_10 & within_20,
         ],
-        [6, 3],
+        [2, 2, 2],
         default=0,
     )
-    work["score_52w_bonus"] = np.select(
-        [
-            eligible_52w & (work["pct_from_52w_high"] <= 0.10) & (work["days_since_52w_high"] <= 10),
-            eligible_52w & (work["pct_from_52w_high"] <= 0.15) & (work["days_since_52w_high"] <= 10),
-        ],
-        [4, 2],
-        default=0,
-    )
+    work["score_52w_bonus"] = 0
     work["score_52w_total"] = (
         work["score_52w_price"] + work["score_52w_recency"] + work["score_52w_bonus"]
     )
@@ -895,10 +994,10 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
     )
     work["score_median_turnover"] = np.select(
         [
-            work["median_turnover_42d"] >= thresholds["median_turnover_top10"],
-            work["median_turnover_42d"] >= thresholds["median_turnover_top30"],
+            work["median_turnover_42d"] < 15.0,
+            work["median_turnover_42d"] < 30.0,
         ],
-        [6, 4],
+        [-8, -4],
         default=0,
     )
 
@@ -911,16 +1010,27 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
     top3_10 = work["return_3m"] >= thresholds["ret3_top10"]
     top3_20 = work["return_3m"] >= thresholds["ret3_top20"]
     top3_30 = work["return_3m"] >= thresholds["ret3_top30"]
+    top1d_10 = work["return_1d"] >= thresholds["ret1_top10"]
+    top1d_20 = work["return_1d"] >= thresholds["ret1_top20"]
     mature_listing = work["listed_days"] >= LOOKBACK_3M
     bottom6_10 = mature_listing & (work["return_6m"] <= thresholds["ret6_bottom10"])
     bottom3_10 = mature_listing & (work["return_3m"] <= thresholds["ret3_bottom10"])
+    bottom1d_20 = work["return_1d"] <= thresholds["ret1_bottom20"]
 
     work["score_perf_12m"] = np.select([top12_10, top12_20, top12_30], [8, 6, 4], default=0)
     work["score_perf_6m"] = np.select([top6_10, top6_20, top6_30], [6, 4, 2], default=0)
     work["score_perf_3m"] = np.select([top3_10, top3_20, top3_30], [6, 4, 2], default=0)
+    work["score_perf_1d"] = np.select([top1d_10, top1d_20], [4, 2], default=0)
     work["score_perf_6m_penalty"] = np.where(bottom6_10, -2, 0)
     work["score_perf_3m_penalty"] = np.where(bottom3_10, -4, 0)
-    work["score_perf_bonus"] = np.where(top12_10 & (work["days_since_52w_high"] <= 10), 2, 0)
+    work["score_perf_1d_penalty"] = np.where(bottom1d_20, -4, 0)
+    work["score_perf_bonus"] = np.where(
+        top12_10
+        & (work["days_since_52w_high"] <= 10)
+        & (work["pct_from_52w_high"] <= 0.20),
+        2,
+        0,
+    )
     reset_rank = work["reset_recovery"].rank(method="min", ascending=False)
     work["score_reset_recovery"] = np.select(
         [
@@ -931,16 +1041,32 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
         default=0,
     )
     recent_listing_mask = work["listed_days"] < 60
-    work.loc[recent_listing_mask, "score_perf_12m"] = np.maximum(work.loc[recent_listing_mask, "score_perf_12m"], 2)
-    work.loc[recent_listing_mask, "score_perf_6m"] = np.maximum(work.loc[recent_listing_mask, "score_perf_6m"], 2)
     work.loc[recent_listing_mask, "score_perf_3m"] = np.maximum(work.loc[recent_listing_mask, "score_perf_3m"], 2)
     work.loc[recent_listing_mask, "score_reset_recovery"] = np.maximum(work.loc[recent_listing_mask, "score_reset_recovery"], 1)
+
+    def median_score(series: pd.Series) -> float:
+        clean = pd.to_numeric(series, errors="coerce").dropna()
+        if clean.empty:
+            return 0.0
+        return float(clean.median())
+
+    missing_12m_history_mask = work["listed_days"] < LOOKBACK_12M
+    missing_6m_history_mask = work["listed_days"] < LOOKBACK_6M
+    median_12m_score = median_score(work.loc[~missing_12m_history_mask, "score_perf_12m"])
+    median_6m_score = median_score(work.loc[~missing_6m_history_mask, "score_perf_6m"])
+
+    work.loc[missing_12m_history_mask, "score_perf_12m"] = median_12m_score
+    work.loc[missing_6m_history_mask, "score_perf_6m"] = median_6m_score
+    work.loc[missing_12m_history_mask, "score_perf_bonus"] = 0
+    work.loc[missing_6m_history_mask, "score_perf_6m_penalty"] = 0
     work["score_performance_total"] = (
         work["score_perf_12m"]
         + work["score_perf_6m"]
         + work["score_perf_3m"]
+        + work["score_perf_1d"]
         + work["score_perf_6m_penalty"]
         + work["score_perf_3m_penalty"]
+        + work["score_perf_1d_penalty"]
         + work["score_perf_bonus"]
         + work["score_reset_recovery"]
     )
@@ -974,7 +1100,7 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
         default=0,
     )
     work["score_uptrend_consistency"] = np.where(
-        work["uptrend_consistency_pct"] >= thresholds["uptrend_consistency_top20"],
+        work["uptrend_consistency_pct"] >= thresholds["uptrend_consistency_top30"],
         4,
         0,
     )
@@ -989,12 +1115,39 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
         [4, 2],
         default=0,
     )
-    work["score_daysbelow50dma_penalty"] = np.where(
-        work["daysbelow50dma"] >= thresholds["daysbelow50dma_top10"],
-        -8,
-        0,
+    work["score_ema21_uptrend"] = np.select(
+        [
+            work["ema21_uptrend_days"] >= 20,
+            work["ema21_uptrend_days"] >= 10,
+            work["ema21_uptrend_pct"] >= 0.90,
+            work["ema21_uptrend_pct"] >= 0.80,
+        ],
+        [4, 2, 2, 1],
+        default=0,
     )
+    work["score_daysbelow50dma_penalty"] = 0
 
+    def median_or_default(series: pd.Series, default_value: float = 0.0) -> float:
+        clean = pd.to_numeric(series, errors="coerce").dropna()
+        if clean.empty:
+            return default_value
+        return float(clean.median())
+
+    recent_listing_trend_mask = work["listed_days"] < 60
+    mature_trend_mask = ~recent_listing_trend_mask
+    median_score_50dma = median_or_default(work.loc[mature_trend_mask, "score_above_50dma"], 0.0)
+    median_score_21ema = median_or_default(work.loc[mature_trend_mask, "score_above_21ema"], 0.0)
+    median_score_8ema = median_or_default(work.loc[mature_trend_mask, "score_above_8ema"], 0.0)
+    median_score_uptrend = median_or_default(work.loc[mature_trend_mask, "score_uptrend_consistency"], 0.0)
+    median_score_ema21_uptrend = median_or_default(work.loc[mature_trend_mask, "score_ema21_uptrend"], 0.0)
+    median_score_green = median_or_default(work.loc[mature_trend_mask, "score_green_candles"], 0.0)
+
+    work.loc[recent_listing_trend_mask, "score_above_50dma"] = median_score_50dma
+    work.loc[recent_listing_trend_mask, "score_above_21ema"] = median_score_21ema
+    work.loc[recent_listing_trend_mask, "score_above_8ema"] = median_score_8ema
+    work.loc[recent_listing_trend_mask, "score_uptrend_consistency"] = median_score_uptrend
+    work.loc[recent_listing_trend_mask, "score_ema21_uptrend"] = median_score_ema21_uptrend
+    work.loc[recent_listing_trend_mask, "score_green_candles"] = median_score_green
     work["pre_sector_score"] = (
         work["score_52w_total"]
         + work["score_liquidity"]
@@ -1006,11 +1159,12 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
         + work["score_above_21ema"]
         + work["score_above_8ema"]
         + work["score_uptrend_consistency"]
+        + work["score_ema21_uptrend"]
         + work["score_green_candles"]
-        + work["score_daysbelow50dma_penalty"]
         + work["score_spike_total"]
         + work["score_gapup"]
         + work["score_new_listing"]
+        + work["score_liquid_leaders_bonus"]
     )
     top_quartile_threshold = top_n_threshold(work["pre_sector_score"], 25)
     work["is_top_quartile_pre_sector"] = work["pre_sector_score"] >= top_quartile_threshold
@@ -1423,7 +1577,7 @@ def export_workbook(
     # ══════════════════════════════════════════════════════════════════
     dash = wb.create_sheet("🏆 Dashboard")
     top20 = scored.head(20).reset_index(drop=True)
-    ncols_d = 13
+    ncols_d = 14
 
     dash.merge_cells(f"A1:{get_column_letter(ncols_d)}1")
     dash["A1"] = (
@@ -1439,7 +1593,7 @@ def export_workbook(
         "#", "Symbol", "Sector", "Score", "Rating",
         f"Close\n{cutoff_date.strftime('%d-%b')}",
         "Avg TO\n42D (Cr)", "Med TO\n42D (Cr)",
-        "Uptrend\nCon", "Spike\nScore", "Gap-Up\nScore",
+        "21EMA\nUp Sc", "Uptrend\nCon", "Spike\nScore", "Gap-Up\nScore",
         "Sector\nScore", "Criteria Met",
     ]
     for ci, h in enumerate(d_hdrs, 1):
@@ -1458,12 +1612,14 @@ def export_workbook(
         ("score_above_21ema",        "Above 21EMA"),
         ("score_above_8ema",         "Above 8EMA"),
         ("score_uptrend_consistency","Uptrend Consistency"),
+        ("score_ema21_uptrend",      "21EMA Uptrend"),
         ("score_green_candles",      "Green Candles"),
         ("score_spike_total",        "Volume Spike"),
         ("score_gapup",              "Gap-Up"),
         ("score_volatility",         "Low Volatility"),
         ("score_sector",             "Sector Strength"),
         ("score_new_listing",        "New Listing"),
+        ("score_liquid_leaders_bonus","Liquid Leaders"),
     ]
     for ri, (_, row) in enumerate(top20.iterrows(), start=3):
         rank  = ri - 2
@@ -1484,6 +1640,7 @@ def export_workbook(
             r2(row["current_close"]),
             r2(row["avg_turnover_42d"]),
             r2(row["median_turnover_42d"]),
+            round_or_blank(row["score_ema21_uptrend"]),
             round_or_blank(row["score_uptrend_consistency"]),
             round_or_blank(row["score_spike_total"]),
             round_or_blank(row["score_gapup"]),
@@ -1496,7 +1653,7 @@ def export_workbook(
                 sc(cell, bold=True, color=s_fc, fill=s_fill, size=11, border=BDR_M)
             elif ci == 5:  # Rating
                 sc(cell, bold=True, color=s_fc, fill=s_fill, size=11)
-            elif ci == 13: # Criteria Met
+            elif ci == 14: # Criteria Met
                 sc(cell, fill=row_bg, align="left", size=10, wrap=False)
             elif ci in (2, 3):
                 sc(cell, fill=row_bg, align="left", size=11,
@@ -1511,9 +1668,159 @@ def export_workbook(
 
     dash.freeze_panes = "D3"
     dash.auto_filter.ref = f"A2:{get_column_letter(ncols_d)}{max(2, len(top20)+2)}"
-    d_col_w = [5, 18, 22, 7, 14, 9, 10, 10, 8, 7, 8, 7, 55]
+    d_col_w = [5, 18, 22, 7, 14, 9, 10, 10, 8, 8, 7, 8, 7, 55]
     for ci, w in enumerate(d_col_w, 1):
         dash.column_dimensions[get_column_letter(ci)].width = w
+
+    # ══════════════════════════════════════════════════════════════════
+    #  SHEET 2 ── 🏦 INSTITUTIONAL PICKS
+    # ══════════════════════════════════════════════════════════════════
+    ll_ws = wb.create_sheet("🏦 Institutional Picks")
+    institutional = scored.copy()
+    institutional["avg_turnover_pctile"] = institutional["avg_turnover_42d"].rank(method="average", pct=True) * 100.0
+    institutional["median_turnover_pctile"] = institutional["median_turnover_42d"].rank(method="average", pct=True) * 100.0
+    institutional["score_pctile"] = institutional["composite_score"].rank(method="average", pct=True) * 100.0
+    institutional["turnover_focus_pctile"] = (
+        institutional["avg_turnover_pctile"] * 0.70
+        + institutional["median_turnover_pctile"] * 0.30
+    )
+    recency_qualified = institutional["pct_from_52w_high"].fillna(np.inf) <= 0.20
+    institutional["recency_focus_pctile"] = 0.0
+    institutional.loc[recency_qualified, "recency_focus_pctile"] = (
+        (-institutional.loc[recency_qualified, "days_since_52w_high"].fillna(9999))
+        .rank(method="average", pct=True) * 100.0
+    )
+    institutional["current_regime_raw"] = (
+        institutional["score_52w_total"]
+        + institutional["score_above_50dma"]
+        + institutional["score_above_21ema"] * 3
+        + institutional["score_above_8ema"] * 4
+        + institutional["score_green_candles"]
+    )
+    institutional["current_regime_pctile"] = institutional["current_regime_raw"].rank(method="average", pct=True) * 100.0
+    institutional["performance_focus_pctile"] = institutional["score_performance_total"].rank(method="average", pct=True) * 100.0
+    institutional["rs_focus_pctile"] = institutional["score_rs_total"].rank(method="average", pct=True) * 100.0
+    institutional["institutional_trend_penalty"] = np.select(
+        [
+            (~institutional["above_21ema"].fillna(False)) & (~institutional["above_8ema"].fillna(False)) & (institutional["days_since_52w_high"] > 15),
+            (~institutional["above_21ema"].fillna(False)) & (~institutional["above_8ema"].fillna(False)) & (institutional["days_since_52w_high"] > 10),
+            (~institutional["above_21ema"].fillna(False)) & (institutional["days_since_52w_high"] > 10),
+            institutional["short_trend_breakdown"].fillna(False) & (institutional["days_since_52w_high"] > 15),
+            institutional["short_trend_breakdown"].fillna(False),
+            institutional["short_trend_bearish"].fillna(False) & (institutional["days_since_52w_high"] > 10),
+            (~institutional["above_21ema"].fillna(False)) & (institutional["ema21_slope_5d"] < 0),
+        ],
+        [42.0, 28.0, 18.0, 45.0, 30.0, 22.0, 10.0],
+        default=0.0,
+    )
+    institutional["institutional_score"] = (
+        institutional["turnover_focus_pctile"] * 0.30
+        + institutional["current_regime_pctile"] * 0.30
+        + institutional["recency_focus_pctile"] * 0.20
+        + institutional["performance_focus_pctile"] * 0.10
+        + institutional["rs_focus_pctile"] * 0.10
+        + institutional["score_pctile"] * 0.00
+        - institutional["institutional_trend_penalty"]
+    )
+    institutional = institutional.sort_values(
+        ["institutional_score", "avg_turnover_42d", "composite_score", "symbol"],
+        ascending=[False, False, False, True],
+    ).reset_index(drop=True)
+    institutional["institutional_rank"] = range(1, len(institutional) + 1)
+
+    LL_COLS = [
+        ("Rank", 6),
+        ("Symbol", 16),
+        ("Sector", 20),
+        ("Institutional\nScore", 12),
+        ("Liquidity\n%ile", 11),
+        ("Current Regime\n%ile", 12),
+        ("52W Recency\n%ile", 11),
+        ("Performance\n%ile", 11),
+        ("RS\n%ile", 9),
+        ("Avg TO\n42D (Cr)", 11),
+        ("Med TO\n42D (Cr)", 11),
+        ("Days Since\n52W High", 10),
+        ("Final\nScore", 8),
+        ("Final Score\n%ile", 10),
+        ("Current Regime\nScore", 10),
+        ("Trend\nPenalty", 9),
+        ("8EMA\nSlope", 9),
+        ("21EMA\nSlope", 9),
+        ("Above\n21EMA", 8),
+        ("Above\n8EMA", 8),
+        ("Ret\n12M", 8),
+        ("RS\n12M", 8),
+    ]
+    ncols_ll = len(LL_COLS)
+    ll_ws.merge_cells(f"A1:{get_column_letter(ncols_ll)}1")
+    ll_ws["A1"] = (
+        f"INSTITUTIONAL PICKS   |   As of {cutoff_date.strftime('%d-%b-%Y')}   "
+        f"|   Ranked by 30% liquidity, 30% current regime, 20% 52W recency, 10% performance, 10% RS, minus rollover penalty"
+    )
+    sc(ll_ws["A1"], bold=True, color="FFFFFF", fill=T_FILL, size=12, align="center")
+    ll_ws.row_dimensions[1].height = 24
+
+    for ci, (hdr, width) in enumerate(LL_COLS, 1):
+        cell = ll_ws.cell(row=2, column=ci, value=hdr)
+        sc(cell, bold=True, color="FFFFFF", fill=H_FILL, size=11, wrap=True)
+        ll_ws.column_dimensions[get_column_letter(ci)].width = width
+    ll_ws.row_dimensions[2].height = 30
+
+    for ri, (_, row) in enumerate(institutional.iterrows(), start=3):
+        rank = ri - 2
+        row_bg = medal_fills[rank - 1] if rank <= 3 else (ALT_FILL if rank % 2 == 0 else WHT_FILL)
+        s_fill, s_fc = score_band(row["composite_score"])
+        vals = [
+            row["institutional_rank"],
+            row["symbol"],
+            row.get("sector", ""),
+            round_or_blank(row.get("institutional_score"), 1),
+            round_or_blank(row.get("turnover_focus_pctile"), 1),
+            round_or_blank(row.get("current_regime_pctile"), 1),
+            round_or_blank(row.get("recency_focus_pctile"), 1),
+            round_or_blank(row.get("performance_focus_pctile"), 1),
+            round_or_blank(row.get("rs_focus_pctile"), 1),
+            r2(row.get("avg_turnover_42d")),
+            r2(row.get("median_turnover_42d")),
+            round_or_blank(row.get("days_since_52w_high"), 0),
+            round_or_blank(row.get("composite_score"), 1),
+            round_or_blank(row.get("score_pctile"), 1),
+            round_or_blank(row.get("current_regime_raw"), 1),
+            round_or_blank(row.get("institutional_trend_penalty"), 1),
+            round_or_blank(row.get("ema8_slope_5d"), 2),
+            round_or_blank(row.get("ema21_slope_5d"), 2),
+            "Yes" if row.get("above_21ema") else "No",
+            "Yes" if row.get("above_8ema") else "No",
+            pct_fmt(row.get("return_12m")),
+            pct_fmt(row.get("rs_12m")),
+        ]
+        for ci, val in enumerate(vals, 1):
+            cell = ll_ws.cell(row=ri, column=ci, value=val)
+            if ci == 4:
+                sc(cell, bold=True, color="1F3B63", fill=PatternFill("solid", fgColor="D8EAF8"), size=11)
+                cell.number_format = "0.0"
+            elif ci == 13:
+                sc(cell, bold=True, color=s_fc, fill=s_fill, size=11)
+                cell.number_format = "0.0"
+            elif ci in (2, 3):
+                sc(cell, fill=row_bg, align="left", size=11, bold=(ci == 2))
+            else:
+                sc(cell, fill=row_bg, size=11)
+                if ci in (5, 6, 7, 8, 9, 13, 14, 15, 16):
+                    cell.number_format = "0.0"
+                elif ci in (10, 11):
+                    cell.number_format = "#,##0.0"
+                elif ci == 12:
+                    cell.number_format = "0"
+                elif ci in (17, 18):
+                    cell.number_format = "0.00"
+                elif ci in (21, 22):
+                    cell.number_format = "0.0000"
+        ll_ws.row_dimensions[ri].height = 15
+
+    ll_ws.freeze_panes = "D3"
+    ll_ws.auto_filter.ref = f"A2:{get_column_letter(ncols_ll)}{max(2, len(institutional)+2)}"
 
     # ══════════════════════════════════════════════════════════════════
     #  SHEET 2 ── 📊 FULL RATINGS
@@ -1534,9 +1841,9 @@ def export_workbook(
         ("high_52w_date",           "52W High\nDate",  "52w",  11,  None),
         ("pct_from_52w_high",       "% from\n52W Hi",  "52w",   8,  "0.0%"),
         ("days_since_52w_high",     "Days\n52W Hi",    "52w",   7,  "0"),
-        ("score_52w_price",         "Sc\nProx",        "52w",   5,  "0"),
+        ("score_52w_price",         "Sc\nDist",        "52w",   5,  "0"),
         ("score_52w_recency",       "Sc\nRec",         "52w",   5,  "0"),
-        ("score_52w_bonus",         "Sc\nBonus",       "52w",   5,  "0"),
+        ("score_52w_bonus",         "Sc\nAdj",         "52w",   5,  "0"),
         ("score_52w_total",         "52W\nTotal",      "52w",   6,  "0"),
         # ── Liquidity
         ("listing_date",            "Listed",          "liq",  11,  None),
@@ -1546,18 +1853,22 @@ def export_workbook(
         ("score_liquidity",         "Sc\nLiq",         "liq",   5,  "0"),
         ("score_median_turnover",   "Sc\nTO",          "liq",   5,  "0"),
         ("score_new_listing",       "Sc\nNew\nList",   "liq",   5,  "0"),
+        ("score_liquid_leaders_bonus","Sc\nLiq\nLead", "liq",   6,  "0"),
         # ── Performance
         ("return_12m",              "Ret\n12M",        "perf",  7,  "0.0%"),
         ("return_6m",               "Ret\n6M",         "perf",  7,  "0.0%"),
         ("return_3m",               "Ret\n3M",         "perf",  7,  "0.0%"),
+        ("return_1d",               "Ret\n1D",         "perf",  7,  "0.0%"),
         ("reset_low",               "Reset\nLow",      "perf",  9,  "#,##0.##"),
         ("reset_recovery",          "Reset\nRecov",    "perf",  8,  "0.0%"),
         ("score_reset_recovery",    "Sc\nRecov",       "perf",  5,  "0"),
         ("score_perf_12m",          "Sc\n12M",         "perf",  5,  "0"),
         ("score_perf_6m",           "Sc\n6M",          "perf",  5,  "0"),
         ("score_perf_3m",           "Sc\n3M",          "perf",  5,  "0"),
+        ("score_perf_1d",           "Sc\n1D",          "perf",  5,  "0"),
         ("score_perf_6m_penalty",   "Pen\n6M",         "perf",  5,  "0"),
         ("score_perf_3m_penalty",   "Pen\n3M",         "perf",  5,  "0"),
+        ("score_perf_1d_penalty",   "Pen\n1D",         "perf",  5,  "0"),
         ("score_perf_bonus",        "Sc\nBonus",       "perf",  5,  "0"),
         ("score_performance_total", "Perf\nTotal",     "perf",  6,  "0"),
         # ── Relative Strength
@@ -1584,7 +1895,6 @@ def export_workbook(
         ("green_candle_count",      "Green\nCandles",  "trend", 8,  "0"),
         ("score_green_candles",     "Sc\nGreen",       "trend", 6,  "0"),
         ("daysbelow50dma",          "Days<\n50DMA",    "trend", 7,  "0"),
-        ("score_daysbelow50dma_penalty","Pen\n<50D",   "trend", 7,  "0"),
         # ── Volume Spike
         ("spike_date",              "Spike\nDate",     "spike",11,  None),
         ("spike_volume",            "Spike\nVol",      "spike",10,  "#,##0"),
@@ -1785,6 +2095,8 @@ def export_workbook(
         ("score_new_listing",       "New\nList",      8),
         ("score_52w_total",         "52W\nScore",     8),
         ("score_performance_total", "Perf\nTotal",    9),
+        ("score_perf_1d",           "1D\nScore",      8),
+        ("score_perf_1d_penalty",   "1D\nPen",        7),
         ("score_reset_recovery",    "Reset\nScore",   8),
         ("score_perf_6m_penalty",   "6M\nPen",        7),
         ("score_perf_3m_penalty",   "3M\nPen",        7),
@@ -1792,15 +2104,16 @@ def export_workbook(
         ("score_rs_6m",             "RS\n6M",         7),
         ("score_above_50dma",       "50DMA\nScore",   8),
         ("score_above_21ema",       "21EMA\nScore",   8),
+        ("score_ema21_uptrend",     "21EMA\nUp",      8),
         ("score_above_8ema",        "8EMA\nScore",    8),
         ("score_uptrend_consistency","Trend\nScore",  8),
         ("score_green_candles",     "Green\nScore",   8),
-        ("score_daysbelow50dma_penalty","Days<50\nPen",8),
         ("score_spike_total",       "Spike",          7),
         ("score_gapup",             "GapUp",          7),
         ("score_volatility",        "ATR\nPen",       7),
         ("score_liquidity",         "Liquidity",      8),
         ("score_median_turnover",   "Median\nTO",     8),
+        ("score_liquid_leaders_bonus","Liq\nLead",    8),
         ("score_sector",            "Sector",         7),
         ("composite_score",         "TOTAL\nSCORE",  10),
     ]
@@ -1861,7 +2174,81 @@ def export_workbook(
     )
 
     # ══════════════════════════════════════════════════════════════════
-    #  SHEET 4 ── 🏭 SECTOR VIEW
+    #  SHEET 4 ── 21EMA UPTREND
+    # ══════════════════════════════════════════════════════════════════
+    ema_ws = wb.create_sheet("21EMA Uptrend")
+    EMA_COLS = [
+        ("rank", "#", 4),
+        ("symbol", "Symbol", 16),
+        ("sector", "Sector", 20),
+        ("current_close", "Close", 10),
+        ("ema21_value", "21EMA", 10),
+        ("above_21ema", "Above\n21EMA", 9),
+        ("ema21_slope_5d", "21EMA\nSlope 5D", 11),
+        ("uptrend_consistency_lookback", "Window\nDays", 9),
+        ("ema21_uptrend_since", "Uptrend\nSince", 12),
+        ("ema21_uptrend_days", "Uptrend\nDays", 10),
+        ("ema21_uptrend_pct", "Uptrend\nPct", 10),
+        ("score_ema21_uptrend", "21EMA Up\nScore", 10),
+    ]
+    ncols_ema = len(EMA_COLS)
+    ema_ws.merge_cells(f"A1:{get_column_letter(ncols_ema)}1")
+    ema_ws["A1"] = (
+        f"21EMA UPTREND BREAKDOWN   |   "
+        f"As of {cutoff_date.strftime('%d-%b-%Y')}   |   "
+        f"Window = max({UPTREND_CONSISTENCY_MIN_LOOKBACK}, days since reset)"
+    )
+    sc(ema_ws["A1"], bold=True, color="FFFFFF", fill=T_FILL, size=12, align="center")
+    ema_ws.row_dimensions[1].height = 26
+    for ci, (_, hdr, width) in enumerate(EMA_COLS, 1):
+        cell = ema_ws.cell(row=2, column=ci, value=hdr)
+        sc(cell, bold=True, color="FFFFFF", fill=H_FILL, size=11, wrap=True)
+        ema_ws.column_dimensions[get_column_letter(ci)].width = width
+    ema_ws.row_dimensions[2].height = 32
+
+    for ri, (_, row) in enumerate(scored.iterrows(), start=3):
+        afill = ALT_FILL if ri % 2 == 1 else WHT_FILL
+        values = [
+            row.get("rank"),
+            row.get("symbol"),
+            row.get("sector"),
+            row.get("current_close"),
+            row.get("ema21_value"),
+            row.get("above_21ema"),
+            row.get("ema21_slope_5d"),
+            row.get("uptrend_consistency_lookback"),
+            row.get("ema21_uptrend_since"),
+            row.get("ema21_uptrend_days"),
+            row.get("ema21_uptrend_pct"),
+            row.get("score_ema21_uptrend"),
+        ]
+        for ci, value in enumerate(values, 1):
+            cell = ema_ws.cell(row=ri, column=ci, value=value)
+            if ci == 12:
+                score_cell(cell, score_or_blank(value), size=11)
+                cell.number_format = "0"
+            elif ci in (2, 3):
+                sc(cell, fill=afill, align="left", size=10, bold=(ci == 2))
+            else:
+                sc(cell, fill=afill, size=10)
+                if ci in (4, 5):
+                    cell.number_format = "#,##0.##"
+                elif ci == 6:
+                    cell.value = "Yes" if value else "No"
+                elif ci == 7:
+                    cell.number_format = "0.00"
+                elif ci in (8, 10):
+                    cell.number_format = "0"
+                elif ci == 9:
+                    cell.value = date_or_blank(value)
+                elif ci == 11:
+                    cell.number_format = "0.0%"
+        ema_ws.row_dimensions[ri].height = 15
+    ema_ws.freeze_panes = "C3"
+    ema_ws.auto_filter.ref = f"A2:{get_column_letter(ncols_ema)}{max(2, len(scored)+2)}"
+
+    # ══════════════════════════════════════════════════════════════════
+    #  SHEET 5 ── 🏭 SECTOR VIEW
     # ══════════════════════════════════════════════════════════════════
     sv = wb.create_sheet("🏭 Sector View")
     sv_hdrs = ["Symbol","Close","Score","Rating",
@@ -2178,34 +2565,42 @@ def export_workbook(
         ("Liquidity", "Universe inclusion", "Median 42D turnover must be available", "Required", "Missing value => excluded"),
         ("Liquidity", "Universe inclusion", f"Median 42D turnover must be >= {MIN_MEDIAN_TURNOVER_CRORES:.2f} Cr", "Required", f"Current floor = {MIN_MEDIAN_TURNOVER_CRORES:.2f} Cr"),
         ("Liquidity", "Avg turnover 42D", "Bottom 30% of rated universe", "-8", rr_value("turnover_bottom30")),
-        ("Liquidity", "Median turnover 42D", "Top 10% of rated universe", "+6", rr_value("median_turnover_top10")),
-        ("Liquidity", "Median turnover 42D", "Top 30% of rated universe", "+4", rr_value("median_turnover_top30")),
-        ("52W High", "Distance from 52W high", "<= 10% from 52W high", "+6", "Daily high basis"),
-        ("52W High", "Distance from 52W high", "<= 15% from 52W high", "+4", "Daily high basis"),
-        ("52W High", "Distance from 52W high", "<= 20% from 52W high", "+2", "Daily high basis"),
-        ("52W High", "Recency of 52W high", "52W high made within 10 trading days", "+6", ""),
-        ("52W High", "Recency of 52W high", "52W high made within 15 trading days", "+3", ""),
-        ("52W High", "Bonus", "<= 10% from 52W high and within 10 trading days", "+4", ""),
-        ("52W High", "Bonus", "<= 15% from 52W high and within 10 trading days", "+2", ""),
+        ("Liquidity", "Median turnover 42D", "Less than 15 Cr", "-8", "Fixed rule"),
+        ("Liquidity", "Median turnover 42D", "Less than 30 Cr", "-4", "Fixed rule"),
+        ("Liquidity", "Liquid leaders bonus", "Top 10 symbols in liquid leaders source order", "+6", "Based on updated_gmlist order"),
+        ("Liquidity", "Liquid leaders bonus", "Top 20 symbols in liquid leaders source order", "+3", "Ranks 11-20"),
+        ("52W High", "Distance from 52W high", "<= 10% / 15% / 20% from 52W high", "+10 / +6 / +2", "Daily high basis"),
+        ("52W High", "Distance penalty", "> 20% and < 25% from 52W high", "-4", "Applied even if 52W high is recent"),
+        ("52W High", "Distance penalty", ">= 25% and < 30% from 52W high", "-10", "Applied even if 52W high is recent"),
+        ("52W High", "Distance penalty", ">= 30% from 52W high", "-16", "Applied even if 52W high is recent"),
+        ("52W High", "Recency of 52W high", "Within 10 trading days and still within 20% of 52W high", "+2", "No recency points beyond 20% away"),
+        ("52W High", "Adjustment", "Old 52W bonus stacking removed", "0", "No duplicate 52W points"),
         ("Trend", "50DMA", "Close above 50DMA", "+4", ""),
         ("Trend", "50DMA", "Close below 50DMA", "-4", ""),
         ("Trend", "21EMA", "Close above 21EMA", "+2", ""),
+        ("Trend", "21EMA uptrend", f"Consecutive cutoff-ending uptrend days >= 20 / 10 over max({UPTREND_CONSISTENCY_MIN_LOOKBACK}, reset-window)", "+4 / +2", "Needs close > 21EMA and rising 21EMA"),
+        ("Trend", "21EMA uptrend consistency", f"Window consistency >= 90% / 80% over max({UPTREND_CONSISTENCY_MIN_LOOKBACK}, reset-window)", "+2 / +1", "Fallback credit if cutoff-ending streak is shorter"),
         ("Trend", "8EMA", "Close above 8EMA", "+2", ""),
-        ("Trend", "Uptrend consistency", "Top 20% of rated universe", "+4", rr_value("uptrend_consistency_top20", percent_or_blank)),
+        ("Trend", "Uptrend consistency", f"Top 30% of rated universe using max({UPTREND_CONSISTENCY_MIN_LOOKBACK}, reset-window) trading days", "+4", rr_value("uptrend_consistency_top30", percent_or_blank)),
         ("Trend", "Green candle count", "Top 10% of rated universe", "+4", rr_value("green_candle_top10")),
         ("Trend", "Green candle count", "Top 20% of rated universe", "+2", rr_value("green_candle_top20")),
-        ("Trend", "Days below 50DMA", "Top 10% of rated universe", "-8", rr_value("daysbelow50dma_top10")),
+        ("Trend", "Recent listings", "Listed < 60 days", "Median trend scores; no negative trend penalty", "Applied to 50DMA/21EMA/8EMA/uptrend/green"),
         ("Performance", "12M return", "Top 10% of rated universe", "+8", rr_value("ret12_top10", percent_or_blank)),
         ("Performance", "12M return", "Top 20% of rated universe", "+6", rr_value("ret12_top20", percent_or_blank)),
         ("Performance", "12M return", "Top 30% of rated universe", "+4", rr_value("ret12_top30", percent_or_blank)),
+        ("Performance", "12M return", "Insufficient listing history (< 250 trading days)", "Median score", "Uses universe median 12M score"),
         ("Performance", "6M return", "Top 10% of rated universe", "+6", rr_value("ret6_top10", percent_or_blank)),
         ("Performance", "6M return", "Top 20% of rated universe", "+4", rr_value("ret6_top20", percent_or_blank)),
         ("Performance", "6M return", "Top 30% of rated universe", "+2", rr_value("ret6_top30", percent_or_blank)),
         ("Performance", "6M return", "Bottom 10% of mature listings", "-2", rr_value("ret6_bottom10", percent_or_blank)),
+        ("Performance", "6M return", "Insufficient listing history (< 125 trading days)", "Median score", "Uses universe median 6M score and removes 6M penalty"),
         ("Performance", "3M return", "Top 10% of rated universe", "+6", rr_value("ret3_top10", percent_or_blank)),
         ("Performance", "3M return", "Top 20% of rated universe", "+4", rr_value("ret3_top20", percent_or_blank)),
         ("Performance", "3M return", "Top 30% of rated universe", "+2", rr_value("ret3_top30", percent_or_blank)),
         ("Performance", "3M return", "Bottom 10% of mature listings", "-4", rr_value("ret3_bottom10", percent_or_blank)),
+        ("Performance", "1D return", "Top 10% of rated universe", "+4", rr_value("ret1_top10", percent_or_blank)),
+        ("Performance", "1D return", "Top 20% of rated universe", "+2", rr_value("ret1_top20", percent_or_blank)),
+        ("Performance", "1D return", "Bottom 20% of rated universe", "-4", rr_value("ret1_bottom20", percent_or_blank)),
         ("Performance", "Bonus", "12M top-10 stock with 52W high in last 10 days", "+2", ""),
         ("Performance", "Reset recovery rank", "Top 10 by reset recovery", "+4", "Rank based"),
         ("Performance", "Reset recovery rank", "Top 20 by reset recovery", "+2", "Rank based"),
@@ -2247,6 +2642,7 @@ def export_workbook(
         ("12M / 52W Window",              "250 trading candles"),
         ("6M Window",                     "125 trading candles"),
         ("3M Window",                      "60 trading candles"),
+        ("Uptrend Consistency Window",    f"max({UPTREND_CONSISTENCY_MIN_LOOKBACK} trading candles, days since reset)"),
         ("─── Turnover ───",               ""),
         ("Turnover Unit",                  "Crores"),
         ("Min Avg Turnover 42D Filter",    f"{MIN_AVG_TURNOVER_42D_CRORES:.2f} Cr"),
@@ -2268,7 +2664,6 @@ def export_workbook(
         ("3M Top-10 Threshold",           percent_or_blank(scored["ret3_top10"].iloc[0])                if not scored.empty else ""),
         ("3M Top-20 Threshold",           percent_or_blank(scored["ret3_top20"].iloc[0])                if not scored.empty else ""),
         ("3M Top-30 Threshold",           percent_or_blank(scored["ret3_top30"].iloc[0])                if not scored.empty else ""),
-        ("Days<50DMA Top-10 Threshold",   round_or_blank(scored["daysbelow50dma_top10"].iloc[0])       if not scored.empty else ""),
         ("Green Candles Top-10 Threshold",round_or_blank(scored["green_candle_top10"].iloc[0])         if not scored.empty else ""),
         ("Green Candles Top-20 Threshold",round_or_blank(scored["green_candle_top20"].iloc[0])         if not scored.empty else ""),
         ("RS 12M Top-10 Threshold",       percent_or_blank(scored["rs12_top10"].iloc[0])                if not scored.empty else ""),
@@ -2277,7 +2672,7 @@ def export_workbook(
         ("RS 6M Top-30 Threshold",        percent_or_blank(scored["rs6_top30"].iloc[0])                 if not scored.empty else ""),
         ("RS 3M Top-10 Threshold",        percent_or_blank(scored["rs3_top10"].iloc[0])                 if not scored.empty else ""),
         ("RS 3M Top-30 Threshold",        percent_or_blank(scored["rs3_top30"].iloc[0])                 if not scored.empty else ""),
-        ("Uptrend Top-20 Threshold",      percent_or_blank(scored["uptrend_consistency_top20"].iloc[0]) if not scored.empty else ""),
+        ("Uptrend Top-30 Threshold",      percent_or_blank(scored["uptrend_consistency_top30"].iloc[0]) if not scored.empty else ""),
         ("Pre-Sector Top-Qtrl Threshold", round_or_blank(scored["top_quartile_score_threshold"].iloc[0])if not scored.empty else ""),
         ("Sector Leadership Top-10",      round_or_blank(scored["sector_top10_threshold"].iloc[0])      if not scored.empty else ""),
         ("Sector Leadership Top-30",      round_or_blank(scored["sector_top30_threshold"].iloc[0])      if not scored.empty else ""),
@@ -2393,6 +2788,11 @@ def main() -> None:
         for symbol in symbols
         if symbol.upper() in symbol_replacements and symbol_replacements[symbol.upper()] != symbol.upper()
     ]
+    liquid_leader_bonus_map = parse_liquid_leader_bonus_map(args.liquid_leader_map, symbol_replacements)
+    if liquid_leader_bonus_map:
+        print(f"  Liquid leader bonus source : inline neo map ({len(liquid_leader_bonus_map)} mapped keys)")
+    else:
+        print("  Liquid leader bonus source : none provided")
     if remapped_pairs:
         print("  Using mapped replacement symbols from bhav.inactive_symbols for Kite lookups:")
         for old_symbol, new_symbol in remapped_pairs:
@@ -2467,7 +2867,7 @@ def main() -> None:
         result = compute_stock_metrics(
             kite_symbol, df, index_df, sector_map.get(symbol, sector_map.get(kite_symbol, "Unknown")),
             cutoff_date, reset_date, listing_date,
-            turnover_override, warnings,
+            turnover_override, liquid_leader_bonus_map.get(symbol.upper(), liquid_leader_bonus_map.get(kite_symbol.upper(), 0)), warnings,
         )
         if result is None:
             skipped.append(symbol)

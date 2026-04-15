@@ -12,12 +12,13 @@ Arguments:
     reset_date      Portfolio reset/entry date (YYYY-MM-DD)
 
 Options:
-    --source        kite|bhav  (default: kite)
-    --extended      Include extended universe scan (stocks outside top 200)
+    --source        kite|bhav  (default: kite; stock OHLC from Kite, turnover/index from bhav)
+    --extended      Include extended universe scan (stocks outside top 150)
     --run-fundamentals  Run screener_fundamentals.py on final output
 """
 
 import argparse
+import json
 import logging
 import os
 import subprocess
@@ -44,24 +45,25 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 KITE_RATE_LIMIT = 3          # requests per second
 KITE_BATCH_PAUSE = 0.34      # seconds between calls
-TOP_N = 200
+TOP_N = 100
 TOP_N_REPORT = 30
 MIN_CLOSE = 50.0             # ₹
 MIN_EXTENDED_TURNOVER_CR = 20.0   # ₹ Crore
 ATR_PERIOD = 14
 TURNOVER_DAYS = 21
 EXTENDED_UNIVERSE_TURNOVER_CRORE = 20.0
-TOP30_MIN_ATR_PCT = 2.0
+TOP30_MIN_ATR_PCT = 2.5
 
 # 52W high gate
 MAX_DIST_FROM_52W_HIGH_PCT = 15.0  # ≤15%
-MAX_TDS_SINCE_52W_HIGH = 52        # ≤52 trading days
+MAX_TDS_SINCE_52W_HIGH = 15        # ≤15 trading days for recency override
+MAX_RECENCY_GATE_DIST_PCT = 20.0   # hard cap for recent-high inclusion
 
-# 12M return gate (70th percentile)
-RETURN_GATE_PERCENTILE = 70
+# 12M return gate (60th percentile)
+RETURN_GATE_PERCENTILE = 60
 
-# Nifty Smallcap 250 fallback
-NIFTY_SMALLCAP_250_SYMBOL = "NIFTY SMLCAP 250"
+# Nifty Smallcap 250 benchmark from indexbhav
+NIFTY_SMALLCAP_250_SYMBOL = "NIFTY SMALLCAP 250"
 NIFTY_50_SYMBOL = "NIFTY 50"
 
 # RS weights
@@ -73,7 +75,8 @@ SECTOR_W_BREADTH = 0.25
 SECTOR_W_RS = 0.20
 SECTOR_W_COUNT = 0.15
 
-# Report output directory
+# Report output directories
+OUTPUT_DIR = Path("output")
 REPORTS_DIR = Path("reports")
 GMLIST_DIR = Path("gmlist")
 TOKEN_FILE = Path("kite_token.txt")
@@ -103,6 +106,18 @@ def get_db_connection():
         sys.exit(1)
 
 
+def query_df(conn, sql: str, params=None) -> pd.DataFrame:
+    """Run a query through a DB cursor and return a DataFrame."""
+    cursor = conn.cursor()
+    try:
+        cursor.execute(sql, params or [])
+        rows = cursor.fetchall()
+        columns = [desc[0] for desc in cursor.description] if cursor.description else []
+    finally:
+        cursor.close()
+    return pd.DataFrame(rows, columns=columns)
+
+
 def fetch_bhav_turnover(conn, as_of_date: datetime, lookback_days: int = 30) -> pd.DataFrame:
     """Return avg 21-trading-day turnover per symbol from bhav tables."""
     year = as_of_date.year
@@ -118,7 +133,7 @@ def fetch_bhav_turnover(conn, as_of_date: datetime, lookback_days: int = 30) -> 
                 WHERE mktdate <= %s
                 ORDER BY mktdate
             """
-            df = pd.read_sql(sql, conn, params=[as_of_date.strftime("%Y-%m-%d")])
+            df = query_df(conn, sql, [as_of_date.strftime("%Y-%m-%d")])
             frames.append(df)
         except Exception as e:
             log.warning(f"Could not read {tbl}: {e}")
@@ -149,7 +164,7 @@ def fetch_bhav_turnover(conn, as_of_date: datetime, lookback_days: int = 30) -> 
 def fetch_sectors(conn) -> pd.DataFrame:
     """Return symbol → sector mapping from bhav.sectors."""
     try:
-        return pd.read_sql("SELECT symbol, sector1 AS sector FROM sectors", conn)
+        return query_df(conn, "SELECT symbol, sector1 AS sector FROM sectors")
     except Exception as e:
         log.warning(f"Could not read sectors table: {e}")
         return pd.DataFrame(columns=["symbol", "sector"])
@@ -293,7 +308,7 @@ def fetch_ohlcv_bhav(conn, symbol: str, from_date: datetime, to_date: datetime) 
                 WHERE symbol = %s AND mktdate BETWEEN %s AND %s
                 ORDER BY mktdate
             """
-            df = pd.read_sql(sql, conn, params=[
+            df = query_df(conn, sql, [
                 symbol,
                 from_date.strftime("%Y-%m-%d"),
                 to_date.strftime("%Y-%m-%d"),
@@ -308,19 +323,89 @@ def fetch_ohlcv_bhav(conn, symbol: str, from_date: datetime, to_date: datetime) 
     return df.sort_values("date").reset_index(drop=True)
 
 
+def merge_ohlcv_prefer_primary(primary_df: pd.DataFrame, secondary_df: pd.DataFrame) -> pd.DataFrame:
+    """Merge OHLCV series by date, preferring primary rows and backfilling missing dates from secondary."""
+    if primary_df.empty:
+        return secondary_df.sort_values("date").reset_index(drop=True) if not secondary_df.empty else pd.DataFrame()
+    if secondary_df.empty:
+        return primary_df.sort_values("date").reset_index(drop=True)
+
+    primary = primary_df.copy()
+    secondary = secondary_df.copy()
+    primary["date"] = pd.to_datetime(primary["date"]).dt.normalize()
+    secondary["date"] = pd.to_datetime(secondary["date"]).dt.normalize()
+    merged = pd.concat([primary, secondary], ignore_index=True)
+    merged = merged.drop_duplicates(subset=["date"], keep="first")
+    return merged.sort_values("date").reset_index(drop=True)
+
+
+def fetch_index_ohlcv_indexbhav(conn, symbol: str, from_date: datetime, to_date: datetime) -> pd.DataFrame:
+    """Fetch index OHLC from bhav.indexbhav."""
+    if conn is None:
+        return pd.DataFrame()
+    start_date = pd.Timestamp(from_date).date()
+    end_date = pd.Timestamp(to_date).date()
+    cursor = conn.cursor()
+    try:
+        exact_sql = """
+            SELECT mktdate, open, high, low, close, symbol
+            FROM indexbhav
+            WHERE mktdate BETWEEN %s AND %s
+              AND UPPER(symbol) = UPPER(%s)
+            ORDER BY mktdate
+        """
+        cursor.execute(exact_sql, (start_date, end_date, symbol))
+        rows = cursor.fetchall()
+
+        if not rows and "SMALLCAP" in str(symbol).upper() and "250" in str(symbol):
+            like_sql = """
+                SELECT mktdate, open, high, low, close, symbol
+                FROM indexbhav
+                WHERE mktdate BETWEEN %s AND %s
+                  AND UPPER(symbol) LIKE %s
+                ORDER BY mktdate
+            """
+            cursor.execute(like_sql, (start_date, end_date, "%SMALLCAP%250%"))
+            rows = cursor.fetchall()
+    except Exception as e:
+        log.warning(f"indexbhav fetch failed for {symbol}: {e}")
+        cursor.close()
+        return pd.DataFrame()
+    finally:
+        try:
+            cursor.close()
+        except Exception:
+            pass
+
+    if not rows:
+        return pd.DataFrame(columns=["date", "open", "high", "low", "close", "symbol"])
+    df = pd.DataFrame(rows, columns=["date", "open", "high", "low", "close", "symbol"])
+    df["date"] = pd.to_datetime(df["date"]).dt.normalize()
+    return df.drop_duplicates(subset=["date"], keep="last").sort_values("date").reset_index(drop=True)
+
+
 def fetch_ohlcv(kite, conn, symbol: str, from_date: datetime, to_date: datetime,
                 source: str = "kite", failed_symbols: list = None,
                 token_map: dict[str, int] | None = None) -> pd.DataFrame:
     """Fetch OHLCV preferring source, falling back to other."""
     if source == "kite":
         token = token_map.get(symbol) if token_map else None
-        df = fetch_ohlcv_kite(
+        kite_df = fetch_ohlcv_kite(
             kite, symbol, from_date, to_date,
             failed_symbols=failed_symbols,
             instrument_token=token,
         )
-        if df.empty and conn:
-            df = fetch_ohlcv_bhav(conn, symbol, from_date, to_date)
+        if conn:
+            bhav_df = fetch_ohlcv_bhav(conn, symbol, from_date, to_date)
+            if kite_df.empty:
+                df = bhav_df
+            else:
+                df = merge_ohlcv_prefer_primary(kite_df, bhav_df)
+                backfilled = max(0, len(df) - len(kite_df))
+                if backfilled > 0:
+                    log.info(f"Backfilled {backfilled} missing bhav candle(s) into Kite OHLCV for {symbol}")
+        else:
+            df = kite_df
     else:
         df = fetch_ohlcv_bhav(conn, symbol, from_date, to_date) if conn else pd.DataFrame()
         if df.empty and kite:
@@ -437,19 +522,26 @@ def compute_52w_metrics(df: pd.DataFrame, as_of: datetime):
 
 def compute_volume_metrics(df: pd.DataFrame, as_of: datetime):
     """
-    Find the highest-volume day in the past year and which window it falls in.
+    Find the most recent top-1%-volume event in the past six months and
+    which recency window it falls in.
     Returns (vol_period, vol_day_move_pct).
     vol_period: 'last_10' | 'last_30' | 'last_60' | 'none'
     """
     if df.empty:
         return "none", np.nan
-    window_start = pd.Timestamp(as_of) - timedelta(days=365)
+    window_start = pd.Timestamp(as_of) - timedelta(days=183)
     df_window = df[(df["date"] > window_start) & (df["date"] <= pd.Timestamp(as_of))].copy()
     if df_window.empty:
         return "none", np.nan
     df_window = df_window.reset_index(drop=True)
     n = len(df_window)
-    idx_max_vol = df_window["volume"].idxmax()
+
+    volume_cutoff = df_window["volume"].quantile(0.99)
+    qualifying = df_window[df_window["volume"] >= volume_cutoff].copy()
+    if qualifying.empty:
+        return "none", np.nan
+
+    idx_max_vol = int(qualifying.index.max())
 
     # Position from end (0 = last trading day)
     pos_from_end = n - 1 - idx_max_vol
@@ -463,7 +555,7 @@ def compute_volume_metrics(df: pd.DataFrame, as_of: datetime):
     else:
         vol_period = "none"
 
-    # Move on that day (close vs prev close)
+    # Move on the selected qualifying day (close vs prev close)
     row = df_window.iloc[idx_max_vol]
     if idx_max_vol > 0:
         prev_close = df_window.iloc[idx_max_vol - 1]["close"]
@@ -604,30 +696,38 @@ def _percentile_score(series: pd.Series, tiers: list, bottom_penalty_pct: float 
 
 
 def score_52w_high(pct_from_high: pd.Series, tds_since_high: pd.Series) -> pd.Series:
-    """SC-1: 52-Week High Proximity."""
+    """SC-1: 52-week high composite ladder with distance-aware recency."""
     scores = pd.Series(0, index=pct_from_high.index, dtype=int)
 
     within_10 = pct_from_high <= 10.0
-    within_20 = pct_from_high <= 20.0
+    within_15 = (pct_from_high > 10.0) & (pct_from_high <= 15.0)
+    within_20 = (pct_from_high > 15.0) & (pct_from_high <= 20.0)
+    off_20 = (pct_from_high > 20.0) & (pct_from_high < 25.0)
+    off_25 = pct_from_high >= 25.0
+
     last_10 = tds_since_high < 10
     last_15 = (tds_since_high >= 10) & (tds_since_high < 15)
 
-    scores[within_10] += 9
-    scores[within_20 & ~within_10] += 7
-    scores[last_10] += 7
-    scores[last_15] += 5
-    # Bonuses
-    scores[within_10 & last_10] += 3
-    scores[within_20 & last_10] += 3
+    # Single mutually-exclusive ladder: recency is only rewarded if the stock is still
+    # reasonably close to the 52-week high, avoiding stacked proximity+recency bonuses.
+    scores[within_10 & last_10] = 12
+    scores[within_10 & last_15] = 10
+    scores[within_15 & last_10] = 8
+    scores[within_15 & last_15] = 6
+    scores[within_20 & last_10] = 4
+    scores[within_20 & last_15] = 2
+
+    scores[off_20] = -4
+    scores[off_25] = -8
 
     return scores
 
 
 def score_atr(atr_pct: pd.Series) -> pd.Series:
-    """SC-2: ATR% Penalty — bottom 30th percentile → -4 pts."""
+    """SC-2: ATR% Penalty — bottom 30th percentile and ATR% < 3.5 → -6 pts."""
     pct = atr_pct.rank(pct=True, na_option="keep") * 100
     scores = pd.Series(0, index=atr_pct.index, dtype=int)
-    scores[pct <= 30] = -4
+    scores[(pct <= 30) & (atr_pct < 3.5)] = -6
     return scores
 
 
@@ -681,12 +781,8 @@ def score_rs(rs_composite: pd.Series) -> pd.Series:
 
 
 def score_turnover(avg_turnover_cr: pd.Series) -> pd.Series:
-    """Turnover penalty: bottom 20th-percentile average turnover -> -4 pts."""
-    pct = avg_turnover_cr.rank(pct=True, na_option="keep") * 100
-    scores = pd.Series(0, index=avg_turnover_cr.index, dtype=int)
-    scores[pct <= 20] = -4
-    scores[avg_turnover_cr.isna()] = 0
-    return scores
+    """No turnover penalty; liquidity is already enforced by the universe filter."""
+    return pd.Series(0, index=avg_turnover_cr.index, dtype=int)
 
 
 def score_ret12_bonus(ret_12m: pd.Series) -> pd.Series:
@@ -798,14 +894,18 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
 
     start_count = len(df)
 
-    # 52W high gate
+    # 52W high gate: pass if near the 52W high, or made a fresh high recently,
+    # but recent-high inclusion is still capped at 20% away from the high.
     df = df[
-        (df["pct_from_52w_high"] <= MAX_DIST_FROM_52W_HIGH_PCT) &
-        (df["tds_since_52w_high"] <= MAX_TDS_SINCE_52W_HIGH)
+        (df["pct_from_52w_high"] <= MAX_RECENCY_GATE_DIST_PCT) &
+        (
+            (df["pct_from_52w_high"] <= MAX_DIST_FROM_52W_HIGH_PCT) |
+            (df["tds_since_52w_high"] <= MAX_TDS_SINCE_52W_HIGH)
+        )
     ].copy()
     log.info(f"Filter pass - 52W gate: {len(df)}/{start_count}")
 
-    # 12M return gate: must be non-NaN and >= 70th percentile
+    # 12M return gate: threshold is computed on the post-52W survivors.
     df = df[df["ret_12m"].notna()].copy()
     if df.empty:
         log.warning("Filter pass - 12M gate: 0 stocks with valid 12M return")
@@ -998,7 +1098,7 @@ def write_excel_report(
     reset_date: datetime,
     failed_symbols: list,
 ) -> Path:
-    """Generate the Excel report with 6 sheets."""
+    """Generate the Excel report with a ready reckoner and analysis sheets."""
     try:
         from openpyxl import Workbook
         from openpyxl.styles import (Alignment, Font, PatternFill,
@@ -1008,9 +1108,9 @@ def write_excel_report(
         log.error("openpyxl not installed. Run: pip install openpyxl")
         sys.exit(1)
 
-    REPORTS_DIR.mkdir(exist_ok=True)
+    OUTPUT_DIR.mkdir(exist_ok=True)
     filename = f"LiquidCandidates_{as_of_date.strftime('%d%b%Y').upper()}_Reset{reset_date.strftime('%d%b%Y').upper()}.xlsx"
-    filepath = REPORTS_DIR / filename
+    filepath = OUTPUT_DIR / filename
     _force_delete_xlsx(filepath)
 
     wb = Workbook()
@@ -1059,6 +1159,12 @@ def write_excel_report(
         if isinstance(value, (np.floating, float)):
             return round(float(value), 2)
         return value
+
+    def threshold_or_blank(series: pd.Series, q: float):
+        clean = pd.to_numeric(series, errors="coerce").dropna()
+        if clean.empty:
+            return ""
+        return round(float(clean.quantile(q)), 2)
 
     # ================================================================
     # Sheet 1: Top 30 Stocks
@@ -1181,10 +1287,11 @@ def write_excel_report(
         ("Stage", "Count"),
         ("Total NSE EQ symbols", pipeline_summary.get("total_eq", "")),
         ("After close ≥ ₹50 filter", pipeline_summary.get("after_close_filter", "")),
-        (f"Top {TOP_N} by avg turnover", pipeline_summary.get("top300_count", "")),
+        (f"Top {TOP_N} by avg turnover", pipeline_summary.get("topn_count", "")),
+        (f"After ATR% >= {TOP30_MIN_ATR_PCT:.1f} pre-filter", pipeline_summary.get("after_atr_filter", "")),
         ("After 52W high gate", pipeline_summary.get("after_52w_gate", "")),
         ("After 12M return gate (70th pctile)", pipeline_summary.get("after_12m_gate", "")),
-        (f"Scored Top {TOP_N} stocks", pipeline_summary.get("scored_top300", "")),
+        (f"Scored Top {TOP_N} stocks", pipeline_summary.get("scored_topn", "")),
         ("Extended universe candidates", pipeline_summary.get("extended_candidates", "")),
         ("Scored Extended stocks", pipeline_summary.get("scored_extended", "")),
         ("Total scored (merged)", pipeline_summary.get("total_scored", "")),
@@ -1216,7 +1323,90 @@ def write_excel_report(
             ws4.cell(row=i, column=1, value=sym).font = FONT_NORMAL
 
     # ================================================================
-    # Sheet 5: Extended Universe Stocks
+    # Sheet 5: Ready Reckoner
+    # ================================================================
+    ws_rr = wb.create_sheet("Ready Reckoner")
+    ws_rr.merge_cells("A1:E1")
+    ws_rr["A1"] = (
+        f"READY RECKONER | As of {as_of_date.strftime('%d-%b-%Y')} | "
+        "Filters, scoring logic, and live thresholds used by this run"
+    )
+    ws_rr["A1"].font = Font(name="Arial", bold=True, color="FFFFFF", size=11)
+    ws_rr["A1"].fill = HEADER_FILL
+    ws_rr["A1"].alignment = Alignment(horizontal="center", vertical="center")
+
+    rr_headers = ["Category", "Metric", "Rule", "Points", "Current Threshold / Notes"]
+    ws_rr.append(rr_headers)
+    style_header_row(ws_rr, 2, len(rr_headers))
+    ws_rr.row_dimensions[2].height = 28
+
+    top30_turnover_floor = threshold_or_blank(top30["avg_turnover_cr"], 0.0) if not top30.empty and "avg_turnover_cr" in top30.columns else ""
+    atr_bottom30 = threshold_or_blank(all_scored["atr_pct"], 0.30) if not all_scored.empty and "atr_pct" in all_scored.columns else ""
+    turnover_bottom20 = threshold_or_blank(all_scored["avg_turnover_cr"], 0.20) if not all_scored.empty and "avg_turnover_cr" in all_scored.columns else ""
+    ret12_top80 = threshold_or_blank(all_scored["ret_12m"], 0.80) if not all_scored.empty and "ret_12m" in all_scored.columns else ""
+    ret6_top80 = threshold_or_blank(all_scored["ret_6m"], 0.80) if not all_scored.empty and "ret_6m" in all_scored.columns else ""
+    ret3_top80 = threshold_or_blank(all_scored["ret_3m"], 0.80) if not all_scored.empty and "ret_3m" in all_scored.columns else ""
+    reset_top90 = threshold_or_blank(all_scored["ret_reset"], 0.90) if not all_scored.empty and "ret_reset" in all_scored.columns else ""
+    reset_top80 = threshold_or_blank(all_scored["ret_reset"], 0.80) if not all_scored.empty and "ret_reset" in all_scored.columns else ""
+    reset_top70 = threshold_or_blank(all_scored["ret_reset"], 0.70) if not all_scored.empty and "ret_reset" in all_scored.columns else ""
+    reset_bottom10 = threshold_or_blank(all_scored["ret_reset"], 0.10) if not all_scored.empty and "ret_reset" in all_scored.columns else ""
+    day_top90 = threshold_or_blank(all_scored["ret_1d"], 0.90) if not all_scored.empty and "ret_1d" in all_scored.columns else ""
+    day_top80 = threshold_or_blank(all_scored["ret_1d"], 0.80) if not all_scored.empty and "ret_1d" in all_scored.columns else ""
+    day_top70 = threshold_or_blank(all_scored["ret_1d"], 0.70) if not all_scored.empty and "ret_1d" in all_scored.columns else ""
+    rs_top90 = threshold_or_blank(all_scored["rs_composite"], 0.90) if not all_scored.empty and "rs_composite" in all_scored.columns else ""
+    rs_top80 = threshold_or_blank(all_scored["rs_composite"], 0.80) if not all_scored.empty and "rs_composite" in all_scored.columns else ""
+    rs_top70 = threshold_or_blank(all_scored["rs_composite"], 0.70) if not all_scored.empty and "rs_composite" in all_scored.columns else ""
+    rs_bottom10 = threshold_or_blank(all_scored["rs_composite"], 0.10) if not all_scored.empty and "rs_composite" in all_scored.columns else ""
+    green_top80 = threshold_or_blank(all_scored["green_candle_count"], 0.80) if not all_scored.empty and "green_candle_count" in all_scored.columns else ""
+    green_top90 = threshold_or_blank(all_scored["green_candle_count"], 0.90) if not all_scored.empty and "green_candle_count" in all_scored.columns else ""
+
+    rr_rows = [
+        ("Universe Filter", "Close", "Latest close must be >= ₹50", "Required", "Pre-universe gate"),
+        ("Universe Filter", "Turnover rank", f"Top {TOP_N} by average turnover", "Required", f"Current shortlist floor ≈ {top30_turnover_floor} Cr"),
+        ("Universe Filter", "52W gate", f"Within {MAX_DIST_FROM_52W_HIGH_PCT:.0f}% of 52W high OR made 52W high within {MAX_TDS_SINCE_52W_HIGH} trading days, and in all cases within {MAX_RECENCY_GATE_DIST_PCT:.0f}% of 52W high", "Required", "Pre-score gate with 20% hard cap"),
+        ("Universe Filter", "12M return gate", f"12M return >= {RETURN_GATE_PERCENTILE}th percentile", "Required", f"Current cutoff ≈ {ret12_top80 if RETURN_GATE_PERCENTILE == 80 else threshold_or_blank(all_scored['ret_12m'], RETURN_GATE_PERCENTILE/100) if not all_scored.empty and 'ret_12m' in all_scored.columns else ''}%"),
+        ("Scoring", "52W composite", "<=10% & <10D / <=10% & <15D", "+12 / +10", "Distance-aware recency ladder"),
+        ("Scoring", "52W composite", ">10-15% & <10D / >10-15% & <15D", "+8 / +6", "Distance-aware recency ladder"),
+        ("Scoring", "52W composite", ">15-20% & <10D / >15-20% & <15D", "+4 / +2", "No 52W recency points beyond 20% away"),
+        ("Scoring", "52W penalty", ">20-25% / >=25% from 52W high", "-4 / -8", "Distance penalty"),
+        ("Scoring", "ATR%", "Bottom 30th percentile ATR% and ATR% < 3.5", "-6", f"Current percentile cutoff ≈ {atr_bottom30}"),
+        ("Scoring", "Volume event", "Most recent day in top 1% volume of last 6 months, within last 10D / 30D / 60D", "+6 / +4 / +3", "Recent top-1%-volume event score"),
+        ("Scoring", "Volume move bonus", "Qualifying volume event with move >= 10% / 6% / 4%", "+6 / +4 / +2", "Adds to volume score"),
+        ("Scoring", "Reset-date return", "Top 90 / 80 / 70 percentile", "+4 / +3 / +2", f"Current cutoffs ≈ {reset_top90} / {reset_top80} / {reset_top70}"),
+        ("Scoring", "Reset-date return", "Bottom 10th percentile", "-2", f"Current cutoff ≈ {reset_bottom10}"),
+        ("Scoring", "1-day return", "Top 90 / 80 / 70 percentile with non-negative return", "+3 / +2 / +1", f"Current cutoffs ≈ {day_top90} / {day_top80} / {day_top70}"),
+        ("Scoring", "Relative strength composite", "Top 90 / 80 / 70 percentile", "+6 / +4 / +2", f"Current cutoffs ≈ {rs_top90} / {rs_top80} / {rs_top70}"),
+        ("Scoring", "Relative strength composite", "Bottom 10th percentile", "-2", f"Current cutoff ≈ {rs_bottom10}"),
+        ("Scoring", "Turnover", "No turnover penalty inside shortlisted liquid universe", "0", f"Top {TOP_N} liquidity filter already applied"),
+        ("Scoring", "12M bonus", "12M return >= 80th percentile", "+4", f"Current cutoff ≈ {ret12_top80}"),
+        ("Scoring", "6M bonus", "6M return >= 80th percentile", "+2", f"Current cutoff ≈ {ret6_top80}"),
+        ("Scoring", "3M bonus", "3M return >= 80th percentile", "+4", f"Current cutoff ≈ {ret3_top80}"),
+        ("Scoring", "Trend", "Above 50DMA", "+2", "Current close > 50DMA"),
+        ("Scoring", "Trend stack", "8EMA > 21EMA > 50DMA", "+2", "Stacked trend"),
+        ("Scoring", "Uptrend consistency", f"Uptrend consistency >= {UPTREND_CON_MIN_PCT:.0f}%", "+2", f"Window = {UPTREND_CON_WINDOW} trading days"),
+        ("Scoring", "Green candles", "Top 80 / 90 percentile", "+2 / +4", f"Current cutoffs ≈ {green_top80} / {green_top90}"),
+        ("Universe Filter", "ATR% pre-filter", f"ATR% must be >= {TOP30_MIN_ATR_PCT:.1f}", "Required", "Applied before 52W / 12M gates and scoring"),
+        ("Sector", "Top 5 sectors", "Composite = 40% avg score + 25% breadth + 20% RS + 15% count", "Reference", "Sector ranking logic"),
+        ("Output", "ATR guard", f"No additional Top 30 ATR exclusion beyond ATR% >= {TOP30_MIN_ATR_PCT:.1f}", "Reference", "Top 30 exclusion sheet should normally be empty"),
+    ]
+
+    for row in rr_rows:
+        ws_rr.append(list(row))
+    for r in range(3, ws_rr.max_row + 1):
+        style_data_row(ws_rr, r, len(rr_headers), alt=((r - 3) % 2 == 1))
+        ws_rr.cell(row=r, column=2).alignment = Alignment(horizontal="left", vertical="center")
+        ws_rr.cell(row=r, column=3).alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+        ws_rr.cell(row=r, column=5).alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+
+    ws_rr.column_dimensions["A"].width = 18
+    ws_rr.column_dimensions["B"].width = 24
+    ws_rr.column_dimensions["C"].width = 48
+    ws_rr.column_dimensions["D"].width = 14
+    ws_rr.column_dimensions["E"].width = 34
+    ws_rr.freeze_panes = "A3"
+
+    # ================================================================
+    # Sheet 6: Extended Universe Stocks
     # ================================================================
     ws5 = wb.create_sheet("Extended Universe Stocks")
     ws5.append(headers)
@@ -1232,7 +1422,7 @@ def write_excel_report(
     ws5.freeze_panes = "A2"
 
     # ================================================================
-    # Sheet 6: ATR Excluded Top 30
+    # Sheet 7: ATR Excluded Top 30
     # ================================================================
     ws6 = wb.create_sheet("ATR Excluded Top30")
     ws6.append(headers)
@@ -1344,6 +1534,18 @@ def write_updated_gmlist(top30: pd.DataFrame, as_of_date: datetime) -> Path:
     return updated_path
 
 
+def build_liquid_leader_bonus_payload(all_scored: pd.DataFrame) -> dict[str, int]:
+    payload: dict[str, int] = {}
+    if "symbol" not in all_scored.columns or all_scored.empty:
+        return payload
+    for index, raw_symbol in enumerate(all_scored.sort_values("rank").head(20)["symbol"].tolist(), start=1):
+        symbol = str(raw_symbol).strip().upper().replace("NSE:", "").replace("-", "_")
+        if not symbol or symbol == "NAN":
+            continue
+        payload[symbol] = 6 if index <= 10 else 3
+    return payload
+
+
 def debug_symbol_row(label: str, symbol: str, df: pd.DataFrame, cols: list[str] | None = None) -> None:
     """Log a single-symbol snapshot from a dataframe for debugging."""
     if not symbol or df is None or df.empty or "symbol" not in df.columns:
@@ -1362,6 +1564,11 @@ def debug_symbol_row(label: str, symbol: str, df: pd.DataFrame, cols: list[str] 
                             "total_score", "rating", "source"] if c in rows.columns]
     payload = {c: row.get(c) for c in cols if c in rows.columns}
     log.info(f"[DEBUG] {label}: {payload}")
+
+
+def debug_gate_result(symbol: str, stage: str, passed: bool, details: str) -> None:
+    status = "PASS" if passed else "FAIL"
+    log.info(f"[DEBUG] {symbol} {stage}: {status} | {details}")
 
 
 # ---------------------------------------------------------------------------
@@ -1390,6 +1597,10 @@ def main():
     pipeline_summary = {}
     failed_symbols = []
 
+    log.info(f"Stock OHLC source: {args.source}")
+    if debug_symbol:
+        log.info(f"[DEBUG] Trace mode enabled for symbol: {debug_symbol}")
+
     # ------------------------------------------------------------------
     # 1. Database + Kite setup
     # ------------------------------------------------------------------
@@ -1417,17 +1628,23 @@ def main():
         turnover_df = turnover_df[turnover_df["symbol"].isin(valid_eq)]
         token_map = build_nse_token_map(kite, turnover_df["symbol"].tolist())
         if debug_symbol:
-            log.info(f"[DEBUG] EQ validation: {debug_symbol} valid_eq={debug_symbol in valid_eq} "
-                     f"token_mapped={debug_symbol in token_map}")
+            debug_gate_result(
+                debug_symbol,
+                "EQ validation",
+                debug_symbol in valid_eq,
+                f"valid_eq={debug_symbol in valid_eq}, token_mapped={debug_symbol in token_map}",
+            )
     else:
         token_map = {}
 
     # ------------------------------------------------------------------
-    # 4. Filter and build Top 200
+    # 4. Filter and build Top 150
     # ------------------------------------------------------------------
     turnover_df = turnover_df[turnover_df["latest_close"] >= MIN_CLOSE].copy()
     if debug_symbol:
         debug_symbol_row("After close filter", debug_symbol, turnover_df)
+        raw_match = "symbol" in turnover_df.columns and any(turnover_df["symbol"].astype(str).str.upper() == debug_symbol)
+        debug_gate_result(debug_symbol, "Close filter", raw_match, f"min_close={MIN_CLOSE}")
     pipeline_summary["after_close_filter"] = len(turnover_df)
     turnover_df = turnover_df[
         (turnover_df["avg_turnover_cr"] >= MIN_EXTENDED_TURNOVER_CR) &
@@ -1435,93 +1652,141 @@ def main():
     ].copy()
     if debug_symbol:
         debug_symbol_row("After turnover filter", debug_symbol, turnover_df)
+        turn_match = "symbol" in turnover_df.columns and any(turnover_df["symbol"].astype(str).str.upper() == debug_symbol)
+        debug_gate_result(
+            debug_symbol,
+            "Liquidity filter",
+            turn_match,
+            f"avg_turnover>={MIN_EXTENDED_TURNOVER_CR}Cr and median_turnover>={MIN_EXTENDED_TURNOVER_CR}Cr",
+        )
     pipeline_summary["after_turnover_filter"] = len(turnover_df)
 
-    top300_df = turnover_df.nlargest(TOP_N, "avg_turnover_cr").reset_index(drop=True)
-    top300_symbols = top300_df["symbol"].tolist()
+    topn_df = turnover_df.nlargest(TOP_N, "avg_turnover_cr").reset_index(drop=True)
+    topn_symbols = topn_df["symbol"].tolist()
     if debug_symbol:
         rank_df = turnover_df.sort_values("avg_turnover_cr", ascending=False).reset_index(drop=True)
         matches = rank_df[rank_df["symbol"].astype(str).str.upper() == debug_symbol]
         if not matches.empty:
             rank = matches.index[0] + 1
             log.info(f"[DEBUG] Turnover rank: {debug_symbol} rank_by_avg_to={rank} top{TOP_N}={rank <= TOP_N}")
+            debug_gate_result(debug_symbol, f"Top {TOP_N} turnover shortlist", rank <= TOP_N, f"rank_by_avg_to={rank}")
         else:
             log.info(f"[DEBUG] Turnover rank: {debug_symbol} not present after liquidity filters")
-    pipeline_summary["top300_count"] = len(top300_symbols)
+            debug_gate_result(debug_symbol, f"Top {TOP_N} turnover shortlist", False, "not present after liquidity filters")
+    pipeline_summary["topn_count"] = len(topn_symbols)
     log.info(f"Top {TOP_N} symbols selected. Fetching OHLCV...")
 
     # ------------------------------------------------------------------
     # 5. Fetch benchmark index OHLCV (DS-8)
     # ------------------------------------------------------------------
-    log.info("Fetching Nifty Smallcap 250 index data...")
-    index_df = pd.DataFrame()
-    if kite:
-        index_df = fetch_ohlcv_kite(kite, NIFTY_SMALLCAP_250_SYMBOL, ohlcv_from, as_of, is_index=True)
-        if index_df.empty:
-            log.warning("Nifty Smallcap 250 unavailable, falling back to Nifty 50.")
-            index_df = fetch_ohlcv_kite(kite, NIFTY_50_SYMBOL, ohlcv_from, as_of, is_index=True)
+    log.info("Fetching Nifty Smallcap 250 index data from indexbhav...")
+    index_df = fetch_index_ohlcv_indexbhav(conn, NIFTY_SMALLCAP_250_SYMBOL, ohlcv_from, as_of)
+    if index_df.empty:
+        log.warning("Nifty Smallcap 250 unavailable in indexbhav, falling back to Nifty 50.")
+        index_df = fetch_index_ohlcv_indexbhav(conn, NIFTY_50_SYMBOL, ohlcv_from, as_of)
+    if index_df.empty:
+        log.warning("Benchmark index data unavailable in indexbhav; RS metrics will be NaN.")
 
     # ------------------------------------------------------------------
-    # 6. Fetch OHLCV for Top 200
+    # 6. Fetch OHLCV for Top 150
     # ------------------------------------------------------------------
     ohlcv_map = {}
-    for i, sym in enumerate(top300_symbols):
+    for i, sym in enumerate(topn_symbols):
         if i > 0 and i % 50 == 0:
-            log.info(f"  Fetched {i}/{len(top300_symbols)} symbols...")
+            log.info(f"  Fetched {i}/{len(topn_symbols)} symbols...")
         ohlcv_map[sym] = fetch_ohlcv(
             kite, conn, sym, ohlcv_from, as_of,
             args.source, failed_symbols, token_map=token_map
         )
 
     # ------------------------------------------------------------------
-    # 7. Compute metrics and score Top 200
+    # 7. Compute metrics and score Top 150
     # ------------------------------------------------------------------
     log.info(f"Computing metrics for Top {TOP_N}...")
-    metrics_df = compute_all_metrics(top300_symbols, ohlcv_map, index_df, as_of, reset)
+    metrics_df = compute_all_metrics(topn_symbols, ohlcv_map, index_df, as_of, reset)
     metrics_df = metrics_df.merge(
-        top300_df[["symbol", "avg_turnover_cr", "median_turnover_cr"]],
+        topn_df[["symbol", "avg_turnover_cr", "median_turnover_cr"]],
         on="symbol", how="left"
     )
+    metrics_df = metrics_df[metrics_df["atr_pct"].notna()].copy()
+    metrics_df = metrics_df[metrics_df["atr_pct"] >= TOP30_MIN_ATR_PCT].copy()
+    pipeline_summary["after_atr_filter"] = len(metrics_df)
 
     filtered_df = apply_filters(metrics_df)
     if debug_symbol:
         debug_symbol_row(
-            "Top300 metrics", debug_symbol, metrics_df,
+            f"Top{TOP_N} metrics", debug_symbol, metrics_df,
             cols=["symbol", "avg_turnover_cr", "median_turnover_cr", "ret_12m",
                   "pct_from_52w_high", "tds_since_52w_high", "atr_pct", "ret_reset", "ret_1d"]
         )
-        top300_debug = metrics_df[metrics_df["symbol"].astype(str).str.upper() == debug_symbol]
-        if not top300_debug.empty:
-            row = top300_debug.iloc[0]
+        topn_debug = metrics_df[metrics_df["symbol"].astype(str).str.upper() == debug_symbol]
+        if not topn_debug.empty:
+            row = topn_debug.iloc[0]
             ret12_valid = pd.notna(row.get("ret_12m"))
-            threshold_70 = metrics_df["ret_12m"].dropna().quantile(RETURN_GATE_PERCENTILE / 100) if metrics_df["ret_12m"].notna().any() else np.nan
+            gate_base_df = metrics_df[
+                (metrics_df["pct_from_52w_high"] <= MAX_RECENCY_GATE_DIST_PCT) &
+                (
+                    (metrics_df["pct_from_52w_high"] <= MAX_DIST_FROM_52W_HIGH_PCT) |
+                    (metrics_df["tds_since_52w_high"] <= MAX_TDS_SINCE_52W_HIGH)
+                )
+            ].copy()
+            threshold_70 = (
+                gate_base_df["ret_12m"].dropna().quantile(RETURN_GATE_PERCENTILE / 100)
+                if gate_base_df["ret_12m"].notna().any()
+                else np.nan
+            )
             pass_52w = (
                 pd.notna(row.get("pct_from_52w_high")) and pd.notna(row.get("tds_since_52w_high")) and
-                row["pct_from_52w_high"] <= MAX_DIST_FROM_52W_HIGH_PCT and
-                row["tds_since_52w_high"] <= MAX_TDS_SINCE_52W_HIGH
+                (
+                    row["pct_from_52w_high"] <= MAX_RECENCY_GATE_DIST_PCT and
+                    (
+                        row["pct_from_52w_high"] <= MAX_DIST_FROM_52W_HIGH_PCT or
+                        row["tds_since_52w_high"] <= MAX_TDS_SINCE_52W_HIGH
+                    )
+                )
             )
             pass_12m = ret12_valid and (row["ret_12m"] >= threshold_70 if pd.notna(threshold_70) else False)
             log.info(
-                f"[DEBUG] Top300 gates: pass_52w={pass_52w} "
+                f"[DEBUG] Top{TOP_N} gates: pass_52w={pass_52w} "
                 f"(pct_from_high={row.get('pct_from_52w_high')}, tds_since_high={row.get('tds_since_52w_high')}) "
-                f"pass_12m={pass_12m} (ret_12m={row.get('ret_12m')}, threshold={threshold_70})"
+                f"pass_12m={pass_12m} (ret_12m={row.get('ret_12m')}, "
+                f"post_52w_threshold={threshold_70}, gate_base_count={len(gate_base_df)})"
+            )
+            debug_gate_result(
+                debug_symbol,
+                "52W gate",
+                pass_52w,
+                f"pct_from_high={row.get('pct_from_52w_high')}, tds_since_high={row.get('tds_since_52w_high')}, "
+                f"rule=((<= {MAX_DIST_FROM_52W_HIGH_PCT}% OR <= {MAX_TDS_SINCE_52W_HIGH} trading days) "
+                f"AND <= {MAX_RECENCY_GATE_DIST_PCT}% from high)",
+            )
+            debug_gate_result(
+                debug_symbol,
+                "12M gate",
+                pass_12m,
+                f"ret_12m={row.get('ret_12m')}, post_52w_threshold={threshold_70}, gate_base_count={len(gate_base_df)}",
             )
     pipeline_summary["after_52w_gate"] = len(metrics_df[
-        (metrics_df["pct_from_52w_high"] <= MAX_DIST_FROM_52W_HIGH_PCT) &
-        (metrics_df["tds_since_52w_high"] <= MAX_TDS_SINCE_52W_HIGH)
+        (metrics_df["pct_from_52w_high"] <= MAX_RECENCY_GATE_DIST_PCT) &
+        (
+            (metrics_df["pct_from_52w_high"] <= MAX_DIST_FROM_52W_HIGH_PCT) |
+            (metrics_df["tds_since_52w_high"] <= MAX_TDS_SINCE_52W_HIGH)
+        )
     ])
     pipeline_summary["after_12m_gate"] = len(filtered_df)
 
-    scored_top300 = score_universe(filtered_df)
-    scored_top300["source"] = "Top300"
-    scored_top300["rank"] = range(1, len(scored_top300) + 1)
+    scored_topn = score_universe(filtered_df)
+    scored_topn["source"] = f"Top{TOP_N}"
+    scored_topn["rank"] = range(1, len(scored_topn) + 1)
     if debug_symbol:
         debug_symbol_row(
-            "Top300 scored", debug_symbol, scored_top300,
+            f"Top{TOP_N} scored", debug_symbol, scored_topn,
             cols=["symbol", "total_score", "rating", "score_52w", "score_atr", "score_volume",
                   "score_reset", "score_1d", "score_rs", "score_turnover", "rank"]
         )
-    pipeline_summary["scored_top300"] = len(scored_top300)
+        top_scored = "symbol" in scored_topn.columns and any(scored_topn["symbol"].astype(str).str.upper() == debug_symbol)
+        debug_gate_result(debug_symbol, "Scored main universe", top_scored, "present in final scored shortlist after all gates")
+    pipeline_summary["scored_topn"] = len(scored_topn)
 
     # ------------------------------------------------------------------
     # 8. Sector data
@@ -1532,7 +1797,7 @@ def main():
     # 9. Sector analysis — Top 5 sectors
     # ------------------------------------------------------------------
     log.info("Computing top 5 sectors...")
-    top5_sectors = compute_sector_summary(scored_top300, sectors_df)
+    top5_sectors = compute_sector_summary(scored_topn, sectors_df)
 
     # ------------------------------------------------------------------
     # 10. Extended universe (if --extended)
@@ -1544,14 +1809,15 @@ def main():
 
     if args.extended:
         log.info("Building extended universe...")
-        top300_set = set(top300_symbols)
+        topn_set = set(topn_symbols)
         ext_candidates = turnover_df[
-            (~turnover_df["symbol"].isin(top300_set)) &
+            (~turnover_df["symbol"].isin(topn_set)) &
             (turnover_df["avg_turnover_cr"] >= MIN_EXTENDED_TURNOVER_CR) &
             (turnover_df["median_turnover_cr"] >= MIN_EXTENDED_TURNOVER_CR)
         ]["symbol"].tolist()
         if debug_symbol:
             log.info(f"[DEBUG] Extended universe: {debug_symbol} in_extended_candidates={debug_symbol in ext_candidates}")
+            debug_gate_result(debug_symbol, "Extended universe candidate", debug_symbol in ext_candidates, "outside main shortlist but passed liquidity filters")
         pipeline_summary["extended_candidates"] = len(ext_candidates)
         log.info(f"Extended universe: {len(ext_candidates)} candidates. Fetching OHLCV...")
 
@@ -1569,6 +1835,8 @@ def main():
         ][["symbol", "avg_turnover_cr", "median_turnover_cr"]]
         ext_metrics = compute_all_metrics(ext_candidates, ext_ohlcv_map, index_df, as_of, reset)
         ext_metrics = ext_metrics.merge(ext_turnover, on="symbol", how="left")
+        ext_metrics = ext_metrics[ext_metrics["atr_pct"].notna()].copy()
+        ext_metrics = ext_metrics[ext_metrics["atr_pct"] >= TOP30_MIN_ATR_PCT].copy()
         ext_filtered = apply_filters(ext_metrics)
         if debug_symbol:
             debug_symbol_row(
@@ -1579,17 +1847,43 @@ def main():
             ext_debug = ext_metrics[ext_metrics["symbol"].astype(str).str.upper() == debug_symbol]
             if not ext_debug.empty:
                 row = ext_debug.iloc[0]
-                threshold_70 = ext_metrics["ret_12m"].dropna().quantile(RETURN_GATE_PERCENTILE / 100) if ext_metrics["ret_12m"].notna().any() else np.nan
+                ext_gate_base_df = ext_metrics[
+                    (ext_metrics["pct_from_52w_high"] <= MAX_RECENCY_GATE_DIST_PCT) &
+                    (
+                        (ext_metrics["pct_from_52w_high"] <= MAX_DIST_FROM_52W_HIGH_PCT) |
+                        (ext_metrics["tds_since_52w_high"] <= MAX_TDS_SINCE_52W_HIGH)
+                    )
+                ].copy()
+                threshold_70 = ext_gate_base_df["ret_12m"].dropna().quantile(RETURN_GATE_PERCENTILE / 100) if ext_gate_base_df["ret_12m"].notna().any() else np.nan
                 pass_52w = (
                     pd.notna(row.get("pct_from_52w_high")) and pd.notna(row.get("tds_since_52w_high")) and
-                    row["pct_from_52w_high"] <= MAX_DIST_FROM_52W_HIGH_PCT and
-                    row["tds_since_52w_high"] <= MAX_TDS_SINCE_52W_HIGH
+                    (
+                        row["pct_from_52w_high"] <= MAX_RECENCY_GATE_DIST_PCT and
+                        (
+                            row["pct_from_52w_high"] <= MAX_DIST_FROM_52W_HIGH_PCT or
+                            row["tds_since_52w_high"] <= MAX_TDS_SINCE_52W_HIGH
+                        )
+                    )
                 )
                 pass_12m = pd.notna(row.get("ret_12m")) and (row["ret_12m"] >= threshold_70 if pd.notna(threshold_70) else False)
                 log.info(
                     f"[DEBUG] Extended gates: pass_52w={pass_52w} "
                     f"(pct_from_high={row.get('pct_from_52w_high')}, tds_since_high={row.get('tds_since_52w_high')}) "
-                    f"pass_12m={pass_12m} (ret_12m={row.get('ret_12m')}, threshold={threshold_70})"
+                    f"pass_12m={pass_12m} (ret_12m={row.get('ret_12m')}, post_52w_threshold={threshold_70})"
+                )
+                debug_gate_result(
+                    debug_symbol,
+                    "Extended 52W gate",
+                    pass_52w,
+                    f"pct_from_high={row.get('pct_from_52w_high')}, tds_since_high={row.get('tds_since_52w_high')}, "
+                    f"rule=((<= {MAX_DIST_FROM_52W_HIGH_PCT}% OR <= {MAX_TDS_SINCE_52W_HIGH} trading days) "
+                    f"AND <= {MAX_RECENCY_GATE_DIST_PCT}% from high)",
+                )
+                debug_gate_result(
+                    debug_symbol,
+                    "Extended 12M gate",
+                    pass_12m,
+                    f"ret_12m={row.get('ret_12m')}, post_52w_threshold={threshold_70}",
                 )
         scored_extended = score_universe(ext_filtered)
         scored_extended["source"] = "Extended"
@@ -1600,18 +1894,20 @@ def main():
                 cols=["symbol", "total_score", "rating", "score_52w", "score_atr", "score_volume",
                       "score_reset", "score_1d", "score_rs", "score_turnover", "rank"]
             )
+            ext_scored = "symbol" in scored_extended.columns and any(scored_extended["symbol"].astype(str).str.upper() == debug_symbol)
+            debug_gate_result(debug_symbol, "Scored extended universe", ext_scored, "present in extended scored list")
         pipeline_summary["scored_extended"] = len(scored_extended)
         extended_scored_df = scored_extended.copy()
 
     # ------------------------------------------------------------------
     # 11. Merge and select Top 30
     # ------------------------------------------------------------------
-    scored_frames = [df for df in [scored_top300, scored_extended] if not df.empty]
+    scored_frames = [df for df in [scored_topn, scored_extended] if not df.empty]
     if scored_frames:
         all_scored = pd.concat(scored_frames, ignore_index=True)
     else:
         log.warning("No stocks qualified after scoring. Writing an empty report.")
-        all_scored = pd.DataFrame(columns=list(scored_top300.columns))
+        all_scored = pd.DataFrame(columns=list(scored_topn.columns))
         top5_sectors = pd.DataFrame()
     # Add sector info
     if not sectors_df.empty:
@@ -1623,11 +1919,18 @@ def main():
             ["total_score", "ret_12m"], ascending=[False, False]
         ).reset_index(drop=True)
         all_scored["rank"] = range(1, len(all_scored) + 1)
+    if debug_symbol:
+        final_present = "symbol" in all_scored.columns and any(all_scored["symbol"].astype(str).str.upper() == debug_symbol)
+        if final_present:
+            row = all_scored[all_scored["symbol"].astype(str).str.upper() == debug_symbol].iloc[0]
+            debug_gate_result(debug_symbol, "Final merged output", True, f"rank={row.get('rank')}, total_score={row.get('total_score')}, source={row.get('source')}")
+        else:
+            debug_gate_result(debug_symbol, "Final merged output", False, "not present after gating/scoring")
     pipeline_summary["total_scored"] = len(all_scored)
 
     top30_initial = all_scored.head(TOP_N_REPORT).copy()
-    excluded_top30_atr = top30_initial[top30_initial["atr_pct"] < TOP30_MIN_ATR_PCT].copy()
-    top30 = top30_initial[top30_initial["atr_pct"] >= TOP30_MIN_ATR_PCT].copy()
+    excluded_top30_atr = top30_initial.iloc[0:0].copy()
+    top30 = top30_initial.copy()
     pipeline_summary["top30_initial_count"] = len(top30_initial)
     pipeline_summary["top30_atr_excluded_count"] = len(excluded_top30_atr)
     pipeline_summary["top30_count"] = len(top30)
@@ -1646,6 +1949,7 @@ def main():
     # ------------------------------------------------------------------
     tv_path = REPORTS_DIR / f"final_wl_{as_of.strftime('%d%b%Y')}.txt"
     write_tradingview_watchlist(top30, sectors_df, tv_path, as_of)
+    liquid_leader_bonus_payload = build_liquid_leader_bonus_payload(all_scored)
     updated_gmlist_path = write_updated_gmlist(top30, as_of)
 
     # ------------------------------------------------------------------
@@ -1653,6 +1957,11 @@ def main():
     # ------------------------------------------------------------------
     log.info(f"  Report: {excel_path}")
     log.info(f"  Watchlist: {tv_path}")
+    if liquid_leader_bonus_payload:
+        preview = ", ".join(
+            f"{symbol}:{bonus}" for symbol, bonus in list(liquid_leader_bonus_payload.items())[:5]
+        )
+        log.info(f"  Liquid leader bonus map: {preview}{' ...' if len(liquid_leader_bonus_payload) > 5 else ''}")
     log.info(f"  Updated gmlist: {updated_gmlist_path}")
     if failed_symbols:
         log.warning(f"  {len(failed_symbols)} symbols failed API calls: {failed_symbols[:10]}{'...' if len(failed_symbols) > 10 else ''}")
@@ -1671,8 +1980,10 @@ def main():
             str(stock_rating_path),
             as_of.strftime("%Y-%m-%d"),
             reset.strftime("%Y-%m-%d"),
+            "--liquid-leader-map",
+            json.dumps(liquid_leader_bonus_payload, separators=(",", ":")),
         ]
-        log.info("Running stock_rating.py after neo reports and updated gmlist...")
+        log.info("Running stock_rating.py after neo reports and updated gmlist with inline liquid leader bonus map...")
         result = subprocess.run(cmd, cwd=str(Path(__file__).resolve().parent))
         if result.returncode != 0:
             log.error(f"stock_rating.py failed with exit code {result.returncode}")
