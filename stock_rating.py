@@ -62,6 +62,7 @@ SPIKE_WINDOW_60 = 60
 TURNOVER_CRORE_DIVISOR = 10_000_000.0
 MIN_MEDIAN_TURNOVER_CRORES = 10.0
 MIN_AVG_TURNOVER_42D_CRORES = 10.0
+MEDIAN_TURNOVER_LOW_THRESHOLD_CRORES = 20.0  # absolute gate for percentile-based median-turnover penalty
 GAPUP_LOOKBACK = 60
 UPTREND_CONSISTENCY_MIN_LOOKBACK = 30
 
@@ -79,8 +80,20 @@ DB_CONFIG = {
 #     of pre-sector composite score.
 #   - Stocks in sectors within the top 10% of sector-strength distribution get +4.
 #   - Stocks in sectors within the top 30% (but not top 10%) get +2.
-SECTOR_TOP10_POINTS = 4
-SECTOR_TOP30_POINTS = 2
+SECTOR_TOP10_POINTS = 8
+SECTOR_TOP20_POINTS = 6
+SECTOR_TOP30_POINTS = 4
+
+# Top-20 concentration bonuses — added to each sector's leadership score before
+# the top-10% / top-30% threshold comparison is made.
+# Breadth bonus: how many of the sector's stocks appear in the final Top-20 list.
+SECTOR_TOP20_BREADTH_BONUS_3PLUS = 6   # 3 or more sector stocks in Top-20
+SECTOR_TOP20_BREADTH_BONUS_2     = 4   # exactly 2 sector stocks in Top-20
+SECTOR_TOP20_BREADTH_BONUS_1     = 2   # exactly 1 sector stock in Top-20
+# Penetration bonus: what fraction of the sector's stocks made the Top-20 list.
+SECTOR_TOP20_PENETRATION_BONUS_100 = 3  # 100% of sector stocks in Top-20 (min 2 stocks)
+SECTOR_TOP20_PENETRATION_BONUS_67  = 2  # >= 67% of sector stocks in Top-20
+SECTOR_TOP20_PENETRATION_BONUS_50  = 1  # >= 50% of sector stocks in Top-20
 
 
 @dataclass
@@ -921,6 +934,8 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
 
     thresholds = {
         "turnover_bottom30": bottom_n_threshold(work["avg_turnover_42d"], 30),
+        "median_turnover_bottom10": bottom_n_threshold(work["median_turnover_42d"], 10),
+        "median_turnover_bottom20": bottom_n_threshold(work["median_turnover_42d"], 20),
         "ret12_top10": top_n_threshold(work["return_12m"], 10),
         "ret12_top20": top_n_threshold(work["return_12m"], 20),
         "ret12_top30": top_n_threshold(work["return_12m"], 30),
@@ -994,10 +1009,12 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
     )
     work["score_median_turnover"] = np.select(
         [
-            work["median_turnover_42d"] < 15.0,
-            work["median_turnover_42d"] < 30.0,
+            (work["median_turnover_42d"] <= thresholds["median_turnover_bottom10"])
+            & (work["median_turnover_42d"] < MEDIAN_TURNOVER_LOW_THRESHOLD_CRORES),
+            (work["median_turnover_42d"] <= thresholds["median_turnover_bottom20"])
+            & (work["median_turnover_42d"] < MEDIAN_TURNOVER_LOW_THRESHOLD_CRORES),
         ],
-        [-8, -4],
+        [-8, -6],
         default=0,
     )
 
@@ -1201,23 +1218,54 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
 
     sector_stats = pd.DataFrame(sector_rows)
     eligible_sector_mask = sector_stats["sector_positive_score_count"] > 1
+
+    # -- Top-20 concentration bonuses ----------------------------------------
+    # Breadth bonus: how many of this sector's stocks landed in the Top-20.
+    def _breadth_bonus(n: int) -> int:
+        if n >= 3:  return SECTOR_TOP20_BREADTH_BONUS_3PLUS
+        if n == 2:  return SECTOR_TOP20_BREADTH_BONUS_2
+        if n == 1:  return SECTOR_TOP20_BREADTH_BONUS_1
+        return 0
+
+    # Penetration bonus: fraction of sector's total stocks that are in Top-20.
+    def _penetration_bonus(hits: int, total: int) -> int:
+        if total == 0 or hits == 0:
+            return 0
+        pct = hits / total
+        if pct >= 1.0 and total >= 2:  return SECTOR_TOP20_PENETRATION_BONUS_100
+        if pct >= 0.67:                return SECTOR_TOP20_PENETRATION_BONUS_67
+        if pct >= 0.50:                return SECTOR_TOP20_PENETRATION_BONUS_50
+        return 0
+
+    sector_stats["sector_top20_breadth_bonus"] = sector_stats["sector_top20_hits"].apply(
+        lambda n: _breadth_bonus(int(n))
+    )
+    sector_stats["sector_top20_penetration_bonus"] = sector_stats.apply(
+        lambda r: _penetration_bonus(int(r["sector_top20_hits"]), int(r["sector_stock_count"])),
+        axis=1,
+    )
+
     if eligible_sector_mask.any():
         sector_stats["sector_leadership_score"] = np.where(
             eligible_sector_mask,
-            sector_stats["sector_weighted_pre_score"],
+            sector_stats["sector_weighted_pre_score"]
+            + sector_stats["sector_top20_breadth_bonus"]
+            + sector_stats["sector_top20_penetration_bonus"],
             -1.0,
         )
     else:
         sector_stats["sector_leadership_score"] = -1.0
 
     sector_top10 = top_n_threshold(sector_stats.loc[eligible_sector_mask, "sector_leadership_score"], 10)
+    sector_top20 = top_n_threshold(sector_stats.loc[eligible_sector_mask, "sector_leadership_score"], 20)
     sector_top30 = top_n_threshold(sector_stats.loc[eligible_sector_mask, "sector_leadership_score"], 30)
     sector_stats["score_sector"] = np.select(
         [
             eligible_sector_mask & (sector_stats["sector_leadership_score"] >= sector_top10),
+            eligible_sector_mask & (sector_stats["sector_leadership_score"] >= sector_top20),
             eligible_sector_mask & (sector_stats["sector_leadership_score"] >= sector_top30),
         ],
-        [SECTOR_TOP10_POINTS, SECTOR_TOP30_POINTS],
+        [SECTOR_TOP10_POINTS, SECTOR_TOP20_POINTS, SECTOR_TOP30_POINTS],
         default=0,
     )
     work = work.merge(sector_stats, on="sector", how="left")
@@ -1229,6 +1277,7 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
     for name, value in thresholds.items():
         work[name] = value
     work["sector_top10_threshold"] = sector_top10
+    work["sector_top20_threshold"] = sector_top20
     work["sector_top30_threshold"] = sector_top30
     work["top_quartile_score_threshold"] = top_quartile_threshold
     return work
@@ -1671,156 +1720,6 @@ def export_workbook(
     d_col_w = [5, 18, 22, 7, 14, 9, 10, 10, 8, 8, 7, 8, 7, 55]
     for ci, w in enumerate(d_col_w, 1):
         dash.column_dimensions[get_column_letter(ci)].width = w
-
-    # ══════════════════════════════════════════════════════════════════
-    #  SHEET 2 ── 🏦 INSTITUTIONAL PICKS
-    # ══════════════════════════════════════════════════════════════════
-    ll_ws = wb.create_sheet("🏦 Institutional Picks")
-    institutional = scored.copy()
-    institutional["avg_turnover_pctile"] = institutional["avg_turnover_42d"].rank(method="average", pct=True) * 100.0
-    institutional["median_turnover_pctile"] = institutional["median_turnover_42d"].rank(method="average", pct=True) * 100.0
-    institutional["score_pctile"] = institutional["composite_score"].rank(method="average", pct=True) * 100.0
-    institutional["turnover_focus_pctile"] = (
-        institutional["avg_turnover_pctile"] * 0.70
-        + institutional["median_turnover_pctile"] * 0.30
-    )
-    recency_qualified = institutional["pct_from_52w_high"].fillna(np.inf) <= 0.20
-    institutional["recency_focus_pctile"] = 0.0
-    institutional.loc[recency_qualified, "recency_focus_pctile"] = (
-        (-institutional.loc[recency_qualified, "days_since_52w_high"].fillna(9999))
-        .rank(method="average", pct=True) * 100.0
-    )
-    institutional["current_regime_raw"] = (
-        institutional["score_52w_total"]
-        + institutional["score_above_50dma"]
-        + institutional["score_above_21ema"] * 3
-        + institutional["score_above_8ema"] * 4
-        + institutional["score_green_candles"]
-    )
-    institutional["current_regime_pctile"] = institutional["current_regime_raw"].rank(method="average", pct=True) * 100.0
-    institutional["performance_focus_pctile"] = institutional["score_performance_total"].rank(method="average", pct=True) * 100.0
-    institutional["rs_focus_pctile"] = institutional["score_rs_total"].rank(method="average", pct=True) * 100.0
-    institutional["institutional_trend_penalty"] = np.select(
-        [
-            (~institutional["above_21ema"].fillna(False)) & (~institutional["above_8ema"].fillna(False)) & (institutional["days_since_52w_high"] > 15),
-            (~institutional["above_21ema"].fillna(False)) & (~institutional["above_8ema"].fillna(False)) & (institutional["days_since_52w_high"] > 10),
-            (~institutional["above_21ema"].fillna(False)) & (institutional["days_since_52w_high"] > 10),
-            institutional["short_trend_breakdown"].fillna(False) & (institutional["days_since_52w_high"] > 15),
-            institutional["short_trend_breakdown"].fillna(False),
-            institutional["short_trend_bearish"].fillna(False) & (institutional["days_since_52w_high"] > 10),
-            (~institutional["above_21ema"].fillna(False)) & (institutional["ema21_slope_5d"] < 0),
-        ],
-        [42.0, 28.0, 18.0, 45.0, 30.0, 22.0, 10.0],
-        default=0.0,
-    )
-    institutional["institutional_score"] = (
-        institutional["turnover_focus_pctile"] * 0.30
-        + institutional["current_regime_pctile"] * 0.30
-        + institutional["recency_focus_pctile"] * 0.20
-        + institutional["performance_focus_pctile"] * 0.10
-        + institutional["rs_focus_pctile"] * 0.10
-        + institutional["score_pctile"] * 0.00
-        - institutional["institutional_trend_penalty"]
-    )
-    institutional = institutional.sort_values(
-        ["institutional_score", "avg_turnover_42d", "composite_score", "symbol"],
-        ascending=[False, False, False, True],
-    ).reset_index(drop=True)
-    institutional["institutional_rank"] = range(1, len(institutional) + 1)
-
-    LL_COLS = [
-        ("Rank", 6),
-        ("Symbol", 16),
-        ("Sector", 20),
-        ("Institutional\nScore", 12),
-        ("Liquidity\n%ile", 11),
-        ("Current Regime\n%ile", 12),
-        ("52W Recency\n%ile", 11),
-        ("Performance\n%ile", 11),
-        ("RS\n%ile", 9),
-        ("Avg TO\n42D (Cr)", 11),
-        ("Med TO\n42D (Cr)", 11),
-        ("Days Since\n52W High", 10),
-        ("Final\nScore", 8),
-        ("Final Score\n%ile", 10),
-        ("Current Regime\nScore", 10),
-        ("Trend\nPenalty", 9),
-        ("8EMA\nSlope", 9),
-        ("21EMA\nSlope", 9),
-        ("Above\n21EMA", 8),
-        ("Above\n8EMA", 8),
-        ("Ret\n12M", 8),
-        ("RS\n12M", 8),
-    ]
-    ncols_ll = len(LL_COLS)
-    ll_ws.merge_cells(f"A1:{get_column_letter(ncols_ll)}1")
-    ll_ws["A1"] = (
-        f"INSTITUTIONAL PICKS   |   As of {cutoff_date.strftime('%d-%b-%Y')}   "
-        f"|   Ranked by 30% liquidity, 30% current regime, 20% 52W recency, 10% performance, 10% RS, minus rollover penalty"
-    )
-    sc(ll_ws["A1"], bold=True, color="FFFFFF", fill=T_FILL, size=12, align="center")
-    ll_ws.row_dimensions[1].height = 24
-
-    for ci, (hdr, width) in enumerate(LL_COLS, 1):
-        cell = ll_ws.cell(row=2, column=ci, value=hdr)
-        sc(cell, bold=True, color="FFFFFF", fill=H_FILL, size=11, wrap=True)
-        ll_ws.column_dimensions[get_column_letter(ci)].width = width
-    ll_ws.row_dimensions[2].height = 30
-
-    for ri, (_, row) in enumerate(institutional.iterrows(), start=3):
-        rank = ri - 2
-        row_bg = medal_fills[rank - 1] if rank <= 3 else (ALT_FILL if rank % 2 == 0 else WHT_FILL)
-        s_fill, s_fc = score_band(row["composite_score"])
-        vals = [
-            row["institutional_rank"],
-            row["symbol"],
-            row.get("sector", ""),
-            round_or_blank(row.get("institutional_score"), 1),
-            round_or_blank(row.get("turnover_focus_pctile"), 1),
-            round_or_blank(row.get("current_regime_pctile"), 1),
-            round_or_blank(row.get("recency_focus_pctile"), 1),
-            round_or_blank(row.get("performance_focus_pctile"), 1),
-            round_or_blank(row.get("rs_focus_pctile"), 1),
-            r2(row.get("avg_turnover_42d")),
-            r2(row.get("median_turnover_42d")),
-            round_or_blank(row.get("days_since_52w_high"), 0),
-            round_or_blank(row.get("composite_score"), 1),
-            round_or_blank(row.get("score_pctile"), 1),
-            round_or_blank(row.get("current_regime_raw"), 1),
-            round_or_blank(row.get("institutional_trend_penalty"), 1),
-            round_or_blank(row.get("ema8_slope_5d"), 2),
-            round_or_blank(row.get("ema21_slope_5d"), 2),
-            "Yes" if row.get("above_21ema") else "No",
-            "Yes" if row.get("above_8ema") else "No",
-            pct_fmt(row.get("return_12m")),
-            pct_fmt(row.get("rs_12m")),
-        ]
-        for ci, val in enumerate(vals, 1):
-            cell = ll_ws.cell(row=ri, column=ci, value=val)
-            if ci == 4:
-                sc(cell, bold=True, color="1F3B63", fill=PatternFill("solid", fgColor="D8EAF8"), size=11)
-                cell.number_format = "0.0"
-            elif ci == 13:
-                sc(cell, bold=True, color=s_fc, fill=s_fill, size=11)
-                cell.number_format = "0.0"
-            elif ci in (2, 3):
-                sc(cell, fill=row_bg, align="left", size=11, bold=(ci == 2))
-            else:
-                sc(cell, fill=row_bg, size=11)
-                if ci in (5, 6, 7, 8, 9, 13, 14, 15, 16):
-                    cell.number_format = "0.0"
-                elif ci in (10, 11):
-                    cell.number_format = "#,##0.0"
-                elif ci == 12:
-                    cell.number_format = "0"
-                elif ci in (17, 18):
-                    cell.number_format = "0.00"
-                elif ci in (21, 22):
-                    cell.number_format = "0.0000"
-        ll_ws.row_dimensions[ri].height = 15
-
-    ll_ws.freeze_panes = "D3"
-    ll_ws.auto_filter.ref = f"A2:{get_column_letter(ncols_ll)}{max(2, len(institutional)+2)}"
 
     # ══════════════════════════════════════════════════════════════════
     #  SHEET 2 ── 📊 FULL RATINGS
@@ -2328,6 +2227,8 @@ def export_workbook(
             sector_weighted_rs_score=("sector_weighted_rs_score", "max"),
             sector_weighted_perf_score=("sector_weighted_perf_score", "max"),
             sector_top20_hits=("sector_top20_hits", "max"),
+            sector_top20_breadth_bonus=("sector_top20_breadth_bonus", "max"),
+            sector_top20_penetration_bonus=("sector_top20_penetration_bonus", "max"),
             sector_leadership_score=("sector_leadership_score", "max"),
             score_sector=("score_sector", "max"),
             best_symbol=("symbol", "first"),
@@ -2385,7 +2286,8 @@ def export_workbook(
     sl_ws.merge_cells(f"A1:{get_column_letter(ncols_sl)}1")
     sl_ws["A1"] = (
         f"SECTOR LEADERSHIP BOARD   |   As of {cutoff_date.strftime('%d-%b-%Y')}   "
-        f"|   Top 5 sectors | min 2 stocks | stock-count first, then avg stock score"
+        f"|   Top 5 sectors | min 2 stocks | stock-count first, then New Leadership Score "
+        f"(AvgPreSec + Top-20 Breadth Bonus + Penetration Bonus)"
     )
     sc(sl_ws["A1"], bold=True, color="FFFFFF", fill=T_FILL, size=12, align="center")
     sl_ws.row_dimensions[1].height = 24
@@ -2458,8 +2360,8 @@ def export_workbook(
         ("Best Symbol",       14), ("Best Score",        8),
         ("Avg Score",          8), ("Median Score",      8),
         ("Avg RS",             8), ("Avg Pre-Sec",      10),
-        ("# Top-20",           7), ("# Score≥20",        7),
-        ("Top-Qrt Count",      9), ("Strength Ratio",    9),
+        ("# Top-20",           7), ("Breadth Pts",       8), ("Pen Pts",          7),
+        ("# Score≥20",         7), ("Top-Qrt Count",     9), ("Strength Ratio",   9),
         ("Sector Pts",         8),
     ]
     ncols_ss = len(SS_COLS)
@@ -2467,7 +2369,8 @@ def export_workbook(
     ss_ws.merge_cells(f"A1:{get_column_letter(ncols_ss)}1")
     ss_ws["A1"] = (
         f"SECTOR SUMMARY   |   As of {cutoff_date.strftime('%d-%b-%Y')}   "
-        f"|   Ranked by positive stock count first, then average stock score"
+        f"|   Ranked by positive stock count first, then New Leadership Score "
+        f"(AvgPreSec + Top-20 Breadth Bonus + Penetration Bonus)"
     )
     sc(ss_ws["A1"], bold=True, color="FFFFFF", fill=T_FILL, size=12, align="center")
     ss_ws.row_dimensions[1].height = 24
@@ -2499,6 +2402,8 @@ def export_workbook(
             round_or_blank(srow.get("avg_rs_total"), 1),
             round_or_blank(srow.get("avg_pre_sector_score"), 1),
             srow.get("count_top_20", ""),
+            round_or_blank(srow.get("sector_top20_breadth_bonus")),
+            round_or_blank(srow.get("sector_top20_penetration_bonus")),
             srow.get("count_above_20_score", ""),
             srow.get("sector_top_quartile_count", ""),
             pct_fmt(srow.get("sector_strength_ratio")),
@@ -2514,6 +2419,22 @@ def export_workbook(
                 sc(cell, bold=(rank2<=3), fill=row_bg, align="left", size=11)
             elif ci == 1:
                 sc(cell, bold=True, fill=row_bg, size=11)
+            elif ci == ncols_ss:  # Sector Pts — colour by tier
+                pts = val if isinstance(val, (int, float)) else 0
+                if pts >= 8:
+                    sp_fill = PatternFill("solid", fgColor="FFD700")
+                    sp_fc = "000000"
+                elif pts >= 6:
+                    sp_fill = PatternFill("solid", fgColor="2E8B57")
+                    sp_fc = "FFFFFF"
+                elif pts >= 4:
+                    sp_fill = PatternFill("solid", fgColor="90EE90")
+                    sp_fc = "000000"
+                else:
+                    sp_fill = row_bg
+                    sp_fc = "808080"
+                sc(cell, bold=(pts >= 4), color=sp_fc, fill=sp_fill, size=11)
+                cell.number_format = "0"
             else:
                 sc(cell, fill=row_bg, size=11)
                 if ci in (5, 7, 12):
@@ -2565,8 +2486,8 @@ def export_workbook(
         ("Liquidity", "Universe inclusion", "Median 42D turnover must be available", "Required", "Missing value => excluded"),
         ("Liquidity", "Universe inclusion", f"Median 42D turnover must be >= {MIN_MEDIAN_TURNOVER_CRORES:.2f} Cr", "Required", f"Current floor = {MIN_MEDIAN_TURNOVER_CRORES:.2f} Cr"),
         ("Liquidity", "Avg turnover 42D", "Bottom 30% of rated universe", "-8", rr_value("turnover_bottom30")),
-        ("Liquidity", "Median turnover 42D", "Less than 15 Cr", "-8", "Fixed rule"),
-        ("Liquidity", "Median turnover 42D", "Less than 30 Cr", "-4", "Fixed rule"),
+        ("Liquidity", "Median turnover 42D", f"Bottom 10% of universe AND < {MEDIAN_TURNOVER_LOW_THRESHOLD_CRORES:.0f} Cr", "-8", rr_value("median_turnover_bottom10")),
+        ("Liquidity", "Median turnover 42D", f"Bottom 20% of universe AND < {MEDIAN_TURNOVER_LOW_THRESHOLD_CRORES:.0f} Cr", "-6", rr_value("median_turnover_bottom20")),
         ("Liquidity", "Liquid leaders bonus", "Top 10 symbols in liquid leaders source order", "+6", "Based on updated_gmlist order"),
         ("Liquidity", "Liquid leaders bonus", "Top 20 symbols in liquid leaders source order", "+3", "Ranks 11-20"),
         ("52W High", "Distance from 52W high", "<= 10% / 15% / 20% from 52W high", "+10 / +6 / +2", "Daily high basis"),
@@ -2619,8 +2540,15 @@ def export_workbook(
         ("Listing", "New listing", "Listed < 30 days", "+4", ""),
         ("Listing", "New listing", "Listed < 60 days", "+2", ""),
         ("Sector", "Sector strength", "Top 10% eligible sectors by leadership score", f"+{SECTOR_TOP10_POINTS}", rr_value("sector_top10_threshold")),
+        ("Sector", "Sector strength", "Top 20% eligible sectors by leadership score", f"+{SECTOR_TOP20_POINTS}", rr_value("sector_top20_threshold")),
         ("Sector", "Sector strength", "Top 30% eligible sectors by leadership score", f"+{SECTOR_TOP30_POINTS}", rr_value("sector_top30_threshold")),
         ("Sector", "Eligibility", "Sector must have more than 1 positive-score stock", "Required", ""),
+        ("Sector", "Top-20 Breadth Bonus", "3+ sector stocks in Top-20 dashboard", f"+{SECTOR_TOP20_BREADTH_BONUS_3PLUS} to Leader Score", "Added before top-10%/30% threshold"),
+        ("Sector", "Top-20 Breadth Bonus", "2 sector stocks in Top-20 dashboard", f"+{SECTOR_TOP20_BREADTH_BONUS_2} to Leader Score", "Added before top-10%/30% threshold"),
+        ("Sector", "Top-20 Breadth Bonus", "1 sector stock in Top-20 dashboard", f"+{SECTOR_TOP20_BREADTH_BONUS_1} to Leader Score", "Added before top-10%/30% threshold"),
+        ("Sector", "Top-20 Penetration Bonus", "100% of sector stocks in Top-20 (min 2 stocks)", f"+{SECTOR_TOP20_PENETRATION_BONUS_100} to Leader Score", "Added before top-10%/30% threshold"),
+        ("Sector", "Top-20 Penetration Bonus", ">=67% of sector stocks in Top-20 (min 2 stocks)", f"+{SECTOR_TOP20_PENETRATION_BONUS_67} to Leader Score", "Added before top-10%/30% threshold"),
+        ("Sector", "Top-20 Penetration Bonus", ">=50% of sector stocks in Top-20 (min 2 stocks)", f"+{SECTOR_TOP20_PENETRATION_BONUS_50} to Leader Score", "Added before top-10%/30% threshold"),
         ("Sector", "Top quartile reference", "Pre-sector score top quartile", "Reference", rr_value("top_quartile_score_threshold")),
     ]
 
@@ -2651,6 +2579,8 @@ def export_workbook(
         ("Top Score",                     round_or_blank(scored["composite_score"].max()) if not scored.empty else ""),
         ("Bottom Score",                  round_or_blank(scored["composite_score"].min()) if not scored.empty else ""),
         ("Liquidity Bottom-30 Threshold", round_or_blank(scored["turnover_bottom30"].iloc[0])          if not scored.empty else ""),
+        ("Med TO Bottom-10% Threshold",   round_or_blank(scored["median_turnover_bottom10"].iloc[0])    if not scored.empty else ""),
+        ("Med TO Bottom-20% Threshold",   round_or_blank(scored["median_turnover_bottom20"].iloc[0])    if not scored.empty else ""),
         ("ATR% Bottom-10 Threshold",      round_or_blank(scored["atr_bottom10"].iloc[0])               if not scored.empty else ""),
         ("Index Return 12M",              percent_or_blank(scored["index_return_12m"].iloc[0])          if not scored.empty else ""),
         ("Index Return 6M",               percent_or_blank(scored["index_return_6m"].iloc[0])           if not scored.empty else ""),
@@ -2675,6 +2605,7 @@ def export_workbook(
         ("Uptrend Top-30 Threshold",      percent_or_blank(scored["uptrend_consistency_top30"].iloc[0]) if not scored.empty else ""),
         ("Pre-Sector Top-Qtrl Threshold", round_or_blank(scored["top_quartile_score_threshold"].iloc[0])if not scored.empty else ""),
         ("Sector Leadership Top-10",      round_or_blank(scored["sector_top10_threshold"].iloc[0])      if not scored.empty else ""),
+        ("Sector Leadership Top-20",      round_or_blank(scored["sector_top20_threshold"].iloc[0])      if not scored.empty else ""),
         ("Sector Leadership Top-30",      round_or_blank(scored["sector_top30_threshold"].iloc[0])      if not scored.empty else ""),
         ("─── Assumptions ───",            ""),
         ("Sector Scoring",                "Top 10% sectors = +4pts;  Top 30% = +2pts"),
