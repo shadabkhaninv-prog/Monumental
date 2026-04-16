@@ -47,8 +47,9 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 
-LOOKBACK_52W = 250
-LOOKBACK_12M = 250
+NSE_YEAR_TRADING_DAYS = 248   # NSE trading days in a 365-calendar-day fetch window
+LOOKBACK_52W = NSE_YEAR_TRADING_DAYS
+LOOKBACK_12M = NSE_YEAR_TRADING_DAYS
 LOOKBACK_6M = 125
 LOOKBACK_3M = 60
 TURNOVER_LOOKBACK = 42
@@ -60,8 +61,8 @@ SPIKE_WINDOW_10 = 10
 SPIKE_WINDOW_30 = 30
 SPIKE_WINDOW_60 = 60
 TURNOVER_CRORE_DIVISOR = 10_000_000.0
-MIN_MEDIAN_TURNOVER_CRORES = 10.0
-MIN_AVG_TURNOVER_42D_CRORES = 10.0
+MIN_MEDIAN_TURNOVER_CRORES = 15.0
+MIN_AVG_TURNOVER_42D_CRORES = 15.0
 MEDIAN_TURNOVER_LOW_THRESHOLD_CRORES = 20.0  # absolute gate for percentile-based median-turnover penalty
 GAPUP_LOOKBACK = 60
 UPTREND_CONSISTENCY_MIN_LOOKBACK = 30
@@ -94,6 +95,10 @@ SECTOR_TOP20_BREADTH_BONUS_1     = 2   # exactly 1 sector stock in Top-20
 SECTOR_TOP20_PENETRATION_BONUS_100 = 3  # 100% of sector stocks in Top-20 (min 2 stocks)
 SECTOR_TOP20_PENETRATION_BONUS_67  = 2  # >= 67% of sector stocks in Top-20
 SECTOR_TOP20_PENETRATION_BONUS_50  = 1  # >= 50% of sector stocks in Top-20
+
+# IPO performance bonus (applies to stocks listed < 6 months with CMP > issue price)
+IPO_TOP10_POINTS = 6
+IPO_TOP20_POINTS = 4
 
 
 @dataclass
@@ -441,6 +446,32 @@ def load_turnover_map(
     return turnover_map
 
 
+def load_ipo_issue_price_map(
+    conn,
+    symbols: Iterable[str],
+    cutoff_date: date,
+) -> Dict[str, float]:
+    """Return {symbol: issue_price} for symbols present in ipobhav."""
+    sym_list = [s.upper() for s in symbols]
+    if not sym_list:
+        return {}
+    placeholders = ", ".join(["%s"] * len(sym_list))
+    sql = (
+        f"SELECT SYMBOL, ISSUE_PRICE FROM ipobhav "
+        f"WHERE UPPER(SYMBOL) IN ({placeholders}) "
+        f"AND LISTING_DATE <= %s AND ISSUE_PRICE > 0"
+    )
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute(sql, sym_list + [cutoff_date.strftime('%Y-%m-%d')])
+    rows = cursor.fetchall()
+    cursor.close()
+    return {
+        str(r["SYMBOL"]).upper(): float(r["ISSUE_PRICE"])
+        for r in rows
+        if r["ISSUE_PRICE"] and float(r["ISSUE_PRICE"]) > 0
+    }
+
+
 def filter_symbols_by_turnover(
     symbols: Iterable[str],
     turnover_map: Dict[str, Dict[str, float]],
@@ -476,24 +507,16 @@ def filter_symbols_by_turnover(
                 )
             )
             continue
-        if float(avg_turnover) < min_avg_turnover_42d_crores:
+        if (
+            float(avg_turnover) < min_avg_turnover_42d_crores
+            and float(median_turnover) < min_median_turnover_crores
+        ):
             warnings.append(
                 WarningLog(
                     symbol,
-                    f"Average 42D turnover {round(float(avg_turnover), 2)} Cr below {min_avg_turnover_42d_crores:.2f} Cr; excluded from rating universe.",
+                    f"Both avg ({round(float(avg_turnover), 2)} Cr) and median ({round(float(median_turnover), 2)} Cr) turnover below {min_avg_turnover_42d_crores:.2f} Cr; excluded from rating universe.",
                     avg_turnover_21d=None if pd.isna(avg_turnover_21d) else float(avg_turnover_21d),
                     avg_turnover_42d=float(avg_turnover),
-                    median_turnover_42d=None if pd.isna(median_turnover) else float(median_turnover),
-                )
-            )
-            continue
-        if float(median_turnover) < min_median_turnover_crores:
-            warnings.append(
-                WarningLog(
-                    symbol,
-                    f"Median turnover {round(float(median_turnover), 2)} Cr below {min_median_turnover_crores:.2f} Cr; excluded from rating universe.",
-                    avg_turnover_21d=None if pd.isna(avg_turnover_21d) else float(avg_turnover_21d),
-                    avg_turnover_42d=None if pd.isna(avg_turnover) else float(avg_turnover),
                     median_turnover_42d=float(median_turnover),
                 )
             )
@@ -617,6 +640,7 @@ def compute_stock_metrics(
     listing_date: Optional[date],
     turnover_override: Optional[Dict[str, float]],
     liquid_leader_bonus: int,
+    issue_price: Optional[float],
     warnings: List[WarningLog],
 ) -> Optional[Dict[str, object]]:
     history = df[df.index <= cutoff_date].copy()
@@ -909,6 +933,11 @@ def compute_stock_metrics(
         "gapup_top1_threshold": gapup_top1_threshold,
         "score_gapup": score_gapup,
         "score_new_listing": score_new_listing,
+        "issue_price": issue_price if issue_price and issue_price > 0 else math.nan,
+        "ipo_gain": (
+            (current_close - issue_price) / issue_price
+            if issue_price and issue_price > 0 else math.nan
+        ),
         "score_liquid_leaders_bonus": liquid_leader_bonus,
     }
 
@@ -939,6 +968,8 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
         "ret12_top10": top_n_threshold(work["return_12m"], 10),
         "ret12_top20": top_n_threshold(work["return_12m"], 20),
         "ret12_top30": top_n_threshold(work["return_12m"], 30),
+        "ret12_bottom10": bottom_n_threshold(work["return_12m"], 10),
+        "ret12_bottom20": bottom_n_threshold(work["return_12m"], 20),
         "ret6_top10": top_n_threshold(work["return_6m"], 10),
         "ret6_top20": top_n_threshold(work["return_6m"], 20),
         "ret6_top30": top_n_threshold(work["return_6m"], 30),
@@ -1030,14 +1061,22 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
     top1d_10 = work["return_1d"] >= thresholds["ret1_top10"]
     top1d_20 = work["return_1d"] >= thresholds["ret1_top20"]
     mature_listing = work["listed_days"] >= LOOKBACK_3M
+    full_12m_history = work["listed_days"] >= LOOKBACK_12M   # must have full year to be penalised
+    bottom12_10 = full_12m_history & (work["return_12m"] <= thresholds["ret12_bottom10"])
+    bottom12_20 = full_12m_history & (work["return_12m"] <= thresholds["ret12_bottom20"])
     bottom6_10 = mature_listing & (work["return_6m"] <= thresholds["ret6_bottom10"])
     bottom3_10 = mature_listing & (work["return_3m"] <= thresholds["ret3_bottom10"])
-    bottom1d_20 = work["return_1d"] <= thresholds["ret1_bottom20"]
+    bottom1d_20 = (work["return_1d"] <= thresholds["ret1_bottom20"]) & (work["return_1d"] < -0.03)
 
     work["score_perf_12m"] = np.select([top12_10, top12_20, top12_30], [8, 6, 4], default=0)
     work["score_perf_6m"] = np.select([top6_10, top6_20, top6_30], [6, 4, 2], default=0)
     work["score_perf_3m"] = np.select([top3_10, top3_20, top3_30], [6, 4, 2], default=0)
     work["score_perf_1d"] = np.select([top1d_10, top1d_20], [4, 2], default=0)
+    work["score_perf_12m_penalty"] = np.select(
+        [bottom12_10, bottom12_20],
+        [-6, -4],
+        default=0,
+    )
     work["score_perf_6m_penalty"] = np.where(bottom6_10, -2, 0)
     work["score_perf_3m_penalty"] = np.where(bottom3_10, -4, 0)
     work["score_perf_1d_penalty"] = np.where(bottom1d_20, -4, 0)
@@ -1046,6 +1085,12 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
         & (work["days_since_52w_high"] <= 10)
         & (work["pct_from_52w_high"] <= 0.20),
         2,
+        0,
+    )
+    # 12M top-30% AND within 15% of 52W high bonus
+    work["score_12m_52w_bonus"] = np.where(
+        top12_30 & (work["pct_from_52w_high"] <= 0.15),
+        4,
         0,
     )
     reset_rank = work["reset_recovery"].rank(method="min", ascending=False)
@@ -1072,12 +1117,17 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
     median_12m_score = median_score(work.loc[~missing_12m_history_mask, "score_perf_12m"])
     median_6m_score = median_score(work.loc[~missing_6m_history_mask, "score_perf_6m"])
 
-    work.loc[missing_12m_history_mask, "score_perf_12m"] = median_12m_score
+    # Median substitution for insufficient history — but preserve top-tier points:
+    # a stock with < full 12M history that still ranks top 10/20/30% keeps its earned score.
+    apply_12m_median = missing_12m_history_mask & ~(top12_10 | top12_20 | top12_30)
+    work.loc[apply_12m_median, "score_perf_12m"] = median_12m_score
     work.loc[missing_6m_history_mask, "score_perf_6m"] = median_6m_score
     work.loc[missing_12m_history_mask, "score_perf_bonus"] = 0
+    work.loc[missing_12m_history_mask, "score_12m_52w_bonus"] = 0
     work.loc[missing_6m_history_mask, "score_perf_6m_penalty"] = 0
     work["score_performance_total"] = (
         work["score_perf_12m"]
+        + work["score_perf_12m_penalty"]
         + work["score_perf_6m"]
         + work["score_perf_3m"]
         + work["score_perf_1d"]
@@ -1085,6 +1135,7 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
         + work["score_perf_3m_penalty"]
         + work["score_perf_1d_penalty"]
         + work["score_perf_bonus"]
+        + work["score_12m_52w_bonus"]
         + work["score_reset_recovery"]
     )
 
@@ -1165,6 +1216,23 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
     work.loc[recent_listing_trend_mask, "score_uptrend_consistency"] = median_score_uptrend
     work.loc[recent_listing_trend_mask, "score_ema21_uptrend"] = median_score_ema21_uptrend
     work.loc[recent_listing_trend_mask, "score_green_candles"] = median_score_green
+    # IPO performance bonus — stocks listed < 6M with CMP above issue price
+    ipo_sub = (work["listed_days"] < LOOKBACK_6M) & (work["ipo_gain"] > 0)
+    if ipo_sub.sum() >= 2:
+        ipo_gains = work.loc[ipo_sub, "ipo_gain"]
+        ipo_top10_t = top_n_threshold(ipo_gains, 10)
+        ipo_top20_t = top_n_threshold(ipo_gains, 20)
+        work["score_ipo_perf"] = np.select(
+            [
+                ipo_sub & (work["ipo_gain"] >= ipo_top10_t),
+                ipo_sub & (work["ipo_gain"] >= ipo_top20_t),
+            ],
+            [IPO_TOP10_POINTS, IPO_TOP20_POINTS],
+            default=0,
+        )
+    else:
+        work["score_ipo_perf"] = 0
+
     work["pre_sector_score"] = (
         work["score_52w_total"]
         + work["score_liquidity"]
@@ -1182,6 +1250,7 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
         + work["score_gapup"]
         + work["score_new_listing"]
         + work["score_liquid_leaders_bonus"]
+        + work["score_ipo_perf"]
     )
     top_quartile_threshold = top_n_threshold(work["pre_sector_score"], 25)
     work["is_top_quartile_pre_sector"] = work["pre_sector_score"] >= top_quartile_threshold
@@ -1668,6 +1737,7 @@ def export_workbook(
         ("score_volatility",         "Low Volatility"),
         ("score_sector",             "Sector Strength"),
         ("score_new_listing",        "New Listing"),
+        ("score_ipo_perf",           "IPO Performance"),
         ("score_liquid_leaders_bonus","Liquid Leaders"),
     ]
     for ri, (_, row) in enumerate(top20.iterrows(), start=3):
@@ -1752,6 +1822,7 @@ def export_workbook(
         ("score_liquidity",         "Sc\nLiq",         "liq",   5,  "0"),
         ("score_median_turnover",   "Sc\nTO",          "liq",   5,  "0"),
         ("score_new_listing",       "Sc\nNew\nList",   "liq",   5,  "0"),
+        ("score_ipo_perf",         "Sc\nIPO",         "liq",   6,  "0"),
         ("score_liquid_leaders_bonus","Sc\nLiq\nLead", "liq",   6,  "0"),
         # ── Performance
         ("return_12m",              "Ret\n12M",        "perf",  7,  "0.0%"),
@@ -1762,12 +1833,14 @@ def export_workbook(
         ("reset_recovery",          "Reset\nRecov",    "perf",  8,  "0.0%"),
         ("score_reset_recovery",    "Sc\nRecov",       "perf",  5,  "0"),
         ("score_perf_12m",          "Sc\n12M",         "perf",  5,  "0"),
+        ("score_perf_12m_penalty",   "Pen\n12M",        "perf",  5,  "0"),
         ("score_perf_6m",           "Sc\n6M",          "perf",  5,  "0"),
         ("score_perf_3m",           "Sc\n3M",          "perf",  5,  "0"),
         ("score_perf_1d",           "Sc\n1D",          "perf",  5,  "0"),
         ("score_perf_6m_penalty",   "Pen\n6M",         "perf",  5,  "0"),
         ("score_perf_3m_penalty",   "Pen\n3M",         "perf",  5,  "0"),
         ("score_perf_1d_penalty",   "Pen\n1D",         "perf",  5,  "0"),
+        ("score_12m_52w_bonus",     "Sc\n12M\n52W",   "perf",  6,  "0"),
         ("score_perf_bonus",        "Sc\nBonus",       "perf",  5,  "0"),
         ("score_performance_total", "Perf\nTotal",     "perf",  6,  "0"),
         # ── Relative Strength
@@ -1992,9 +2065,11 @@ def export_workbook(
         ("symbol",                  "Symbol",        16),
         ("sector",                  "Sector",        20),
         ("score_new_listing",       "New\nList",      8),
+        ("score_ipo_perf",          "IPO\nPerf",      8),
         ("score_52w_total",         "52W\nScore",     8),
         ("score_performance_total", "Perf\nTotal",    9),
         ("score_perf_1d",           "1D\nScore",      8),
+        ("score_perf_12m_penalty",  "12M\nPen",       7),
         ("score_perf_1d_penalty",   "1D\nPen",        7),
         ("score_reset_recovery",    "Reset\nScore",   8),
         ("score_perf_6m_penalty",   "6M\nPen",        7),
@@ -2266,19 +2341,21 @@ def export_workbook(
                 "leader_best_score": float(grp["composite_score"].max()),
                 "sector_top20_hits": int(grp["sector_top20_hits"].iloc[0]),
                 "leadership_score": float(grp["sector_leadership_score"].iloc[0]),
+                "score_sector": int(grp["score_sector"].iloc[0]),
             }
         )
 
     sector_leaders = pd.DataFrame(leader_rows)
     if not sector_leaders.empty:
         sector_leaders = sector_leaders.sort_values(
-            ["sector_positive_score_count", "leader_avg_pre_sector", "leader_avg_rs_total", "sector"],
+            ["score_sector", "leadership_score", "sector_positive_score_count", "sector"],
             ascending=[False, False, False, True],
         ).reset_index(drop=True)
 
     sl_ws = wb.create_sheet("Sector Leaders")
     SL_COLS = [
-        ("Rank", 5), ("Sector", 22), ("# Stocks", 7), ("# Pos", 6), ("Leadership", 10),
+        ("Rank", 5), ("Sector", 22), ("# Stocks", 7), ("# Pos", 6),
+        ("Sector Pts", 9), ("Leadership", 10),
         ("Leader 1", 14), ("Leader 2", 14), ("Avg RS", 8), ("Avg Pre-Sec", 10),
         ("Avg Perf", 9), ("Str%", 8), ("Best Score", 9),
     ]
@@ -2286,8 +2363,7 @@ def export_workbook(
     sl_ws.merge_cells(f"A1:{get_column_letter(ncols_sl)}1")
     sl_ws["A1"] = (
         f"SECTOR LEADERSHIP BOARD   |   As of {cutoff_date.strftime('%d-%b-%Y')}   "
-        f"|   Top 5 sectors | min 2 stocks | stock-count first, then New Leadership Score "
-        f"(AvgPreSec + Top-20 Breadth Bonus + Penetration Bonus)"
+        f"|   Sectors awarded bonus points | sorted by Sector Pts then Leadership Score"
     )
     sc(sl_ws["A1"], bold=True, color="FFFFFF", fill=T_FILL, size=12, align="center")
     sl_ws.row_dimensions[1].height = 24
@@ -2295,14 +2371,28 @@ def export_workbook(
         cell = sl_ws.cell(row=2, column=ci, value=hdr)
         sc(cell, bold=True, color="FFFFFF", fill=H_FILL, size=10)
         sl_ws.column_dimensions[get_column_letter(ci)].width = w
-    for ri, (_, lrow) in enumerate(sector_leaders.head(5).iterrows(), start=3):
+    qualifying_leaders = (
+        sector_leaders[sector_leaders["score_sector"] > 0].reset_index(drop=True)
+        if not sector_leaders.empty else sector_leaders
+    )
+    for ri, (_, lrow) in enumerate(qualifying_leaders.iterrows(), start=3):
         rank2 = ri - 2
         row_bg = medal_fills[rank2 - 1] if rank2 <= 3 else (ALT_FILL if rank2 % 2 == 0 else WHT_FILL)
+        pts_val = int(lrow.get("score_sector", 0) or 0)
+        if pts_val >= 8:
+            pts_fill = PatternFill("solid", fgColor="FFD700"); pts_fc = "000000"
+        elif pts_val >= 6:
+            pts_fill = PatternFill("solid", fgColor="2E8B57"); pts_fc = "FFFFFF"
+        elif pts_val >= 4:
+            pts_fill = PatternFill("solid", fgColor="90EE90"); pts_fc = "000000"
+        else:
+            pts_fill = WHT_FILL; pts_fc = "000000"
         vals = [
             rank2,
             lrow.get("sector", ""),
             lrow.get("sector_stock_count", ""),
             lrow.get("sector_positive_score_count", ""),
+            pts_val,
             round_or_blank(lrow.get("leadership_score"), 1),
             lrow.get("leader_1", ""),
             lrow.get("leader_2", ""),
@@ -2314,15 +2404,18 @@ def export_workbook(
         ]
         for ci, (val, _) in enumerate(zip(vals, SL_COLS), 1):
             cell = sl_ws.cell(row=ri, column=ci, value=val)
-            if ci == 5:
+            if ci == 5:  # Sector Pts
+                sc(cell, bold=True, color=pts_fc, fill=pts_fill, size=11)
+                cell.number_format = "0"
+            elif ci == 6:  # Leadership score
                 s_fill, s_fc = score_band(float(lrow.get("leadership_score", 0) or 0))
                 sc(cell, bold=True, color=s_fc, fill=s_fill, size=11)
             else:
-                sc(cell, fill=row_bg, align="left" if ci in (2, 6, 7) else "center", size=11)
-            if ci == 11:
+                sc(cell, fill=row_bg, align="left" if ci in (2, 7, 8) else "center", size=11)
+            if ci == 12:
                 cell.number_format = "0.0%"
     sl_ws.freeze_panes = "A3"
-    sl_ws.auto_filter.ref = f"A2:{get_column_letter(ncols_sl)}{max(2, min(7, len(sector_leaders)+2))}"
+    sl_ws.auto_filter.ref = f"A2:{get_column_letter(ncols_sl)}{max(2, len(qualifying_leaders)+2)}"
 
     # ══════════════════════════════════════════════════════════════════
     #  SHEET 6 ── 📋 SECTOR SUMMARY  (aggregated)
@@ -2482,9 +2575,7 @@ def export_workbook(
 
     rr_rows = [
         ("Liquidity", "Universe inclusion", "Average 42D turnover must be available", "Required", "Missing value => excluded"),
-        ("Liquidity", "Universe inclusion", f"Average 42D turnover must be >= {MIN_AVG_TURNOVER_42D_CRORES:.2f} Cr", "Required", f"Current floor = {MIN_AVG_TURNOVER_42D_CRORES:.2f} Cr"),
-        ("Liquidity", "Universe inclusion", "Median 42D turnover must be available", "Required", "Missing value => excluded"),
-        ("Liquidity", "Universe inclusion", f"Median 42D turnover must be >= {MIN_MEDIAN_TURNOVER_CRORES:.2f} Cr", "Required", f"Current floor = {MIN_MEDIAN_TURNOVER_CRORES:.2f} Cr"),
+        ("Liquidity", "Universe inclusion", f"Excluded if BOTH avg AND median 42D turnover < {MIN_AVG_TURNOVER_42D_CRORES:.2f} Cr", "Required", f"Both must be < {MIN_AVG_TURNOVER_42D_CRORES:.2f} Cr to exclude"),
         ("Liquidity", "Avg turnover 42D", "Bottom 30% of rated universe", "-8", rr_value("turnover_bottom30")),
         ("Liquidity", "Median turnover 42D", f"Bottom 10% of universe AND < {MEDIAN_TURNOVER_LOW_THRESHOLD_CRORES:.0f} Cr", "-8", rr_value("median_turnover_bottom10")),
         ("Liquidity", "Median turnover 42D", f"Bottom 20% of universe AND < {MEDIAN_TURNOVER_LOW_THRESHOLD_CRORES:.0f} Cr", "-6", rr_value("median_turnover_bottom20")),
@@ -2509,6 +2600,8 @@ def export_workbook(
         ("Performance", "12M return", "Top 10% of rated universe", "+8", rr_value("ret12_top10", percent_or_blank)),
         ("Performance", "12M return", "Top 20% of rated universe", "+6", rr_value("ret12_top20", percent_or_blank)),
         ("Performance", "12M return", "Top 30% of rated universe", "+4", rr_value("ret12_top30", percent_or_blank)),
+        ("Performance", "12M return", "Bottom 10% of mature listings", "-6", rr_value("ret12_bottom10", percent_or_blank)),
+        ("Performance", "12M return", "Bottom 20% of mature listings", "-4", rr_value("ret12_bottom20", percent_or_blank)),
         ("Performance", "12M return", "Insufficient listing history (< 250 trading days)", "Median score", "Uses universe median 12M score"),
         ("Performance", "6M return", "Top 10% of rated universe", "+6", rr_value("ret6_top10", percent_or_blank)),
         ("Performance", "6M return", "Top 20% of rated universe", "+4", rr_value("ret6_top20", percent_or_blank)),
@@ -2521,7 +2614,7 @@ def export_workbook(
         ("Performance", "3M return", "Bottom 10% of mature listings", "-4", rr_value("ret3_bottom10", percent_or_blank)),
         ("Performance", "1D return", "Top 10% of rated universe", "+4", rr_value("ret1_top10", percent_or_blank)),
         ("Performance", "1D return", "Top 20% of rated universe", "+2", rr_value("ret1_top20", percent_or_blank)),
-        ("Performance", "1D return", "Bottom 20% of rated universe", "-4", rr_value("ret1_bottom20", percent_or_blank)),
+        ("Performance", "1D return", "Bottom 20% of universe AND return < -3%", "-4", rr_value("ret1_bottom20", percent_or_blank)),
         ("Performance", "Bonus", "12M top-10 stock with 52W high in last 10 days", "+2", ""),
         ("Performance", "Reset recovery rank", "Top 10 by reset recovery", "+4", "Rank based"),
         ("Performance", "Reset recovery rank", "Top 20 by reset recovery", "+2", "Rank based"),
@@ -2538,6 +2631,9 @@ def export_workbook(
         ("Event", "Volume spike", "Top 1% volume in lookback, within 10D / 30D / 60D", "+10 / +8 / +6", "Bonus +4 if price change > 6%; +2 if > 3%"),
         ("Event", "Gap-up", "Gap-up > 3%, close gain > 5%, and either close gain >= 9% or top-1% volume", "+6", "Recent gap-up window"),
         ("Listing", "New listing", "Listed < 30 days", "+4", ""),
+        ("Performance", "12M return + 52W proximity", "Top 30% 12M return AND within 15% of 52W high", "+4", "Bonus on top of regular 12M score"),
+        ("IPO Performance", "IPO gain vs issue price", "Top 10% of IPOs listed < 6M with CMP > issue price", f"+{IPO_TOP10_POINTS}", "Percentile within IPO sub-universe"),
+        ("IPO Performance", "IPO gain vs issue price", "Top 20% of IPOs listed < 6M with CMP > issue price", f"+{IPO_TOP20_POINTS}", "Percentile within IPO sub-universe"),
         ("Listing", "New listing", "Listed < 60 days", "+2", ""),
         ("Sector", "Sector strength", "Top 10% eligible sectors by leadership score", f"+{SECTOR_TOP10_POINTS}", rr_value("sector_top10_threshold")),
         ("Sector", "Sector strength", "Top 20% eligible sectors by leadership score", f"+{SECTOR_TOP20_POINTS}", rr_value("sector_top20_threshold")),
@@ -2573,8 +2669,7 @@ def export_workbook(
         ("Uptrend Consistency Window",    f"max({UPTREND_CONSISTENCY_MIN_LOOKBACK} trading candles, days since reset)"),
         ("─── Turnover ───",               ""),
         ("Turnover Unit",                  "Crores"),
-        ("Min Avg Turnover 42D Filter",    f"{MIN_AVG_TURNOVER_42D_CRORES:.2f} Cr"),
-        ("Min Median Turnover Filter",    f"{MIN_MEDIAN_TURNOVER_CRORES:.2f} Cr"),
+        ("Exclusion: Both Avg & Median < (Cr)", f"{MIN_AVG_TURNOVER_42D_CRORES:.2f} Cr"),
         ("─── Thresholds ───",             ""),
         ("Top Score",                     round_or_blank(scored["composite_score"].max()) if not scored.empty else ""),
         ("Bottom Score",                  round_or_blank(scored["composite_score"].min()) if not scored.empty else ""),
@@ -2585,6 +2680,8 @@ def export_workbook(
         ("Index Return 12M",              percent_or_blank(scored["index_return_12m"].iloc[0])          if not scored.empty else ""),
         ("Index Return 6M",               percent_or_blank(scored["index_return_6m"].iloc[0])           if not scored.empty else ""),
         ("Index Return 3M",               percent_or_blank(scored["index_return_3m"].iloc[0])           if not scored.empty else ""),
+        ("12M Bottom-10 Threshold",        percent_or_blank(scored["ret12_bottom10"].iloc[0])             if not scored.empty else ""),
+        ("12M Bottom-20 Threshold",        percent_or_blank(scored["ret12_bottom20"].iloc[0])             if not scored.empty else ""),
         ("12M Top-10 Threshold",          percent_or_blank(scored["ret12_top10"].iloc[0])               if not scored.empty else ""),
         ("12M Top-20 Threshold",          percent_or_blank(scored["ret12_top20"].iloc[0])               if not scored.empty else ""),
         ("12M Top-30 Threshold",          percent_or_blank(scored["ret12_top30"].iloc[0])               if not scored.empty else ""),
@@ -2736,8 +2833,8 @@ def main() -> None:
     # ── Sector map ────────────────────────────────────────────────────────
     sector_map = load_sector_map(conn, list(dict.fromkeys(symbols + effective_kite_symbols)))
 
-    # ── Date window for history ───────────────────────────────────────────
-    fetch_start = min(reset_date, cutoff_date - timedelta(days=LOOKBACK_52W + 60)) - timedelta(days=30)
+    # ── Date window for history — exactly 1 year back from cutoff ────────
+    fetch_start = cutoff_date - timedelta(days=365)
     fetch_start = max(fetch_start, date(2000, 1, 1))
 
     # ── Index history (for RS) ────────────────────────────────────────────
@@ -2745,6 +2842,9 @@ def main() -> None:
 
     # ── Turnover map (liquidity filter) ───────────────────────────────────
     turnover_map = load_turnover_map(conn, symbols, fetch_start, cutoff_date)
+    ipo_issue_price_map = load_ipo_issue_price_map(conn, symbols, cutoff_date)
+    if ipo_issue_price_map:
+        print(f"  IPO issue prices loaded for: {list(ipo_issue_price_map.keys())}")
     eligible = filter_symbols_by_turnover(
         symbols,
         turnover_map,
@@ -2798,7 +2898,10 @@ def main() -> None:
         result = compute_stock_metrics(
             kite_symbol, df, index_df, sector_map.get(symbol, sector_map.get(kite_symbol, "Unknown")),
             cutoff_date, reset_date, listing_date,
-            turnover_override, liquid_leader_bonus_map.get(symbol.upper(), liquid_leader_bonus_map.get(kite_symbol.upper(), 0)), warnings,
+            turnover_override,
+            liquid_leader_bonus_map.get(symbol.upper(), liquid_leader_bonus_map.get(kite_symbol.upper(), 0)),
+            ipo_issue_price_map.get(symbol.upper()) or ipo_issue_price_map.get(kite_symbol.upper()),
+            warnings,
         )
         if result is None:
             skipped.append(symbol)
