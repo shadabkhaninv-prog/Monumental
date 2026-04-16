@@ -144,7 +144,7 @@ APLAPOLLO,Steel Pipes
 APLLTD,Pharma
 APOLLO,Defense
 APOLLOHOSP,Hospital
-APOLLOPIPE,Pipes
+APOLLOPIPE,Pvc Pipes
 APOLLOTYRE,Tyres
 APOLSINHOT,Hospital
 APTECHT,It
@@ -188,7 +188,7 @@ ASMS,It
 ASPINWALL,Logistics
 ASTEC,Agrochem
 ASTERDM,Hospital
-ASTRAL,Plastic Pipes
+ASTRAL,Pvc Pipes
 ASTRAMICRO,Defense
 ASTRAZEN,Pharma
 ASTRON,Paper
@@ -313,6 +313,7 @@ BHAGERIA,Chemicals
 BHAGYANGR,Copper
 BHANDA-RE2,Textiles
 BHANDARI,Garment
+BHARATCOAL,Coal
 BHARATFORG,Auto Ancillary
 BHARATGEAR,Auto Ancillary
 BHARATRAS,Agrochem
@@ -562,7 +563,7 @@ DPSCLTD,Power Dist
 DPWIRES,Wires
 DRCSYSTEMS,It
 DREAMFOLKS,Airport Management
-DREDGECORP,Engineering
+DREDGECORP,Marine Eng
 DRREDDY,Pharma
 DSFCL,Chemicals
 DSSL,It
@@ -585,7 +586,7 @@ ECLERX,Bpo
 ECOSMOBLTY,Car Rental
 EDELWEISS,Financial Services
 EGOLD,It
-EICHERMOT,Two Wheeler
+EICHERMOT,Auto
 EIDPARRY,Sugar
 EIEL,Power
 EIHAHOTELS,Hotels
@@ -671,7 +672,7 @@ FINEORG,Chemicals
 FINIETF,Etf
 FINKURVE,Finserv
 FINOPB,Banking
-FINPIPE,Pipes
+FINPIPE,Pvc Pipes
 FIRSTCRY,Retail
 FISCHER,Healthcare
 FIVESTAR,Nbfc
@@ -903,7 +904,7 @@ HEIDELBERG,Cement
 HEMIPROP,Construction
 HERANBA,Agrochem
 HERITGFOOD,Fmcg
-HEROMOTOCO,Two Wheeler
+HEROMOTOCO,Auto
 HESTERBIO,Pharma
 HEXATRADEX,Finserv
 HEXT,It
@@ -915,7 +916,7 @@ HIKAL,Chemicals
 HIL,Building Materials
 HILINFRA,Infrastructure
 HIMATSEIDE,Textiles
-HINDALCO,Aluminium
+HINDALCO,Metal
 HINDCON,Chemicals
 HINDCOPPER,Metal
 HINDMOTORS,Auto
@@ -1090,7 +1091,7 @@ JINDRILL,Oil Exploration
 JINDWORLD,Garments
 JIOFIN,Nbfc
 JISLDVREQS,Irrigation
-JISLJALEQS,Pipes
+JISLJALEQS,Irrigation
 JITFINFRA,Power
 JKCEMENT,Cement
 JKIL,Construction
@@ -1166,7 +1167,7 @@ KIRLOSENG,Engines
 KIRLPNU,Compressor
 KITEX,Clothing
 KKCL,Clothing
-KMEW,Shipping
+KMEW,Marine Eng
 KMSUGAR,Sugar
 KNRCON,Construction
 KOKUYOCMLN,Stationery
@@ -1640,7 +1641,7 @@ PILANIINVS,Finserv
 PIONEEREMB,Textiles
 PIRAMALFIN,Nbfc
 PLASTIBLEN,Chemicals
-PLATIND,Pipes
+PLATIND,Pvc Pipes
 PNB,Banking
 PNBGILTS,Nbfc
 PNBHOUSING,Nbfc
@@ -1677,7 +1678,7 @@ PRESTIGE,Construction
 PRICOLLTD,Auto Ancillary
 PRIMESECU,Finserv
 PRIMO,Chemicals
-PRINCEPIPE,Pipes
+PRINCEPIPE,Pvc Pipes
 PRIVISCL,Chemicals
 PROSTARM,Power Equipment
 PROTEAN,It
@@ -1883,7 +1884,7 @@ SETFNN50,Etf
 SEYAIND,Chemicals
 SGFIN,Finserv
 SGL,Textiles
-SGMART,Steel
+SGMART,Building Materials
 SHADOWFAX,Logistics
 SHAILY,Plastics
 SHAKTIPUMP,Irrigation
@@ -2032,7 +2033,7 @@ SUPERHOUSE,Textiles
 SUPERSPIN,Textiles
 SUPRAJIT,Auto Ancillary
 SUPREME,Real Estate
-SUPREMEIND,Pipes
+SUPREMEIND,Pvc Pipes
 SUPRIYA,Pharma
 SURAJEST,Real Estate
 SURAJLTD,Auto Ancillary
@@ -2166,7 +2167,7 @@ TTML,Telecom
 TV18BRDCST,Media
 TVSELECT,Electronics
 TVSHLTD,Holding
-TVSMOTOR,Two Wheeler
+TVSMOTOR,Auto
 TVSSCS,Logistics
 TVSSRICHAK,Tyres
 TVTODAY,Media
