@@ -1369,7 +1369,6 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
         default=0,
     )
     work = work.merge(sector_stats, on="sector", how="left")
-
     work["composite_score"] = work["pre_sector_score"] + work["score_sector"]
     work["rank"] = work["composite_score"].rank(method="min", ascending=False).astype(int)
     work = work.sort_values(["composite_score", "symbol"], ascending=[False, True]).reset_index(drop=True)
