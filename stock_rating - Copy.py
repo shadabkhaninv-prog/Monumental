@@ -96,12 +96,6 @@ SECTOR_TOP20_PENETRATION_BONUS_100 = 3  # 100% of sector stocks in Top-20 (min 2
 SECTOR_TOP20_PENETRATION_BONUS_67  = 2  # >= 67% of sector stocks in Top-20
 SECTOR_TOP20_PENETRATION_BONUS_50  = 1  # >= 50% of sector stocks in Top-20
 
-# 12M return + 52W high proximity concentration bonus for sectors (min 2 stocks in sector).
-# Counts stocks that are BOTH in the top-30% of 12M return AND within 20% of their 52W high.
-# Base points + 1 per qualifying stock are added to the sector leadership score.
-SECTOR_12M_52W_GT3_BASE = 6   # >3 qualifying stocks → base 6 + 1 per qualifying stock
-SECTOR_12M_52W_GT2_BASE = 4   # >2 qualifying stocks → base 4 + 1 per qualifying stock
-
 # IPO performance bonus (applies to stocks listed < 6 months with CMP > issue price)
 IPO_TOP10_POINTS = 6
 IPO_TOP20_POINTS = 4
@@ -1074,12 +1068,6 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
     bottom3_10 = mature_listing & (work["return_3m"] <= thresholds["ret3_bottom10"])
     bottom1d_20 = (work["return_1d"] <= thresholds["ret1_bottom20"]) & (work["return_1d"] < -0.03)
 
-    # Per-stock flag used later for the sector 12M+52W concentration bonus:
-    # True when a stock is in the top-30% of 12M return AND within 20% of its 52W high.
-    work["top30_12m_within20_52w"] = (
-        top12_30 & eligible_52w & (work["pct_from_52w_high"] <= 0.20)
-    )
-
     work["score_perf_12m"] = np.select([top12_10, top12_20, top12_30], [8, 6, 4], default=0)
     work["score_perf_6m"] = np.select([top6_10, top6_20, top6_30], [6, 4, 2], default=0)
     work["score_perf_3m"] = np.select([top3_10, top3_20, top3_30], [6, 4, 2], default=0)
@@ -1283,8 +1271,6 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
         weighted_rs = float(positive["score_rs_total"].mean()) if positive_count > 0 else math.nan
         weighted_perf = float(positive["score_performance_total"].mean()) if positive_count > 0 else math.nan
         top20_hits = int((positive["pre_sector_rank"] <= 20).sum()) if positive_count > 0 else 0
-        # Count stocks that qualify for the 12M+52W proximity concentration bonus.
-        qualifying_12m_52w = int(ordered["top30_12m_within20_52w"].sum())
         sector_rows.append(
             {
                 "sector": sector_name,
@@ -1296,7 +1282,6 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
                 "sector_weighted_rs_score": weighted_rs,
                 "sector_weighted_perf_score": weighted_perf,
                 "sector_top20_hits": top20_hits,
-                "sector_12m_52w_qualifying_count": qualifying_12m_52w,
             }
         )
 
@@ -1329,28 +1314,12 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
         axis=1,
     )
 
-    # -- 12M return + 52W high proximity concentration bonus -----------------
-    # Only eligible for sectors with >= 2 stocks (enforced via eligible_sector_mask).
-    # >3 qualifying stocks → base 6 + 1 per qualifying stock
-    # >2 qualifying stocks → base 4 + 1 per qualifying stock
-    def _12m_52w_bonus(count: int) -> int:
-        if count > 3:
-            return SECTOR_12M_52W_GT3_BASE + count
-        if count > 2:
-            return SECTOR_12M_52W_GT2_BASE + count
-        return 0
-
-    sector_stats["sector_12m_52w_bonus"] = sector_stats["sector_12m_52w_qualifying_count"].apply(
-        lambda n: _12m_52w_bonus(int(n))
-    )
-
     if eligible_sector_mask.any():
         sector_stats["sector_leadership_score"] = np.where(
             eligible_sector_mask,
             sector_stats["sector_weighted_pre_score"]
             + sector_stats["sector_top20_breadth_bonus"]
-            + sector_stats["sector_top20_penetration_bonus"]
-            + sector_stats["sector_12m_52w_bonus"],
+            + sector_stats["sector_top20_penetration_bonus"],
             -1.0,
         )
     else:
@@ -1920,7 +1889,6 @@ def export_workbook(
         ("sector_stock_count",      "Sec\n#Stk",       "sector",5,  "0"),
         ("sector_top_quartile_count","Sec\nTop25",     "sector",6,  "0"),
         ("sector_strength_ratio",   "Sec\nStr%",       "sector",9,  "0.0%"),
-        ("sector_leadership_score", "Sec\nScore",      "sector",8,  "0.0"),
         ("score_sector",            "Sc\nSect",        "sector",7,  "0"),
     ]
 
@@ -2120,8 +2088,7 @@ def export_workbook(
         ("score_liquidity",         "Liquidity",      8),
         ("score_median_turnover",   "Median\nTO",     8),
         ("score_liquid_leaders_bonus","Liq\nLead",    8),
-        ("sector_leadership_score", "Sector\nScore", 10),
-        ("score_sector",            "Sector\nPts",    7),
+        ("score_sector",            "Sector",         7),
         ("composite_score",         "TOTAL\nSCORE",  10),
     ]
     ncols_sc = len(SC_COLS)
@@ -2181,464 +2148,7 @@ def export_workbook(
     )
 
     # ══════════════════════════════════════════════════════════════════
-    #  SHEET 4 ── 🏦 INSTITUTIONAL PICKS
-    #  Top 50 by composite score → weighted institutional score:
-    #    40% sector strength (count × avg score in top 50)
-    #    30% liquidity      (median_turnover_42d)
-    #    30% stock rating   (composite_score)
-    #  → Top 20 by institutional score
-    # ══════════════════════════════════════════════════════════════════
-    ip_ws = wb.create_sheet("🏦 Institutional Picks")
-
-    top50 = scored.head(50).copy()
-
-    # Sector strength from the top-50 pool
-    ip_sec_agg = (
-        top50.groupby("sector", dropna=False)
-        .agg(_ip_sec_count=("composite_score", "count"),
-             _ip_sec_avg   =("composite_score", "mean"))
-        .reset_index()
-    )
-    ip_sec_agg["_ip_sec_strength"] = ip_sec_agg["_ip_sec_count"] * ip_sec_agg["_ip_sec_avg"]
-    top50 = top50.merge(
-        ip_sec_agg[["sector", "_ip_sec_count", "_ip_sec_avg", "_ip_sec_strength"]],
-        on="sector", how="left"
-    )
-
-    # Percentile-rank each dimension within the top-50 pool
-    top50["_ip_sector_pct"]    = top50["_ip_sec_strength"].rank(pct=True, method="average") * 100
-    top50["_ip_liquidity_pct"] = top50["median_turnover_42d"].rank(pct=True, method="average") * 100
-    top50["_ip_rating_pct"]    = top50["composite_score"].rank(pct=True, method="average") * 100
-
-    # Weighted institutional score: 40% sector + 30% liquidity + 30% rating
-    IP_WT_SECTOR    = 0.40
-    IP_WT_LIQUIDITY = 0.30
-    IP_WT_RATING    = 0.30
-    top50["inst_score"] = (
-        IP_WT_SECTOR    * top50["_ip_sector_pct"] +
-        IP_WT_LIQUIDITY * top50["_ip_liquidity_pct"] +
-        IP_WT_RATING    * top50["_ip_rating_pct"]
-    )
-
-    inst_picks = (
-        top50
-        .sort_values("inst_score", ascending=False)
-        .head(20)
-        .reset_index(drop=True)
-    )
-    inst_picks["inst_rank"] = range(1, len(inst_picks) + 1)
-
-    IP_FILL  = PatternFill("solid", fgColor="0B3D91")   # deep institutional blue
-    IP_H     = PatternFill("solid", fgColor="1A56A0")   # column header
-    IP_ALT   = PatternFill("solid", fgColor="EAF2FB")
-    IP_GOLD  = PatternFill("solid", fgColor="FFD700")
-    IP_SILV  = PatternFill("solid", fgColor="C0C0C0")
-    IP_BRNZ  = PatternFill("solid", fgColor="CD7F32")
-
-    IP_COLS = [
-        ("inst_rank",          "#",                   5),
-        ("symbol",             "Symbol",             16),
-        ("sector",             "Sector",             22),
-        ("inst_score",         "Inst\nScore",        10),
-        ("_ip_sector_pct",     "Sector\nStr% (40%)", 13),
-        ("_ip_liquidity_pct",  "Liquidity\n%ile (30%)",13),
-        ("_ip_rating_pct",     "Rating\n%ile (30%)", 13),
-        ("composite_score",    "Rating\nScore",      11),
-        ("rank",               "Rating\nRank",       10),
-        ("median_turnover_42d","Median TO\n42d (Cr)",14),
-        ("_ip_sec_count",      "Sector\nCount",      10),
-        ("_ip_sec_avg",        "Sector\nAvg Score",  13),
-        ("current_close",      "Close",              10),
-        ("perf_12m_pct",       "12M\nReturn%",       12),
-        ("perf_3m_pct",        "3M\nReturn%",        12),
-    ]
-    ncols_ip = len(IP_COLS)
-
-    # ── Title bar ─────────────────────────────────────────────────────
-    ip_ws.merge_cells(f"A1:{get_column_letter(ncols_ip)}1")
-    ip_ws["A1"] = (
-        f"🏦 INSTITUTIONAL PICKS  —  "
-        f"Top 50 by Score → Weighted: 40% Sector + 30% Liquidity + 30% Rating  |  "
-        f"As of {cutoff_date.strftime('%d-%b-%Y')}"
-    )
-    sc(ip_ws["A1"], bold=True, color="FFFFFF", fill=IP_FILL, size=13, align="center")
-    ip_ws.row_dimensions[1].height = 28
-
-    # ── Sub-title ─────────────────────────────────────────────────────
-    ip_ws.merge_cells(f"A2:{get_column_letter(ncols_ip)}2")
-    ip_ws["A2"] = (
-        "Institutional Score = 40% Sector Strength + 30% Liquidity (Median Turnover) + 30% Stock Rating — "
-        "all components percentile-ranked within top 50"
-    )
-    sc(ip_ws["A2"], italic=True, color="FFFFFF", fill=IP_H, size=10, align="center")
-    ip_ws.row_dimensions[2].height = 18
-
-    # ── Column headers — colour-coded by component ────────────────────
-    IP_SECTOR_KEYS   = {"_ip_sector_pct", "_ip_sec_count", "_ip_sec_avg"}
-    IP_LIQUIDITY_KEY = {"median_turnover_42d", "_ip_liquidity_pct"}
-    IP_RATING_KEYS   = {"composite_score", "rank", "_ip_rating_pct"}
-    IP_SEC_HDR  = PatternFill("solid", fgColor="1A5276")   # blue   — sector cols
-    IP_LIQ_HDR  = PatternFill("solid", fgColor="1E8449")   # green  — liquidity cols
-    IP_RAT_HDR  = PatternFill("solid", fgColor="6E2F8A")   # purple — rating cols
-
-    for ci, (key, hdr, _) in enumerate(IP_COLS, 1):
-        cell = ip_ws.cell(row=3, column=ci, value=hdr)
-        if key in IP_SECTOR_KEYS:
-            hfill = IP_SEC_HDR
-        elif key in IP_LIQUIDITY_KEY:
-            hfill = IP_LIQ_HDR
-        elif key in IP_RATING_KEYS:
-            hfill = IP_RAT_HDR
-        elif key == "inst_score":
-            hfill = IP_FILL
-        else:
-            hfill = IP_H
-        sc(cell, bold=True, color="FFFFFF", fill=hfill, size=10, wrap=True)
-    ip_ws.row_dimensions[3].height = 36
-
-    # ── Data rows ─────────────────────────────────────────────────────
-    IP_SEC_CELL = PatternFill("solid", fgColor="D6EAF8")   # light blue  — sector data
-    IP_LIQ_CELL = PatternFill("solid", fgColor="D5F5E3")   # light green — liquidity data
-    IP_RAT_CELL = PatternFill("solid", fgColor="EAD9F5")   # light purple — rating data
-
-    for ri, row in inst_picks.iterrows():
-        er       = ri + 4
-        alt      = ri % 2 == 1
-        row_fill = IP_ALT if alt else WHT_FILL
-        s_fill, s_fc = score_band(row["composite_score"])
-
-        if row["inst_rank"] == 1:
-            rank_fill = IP_GOLD
-        elif row["inst_rank"] == 2:
-            rank_fill = IP_SILV
-        elif row["inst_rank"] == 3:
-            rank_fill = IP_BRNZ
-        else:
-            rank_fill = row_fill
-
-        for ci, (key, _, _) in enumerate(IP_COLS, 1):
-            val  = row.get(key)
-            cell = ip_ws.cell(row=er, column=ci)
-
-            if key == "inst_rank":
-                cell.value = int(val) if pd.notna(val) else ""
-                sc(cell, bold=True, color="1F3864", fill=rank_fill, size=12, align="center")
-
-            elif key == "symbol":
-                cell.value = val
-                sc(cell, bold=True, color="0B3D91", fill=row_fill, align="left", size=12)
-
-            elif key == "sector":
-                cell.value = val
-                sc(cell, color="1A5276", fill=IP_SEC_CELL, align="left", size=10)
-
-            elif key == "inst_score":
-                cell.value = round_or_blank(val, 1)
-                sc(cell, bold=True, color="0B1F33", fill=IP_FILL, size=12, border=BDR_M)
-                cell.number_format = "0.0"
-
-            elif key == "_ip_sector_pct":
-                cell.value = round_or_blank(val, 1)
-                sc(cell, bold=True, color="1A5276", fill=IP_SEC_CELL, size=11)
-                cell.number_format = "0.0"
-
-            elif key in ("_ip_sec_count", "_ip_sec_avg"):
-                cell.value = round_or_blank(val, 1) if key == "_ip_sec_avg" else (int(val) if pd.notna(val) else "")
-                sc(cell, color="1A5276", fill=IP_SEC_CELL, size=10)
-                if key == "_ip_sec_avg":
-                    cell.number_format = "0.0"
-
-            elif key == "_ip_liquidity_pct":
-                cell.value = round_or_blank(val, 1)
-                sc(cell, bold=True, color="145A32", fill=IP_LIQ_CELL, size=11)
-                cell.number_format = "0.0"
-
-            elif key == "median_turnover_42d":
-                cell.value = round_or_blank(val, 2)
-                sc(cell, color="145A32", fill=IP_LIQ_CELL, size=11)
-                cell.number_format = "#,##0.00"
-
-            elif key == "_ip_rating_pct":
-                cell.value = round_or_blank(val, 1)
-                sc(cell, bold=True, color="6E2F8A", fill=IP_RAT_CELL, size=11)
-                cell.number_format = "0.0"
-
-            elif key == "composite_score":
-                cell.value = score_or_blank(val)
-                sc(cell, bold=True, color=s_fc, fill=s_fill, size=11, border=BDR_M)
-                cell.number_format = "0"
-
-            elif key == "rank":
-                cell.value = int(val) if pd.notna(val) else ""
-                sc(cell, color="555555", fill=IP_RAT_CELL, size=11)
-
-            elif key in ("perf_12m_pct", "perf_3m_pct"):
-                v = round_or_blank(val, 4)
-                cell.value = v
-                if isinstance(v, float):
-                    pfill = PatternFill("solid", fgColor="D5F5E3") if v >= 0 else PatternFill("solid", fgColor="FADBD8")
-                    pclr  = "1F6B3A" if v >= 0 else "8B0000"
-                    sc(cell, color=pclr, fill=pfill, size=11)
-                else:
-                    sc(cell, fill=row_fill, size=11)
-                cell.number_format = "0.00%"
-
-            else:
-                cell.value = round_or_blank(val, 2) if isinstance(val, float) else val
-                sc(cell, fill=row_fill, size=11)
-
-        ip_ws.row_dimensions[er].height = 16
-
-    # ── Column widths ─────────────────────────────────────────────────
-    for ci, (_, _, w) in enumerate(IP_COLS, 1):
-        ip_ws.column_dimensions[get_column_letter(ci)].width = w
-
-    ip_ws.freeze_panes = "C4"
-
-    # Color scale on Institutional Score column (col 4)
-    last_ip_row = 3 + len(inst_picks)
-    inst_score_col = get_column_letter(4)
-    if last_ip_row > 4:
-        ip_ws.conditional_formatting.add(
-            f"{inst_score_col}4:{inst_score_col}{last_ip_row}",
-            ColorScaleRule(
-                start_type="min", start_color="FADBD8",
-                mid_type="percentile", mid_value=50, mid_color="FAD7A0",
-                end_type="max", end_color="D5F5E3",
-            )
-        )
-
-    # ══════════════════════════════════════════════════════════════════
-    #  SHEET 5 ── 🎨 THEMATIC PICKS
-    #  Top 50 by composite score → weighted score:
-    #    65% sector strength (count × avg score in top 50)
-    #    35% liquidity (median_turnover_42d)
-    #  → Top 20 by thematic score
-    # ══════════════════════════════════════════════════════════════════
-    tp_ws = wb.create_sheet("🎨 Thematic Picks")
-
-    # ── Build thematic score ───────────────────────────────────────────
-    top50_tp = scored.head(50).copy()
-
-    # Sector strength from top-50 universe:
-    #   count  = how many top-50 stocks belong to this sector (breadth)
-    #   avg_cs = average composite_score of those stocks (quality)
-    #   strength = count × avg_cs  →  rewards sectors with both breadth and score
-    sector_agg = (
-        top50_tp.groupby("sector", dropna=False)
-        .agg(
-            _sec_count=("composite_score", "count"),
-            _sec_avg  =("composite_score", "mean"),
-        )
-        .reset_index()
-    )
-    sector_agg["_sec_strength"] = sector_agg["_sec_count"] * sector_agg["_sec_avg"]
-    top50_tp = top50_tp.merge(
-        sector_agg[["sector", "_sec_count", "_sec_avg", "_sec_strength"]],
-        on="sector", how="left"
-    )
-
-    # Percentile-rank both dimensions within the top-50 pool
-    top50_tp["_sector_pct"]    = top50_tp["_sec_strength"].rank(pct=True, method="average") * 100
-    top50_tp["_liquidity_pct"] = top50_tp["median_turnover_42d"].rank(pct=True, method="average") * 100
-
-    # Weighted thematic score: 65% sector, 35% liquidity
-    SECTOR_WT   = 0.65
-    LIQUIDITY_WT = 0.35
-    top50_tp["thematic_score"] = (
-        SECTOR_WT   * top50_tp["_sector_pct"] +
-        LIQUIDITY_WT * top50_tp["_liquidity_pct"]
-    )
-
-    thematic_picks = (
-        top50_tp
-        .sort_values("thematic_score", ascending=False)
-        .head(20)
-        .reset_index(drop=True)
-    )
-    thematic_picks["thematic_rank"] = range(1, len(thematic_picks) + 1)
-
-    # ── Palette ───────────────────────────────────────────────────────
-    TP_FILL  = PatternFill("solid", fgColor="4A235A")   # deep purple title
-    TP_H     = PatternFill("solid", fgColor="6C3483")   # header purple
-    TP_ALT   = PatternFill("solid", fgColor="F5EEF8")   # alt row lavender
-    TP_SEC   = PatternFill("solid", fgColor="EAF4FB")   # sector highlight (blue tint)
-    TP_LIQ   = PatternFill("solid", fgColor="EAFAF1")   # liquidity highlight (green tint)
-    TP_GOLD  = PatternFill("solid", fgColor="FFD700")
-    TP_SILV  = PatternFill("solid", fgColor="C0C0C0")
-    TP_BRNZ  = PatternFill("solid", fgColor="CD7F32")
-
-    TP_COLS = [
-        ("thematic_rank",        "#",                   5),
-        ("symbol",               "Symbol",             16),
-        ("sector",               "Sector",             22),
-        ("_sec_count",           "Sector\nCount",      10),   # stocks from sector in top 50
-        ("_sec_avg",             "Sector\nAvg Score",  12),
-        ("_sector_pct",          "Sector\nStrength%",  12),   # 65% weight input
-        ("median_turnover_42d",  "Median TO\n42d (Cr)",14),
-        ("_liquidity_pct",       "Liquidity\n%ile",    12),   # 35% weight input
-        ("thematic_score",       "Thematic\nScore",    12),   # final weighted score
-        ("composite_score",      "Rating\nScore",      10),
-        ("rank",                 "Rating\nRank",       10),
-        ("current_close",        "Close",              10),
-        ("perf_12m_pct",         "12M\nReturn%",       12),
-        ("perf_3m_pct",          "3M\nReturn%",        12),
-    ]
-    ncols_tp = len(TP_COLS)
-
-    # ── Title bar ─────────────────────────────────────────────────────
-    tp_ws.merge_cells(f"A1:{get_column_letter(ncols_tp)}1")
-    tp_ws["A1"] = (
-        f"🎨 THEMATIC PICKS  —  "
-        f"Top 50 by Score → Weighted: 65% Leading Sector + 35% Liquidity  |  "
-        f"As of {cutoff_date.strftime('%d-%b-%Y')}"
-    )
-    sc(tp_ws["A1"], bold=True, color="FFFFFF", fill=TP_FILL, size=13, align="center")
-    tp_ws.row_dimensions[1].height = 28
-
-    # ── Sub-title ─────────────────────────────────────────────────────
-    tp_ws.merge_cells(f"A2:{get_column_letter(ncols_tp)}2")
-    tp_ws["A2"] = (
-        "Sector Strength = (stocks in sector from top 50) × (avg composite score)   |   "
-        "Stocks riding leading sectors with good liquidity float to the top"
-    )
-    sc(tp_ws["A2"], italic=True, color="FFFFFF", fill=TP_H, size=10, align="center")
-    tp_ws.row_dimensions[2].height = 18
-
-    # ── Column headers ────────────────────────────────────────────────
-    # Colour-code header groups: sector cols → blue tint, liquidity col → green tint
-    SECTOR_COLS  = {"_sec_count", "_sec_avg", "_sector_pct"}
-    LIQUIDITY_C  = {"median_turnover_42d", "_liquidity_pct"}
-    for ci, (key, hdr, _) in enumerate(TP_COLS, 1):
-        cell = tp_ws.cell(row=3, column=ci, value=hdr)
-        if key in SECTOR_COLS:
-            sc(cell, bold=True, color="FFFFFF", fill=PatternFill("solid", fgColor="1A5276"), size=10, wrap=True)
-        elif key in LIQUIDITY_C:
-            sc(cell, bold=True, color="FFFFFF", fill=PatternFill("solid", fgColor="1E8449"), size=10, wrap=True)
-        elif key == "thematic_score":
-            sc(cell, bold=True, color="FFFFFF", fill=TP_FILL, size=10, wrap=True)
-        else:
-            sc(cell, bold=True, color="FFFFFF", fill=TP_H, size=10, wrap=True)
-    tp_ws.row_dimensions[3].height = 36
-
-    # ── Data rows ─────────────────────────────────────────────────────
-    for ri, row in thematic_picks.iterrows():
-        er       = ri + 4
-        alt      = ri % 2 == 1
-        row_fill = TP_ALT if alt else WHT_FILL
-        s_fill, s_fc = score_band(row["composite_score"])
-
-        if row["thematic_rank"] == 1:
-            rank_fill = TP_GOLD
-        elif row["thematic_rank"] == 2:
-            rank_fill = TP_SILV
-        elif row["thematic_rank"] == 3:
-            rank_fill = TP_BRNZ
-        else:
-            rank_fill = row_fill
-
-        for ci, (key, _, _) in enumerate(TP_COLS, 1):
-            val  = row.get(key)
-            cell = tp_ws.cell(row=er, column=ci)
-
-            if key == "thematic_rank":
-                cell.value = int(val) if pd.notna(val) else ""
-                sc(cell, bold=True, color="4A235A", fill=rank_fill, size=12, align="center")
-
-            elif key == "symbol":
-                cell.value = val
-                sc(cell, bold=True, color="4A235A", fill=row_fill, align="left", size=12)
-
-            elif key == "sector":
-                cell.value = val
-                sc(cell, bold=False, color="1A5276", fill=TP_SEC, align="left", size=10)
-
-            elif key == "_sec_count":
-                cell.value = int(val) if pd.notna(val) else ""
-                sc(cell, bold=True, color="1A5276", fill=TP_SEC, size=11)
-
-            elif key == "_sec_avg":
-                cell.value = round_or_blank(val, 1)
-                sc(cell, color="1A5276", fill=TP_SEC, size=11)
-                cell.number_format = "0.0"
-
-            elif key == "_sector_pct":
-                cell.value = round_or_blank(val, 1)
-                sc(cell, bold=True, color="1A5276", fill=TP_SEC, size=11)
-                cell.number_format = "0.0"
-
-            elif key == "median_turnover_42d":
-                cell.value = round_or_blank(val, 2)
-                sc(cell, bold=True, color="145A32", fill=TP_LIQ, size=11)
-                cell.number_format = "#,##0.00"
-
-            elif key == "_liquidity_pct":
-                cell.value = round_or_blank(val, 1)
-                sc(cell, color="145A32", fill=TP_LIQ, size=11)
-                cell.number_format = "0.0"
-
-            elif key == "thematic_score":
-                cell.value = round_or_blank(val, 1)
-                sc(cell, bold=True, color="FFFFFF", fill=TP_FILL, size=12, border=BDR_M)
-                cell.number_format = "0.0"
-
-            elif key == "composite_score":
-                cell.value = score_or_blank(val)
-                sc(cell, bold=True, color=s_fc, fill=s_fill, size=11)
-                cell.number_format = "0"
-
-            elif key == "rank":
-                cell.value = int(val) if pd.notna(val) else ""
-                sc(cell, color="555555", fill=row_fill, size=11)
-
-            elif key in ("perf_12m_pct", "perf_3m_pct"):
-                v = round_or_blank(val, 4)
-                cell.value = v
-                if isinstance(v, float):
-                    pfill = PatternFill("solid", fgColor="D5F5E3") if v >= 0 else PatternFill("solid", fgColor="FADBD8")
-                    pclr  = "1F6B3A" if v >= 0 else "8B0000"
-                    sc(cell, color=pclr, fill=pfill, size=11)
-                else:
-                    sc(cell, fill=row_fill, size=11)
-                cell.number_format = "0.00%"
-
-            else:
-                cell.value = round_or_blank(val, 2) if isinstance(val, float) else val
-                sc(cell, fill=row_fill, size=11)
-
-        tp_ws.row_dimensions[er].height = 16
-
-    # ── Column widths ─────────────────────────────────────────────────
-    for ci, (_, _, w) in enumerate(TP_COLS, 1):
-        tp_ws.column_dimensions[get_column_letter(ci)].width = w
-
-    tp_ws.freeze_panes = "C4"
-
-    # Color scale on Thematic Score column (col 9)
-    th_col    = get_column_letter(9)
-    last_tp_r = 3 + len(thematic_picks)
-    if last_tp_r > 4:
-        tp_ws.conditional_formatting.add(
-            f"{th_col}4:{th_col}{last_tp_r}",
-            ColorScaleRule(
-                start_type="min", start_color="F5CBA7",
-                mid_type="percentile", mid_value=50, mid_color="D7BDE2",
-                end_type="max", end_color="A9CCE3",
-            )
-        )
-    # Color scale on Sector Strength% (col 6)
-    sec_col = get_column_letter(6)
-    if last_tp_r > 4:
-        tp_ws.conditional_formatting.add(
-            f"{sec_col}4:{sec_col}{last_tp_r}",
-            ColorScaleRule(
-                start_type="min", start_color="D6EAF8",
-                end_type="max", end_color="1A5276",
-            )
-        )
-
-    # ══════════════════════════════════════════════════════════════════
-    #  SHEET 6 (was 4) ── 21EMA UPTREND
+    #  SHEET 4 ── 21EMA UPTREND
     # ══════════════════════════════════════════════════════════════════
     ema_ws = wb.create_sheet("21EMA Uptrend")
     EMA_COLS = [
@@ -2838,14 +2348,14 @@ def export_workbook(
     sector_leaders = pd.DataFrame(leader_rows)
     if not sector_leaders.empty:
         sector_leaders = sector_leaders.sort_values(
-            ["leadership_score", "score_sector", "sector_positive_score_count", "sector"],
+            ["score_sector", "leadership_score", "sector_positive_score_count", "sector"],
             ascending=[False, False, False, True],
         ).reset_index(drop=True)
 
     sl_ws = wb.create_sheet("Sector Leaders")
     SL_COLS = [
         ("Rank", 5), ("Sector", 22), ("# Stocks", 7), ("# Pos", 6),
-        ("Sector Score", 11), ("Sector Pts", 9),
+        ("Sector Pts", 9), ("Leadership", 10),
         ("Leader 1", 14), ("Leader 2", 14), ("Avg RS", 8), ("Avg Pre-Sec", 10),
         ("Avg Perf", 9), ("Str%", 8), ("Best Score", 9),
     ]
@@ -2853,7 +2363,7 @@ def export_workbook(
     sl_ws.merge_cells(f"A1:{get_column_letter(ncols_sl)}1")
     sl_ws["A1"] = (
         f"SECTOR LEADERSHIP BOARD   |   As of {cutoff_date.strftime('%d-%b-%Y')}   "
-        f"|   Sorted by actual sector score first, then sector points"
+        f"|   Sectors awarded bonus points | sorted by Sector Pts then Leadership Score"
     )
     sc(sl_ws["A1"], bold=True, color="FFFFFF", fill=T_FILL, size=12, align="center")
     sl_ws.row_dimensions[1].height = 24
@@ -2882,8 +2392,8 @@ def export_workbook(
             lrow.get("sector", ""),
             lrow.get("sector_stock_count", ""),
             lrow.get("sector_positive_score_count", ""),
-            round_or_blank(lrow.get("leadership_score"), 1),
             pts_val,
+            round_or_blank(lrow.get("leadership_score"), 1),
             lrow.get("leader_1", ""),
             lrow.get("leader_2", ""),
             round_or_blank(lrow.get("leader_avg_rs_total"), 1),
@@ -2894,13 +2404,12 @@ def export_workbook(
         ]
         for ci, (val, _) in enumerate(zip(vals, SL_COLS), 1):
             cell = sl_ws.cell(row=ri, column=ci, value=val)
-            if ci == 5:  # Sector Score
-                s_fill, s_fc = score_band(float(lrow.get("leadership_score", 0) or 0))
-                sc(cell, bold=True, color=s_fc, fill=s_fill, size=11)
-                cell.number_format = "0.0"
-            elif ci == 6:  # Sector Pts
+            if ci == 5:  # Sector Pts
                 sc(cell, bold=True, color=pts_fc, fill=pts_fill, size=11)
                 cell.number_format = "0"
+            elif ci == 6:  # Leadership score
+                s_fill, s_fc = score_band(float(lrow.get("leadership_score", 0) or 0))
+                sc(cell, bold=True, color=s_fc, fill=s_fill, size=11)
             else:
                 sc(cell, fill=row_bg, align="left" if ci in (2, 7, 8) else "center", size=11)
             if ci == 12:
@@ -2931,15 +2440,15 @@ def export_workbook(
     )
     sector_summary["leadership_score"] = sector_summary["leadership_score"].fillna(-1.0)
     sector_summary.sort_values(
-        ["leadership_score", "score_sector", "sector_positive_score_count", "avg_composite_score", "avg_pre_sector_score", "avg_rs_total"],
-        ascending=[False, False, False, False, False, False],
+        ["sector_positive_score_count", "avg_composite_score", "avg_pre_sector_score", "avg_rs_total"],
+        ascending=[False, False, False, False],
         inplace=True,
     )
     sector_summary.reset_index(drop=True, inplace=True)
 
     SS_COLS = [
         ("Rank",               5), ("Sector",            22),
-        ("# Stocks",           7), ("# Pos",             6), ("Sector Score",     10),
+        ("# Stocks",           7), ("# Pos",             6), ("LeaderScore",      10),
         ("Leader 1",          14), ("Leader 2",         14),
         ("Best Symbol",       14), ("Best Score",        8),
         ("Avg Score",          8), ("Median Score",      8),
@@ -2953,8 +2462,8 @@ def export_workbook(
     ss_ws.merge_cells(f"A1:{get_column_letter(ncols_ss)}1")
     ss_ws["A1"] = (
         f"SECTOR SUMMARY   |   As of {cutoff_date.strftime('%d-%b-%Y')}   "
-        f"|   Ranked by actual sector score first "
-        f"(AvgPreSec + Top-20 Breadth Bonus + Penetration Bonus + 12M/52W Bonus)"
+        f"|   Ranked by positive stock count first, then New Leadership Score "
+        f"(AvgPreSec + Top-20 Breadth Bonus + Penetration Bonus)"
     )
     sc(ss_ws["A1"], bold=True, color="FFFFFF", fill=T_FILL, size=12, align="center")
     ss_ws.row_dimensions[1].height = 24
@@ -2995,12 +2504,7 @@ def export_workbook(
         ]
         for ci, (val, (_, w)) in enumerate(zip(vals, SS_COLS), 1):
             cell = ss_ws.cell(row=ri, column=ci, value=val)
-            if ci == 5:   # Sector Score — colour-coded
-                lead_val = float(srow.get("leadership_score", 0) or 0)
-                lead_fill, lead_fc = score_band(lead_val)
-                sc(cell, bold=True, color=lead_fc, fill=lead_fill, size=11, border=BDR_M)
-                cell.number_format = "0.0"
-            elif ci == 10:   # Avg Score — colour-coded
+            if ci == 6:   # Avg Score — colour-coded
                 sc(cell, bold=True, color=s_fc2, fill=s_fill2, size=11,
                    border=BDR_M)
                 cell.number_format = "0.0"
@@ -3444,69 +2948,6 @@ def main() -> None:
     reports_dir = Path(__file__).resolve().parent / "reports"
     tv_path = export_tradingview_dayone(scored, reports_dir, cutoff_date)
     print(f"  Day-1  → {tv_path}")
-
-    # ── Export Institutional Picks TXT (40% sector + 30% liquidity + 30% rating) ──
-    top50_ip = scored.head(50).copy()
-    ip_sec = (
-        top50_ip.groupby("sector", dropna=False)
-        .agg(_c=("composite_score", "count"), _a=("composite_score", "mean"))
-        .reset_index()
-    )
-    ip_sec["_ss"] = ip_sec["_c"] * ip_sec["_a"]
-    top50_ip = top50_ip.merge(ip_sec[["sector", "_ss"]], on="sector", how="left")
-    top50_ip["_sp"] = top50_ip["_ss"].rank(pct=True, method="average") * 100
-    top50_ip["_lp"] = top50_ip["median_turnover_42d"].rank(pct=True, method="average") * 100
-    top50_ip["_rp"] = top50_ip["composite_score"].rank(pct=True, method="average") * 100
-    top50_ip["_is"] = 0.40 * top50_ip["_sp"] + 0.30 * top50_ip["_lp"] + 0.30 * top50_ip["_rp"]
-    inst_picks_df = (
-        top50_ip.sort_values("_is", ascending=False).head(20).reset_index(drop=True)
-    )
-
-    reports_dir.mkdir(parents=True, exist_ok=True)
-    ip_txt_path = reports_dir / f"institutional_picks_{cutoff_date.strftime('%d%b%Y').lower()}.txt"
-
-    ip_lines = [
-        f"### Institutional Picks — {cutoff_date.strftime('%d %b %Y')}",
-        f"### Selection: Top 50 by score → 40% Sector Strength + 30% Liquidity + 30% Rating",
-        "",
-    ]
-    for _, row in inst_picks_df.iterrows():
-        symbol = str(row.get("symbol", "")).strip().upper().replace("NSE:", "")
-        if symbol:
-            ip_lines.append(f"NSE:{symbol}")
-
-    ip_txt_path.write_text("\n".join(ip_lines).rstrip() + "\n", encoding="utf-8")
-    print(f"  Inst.  → {ip_txt_path}")
-
-    # ── Export Thematic Picks TXT (Top 50 → 65% sector + 35% liquidity) ─
-    top50_main = scored.head(50).copy()
-    sec_agg_main = (
-        top50_main.groupby("sector", dropna=False)
-        .agg(_sc=("composite_score", "count"), _sa=("composite_score", "mean"))
-        .reset_index()
-    )
-    sec_agg_main["_ss"] = sec_agg_main["_sc"] * sec_agg_main["_sa"]
-    top50_main = top50_main.merge(sec_agg_main[["sector", "_ss"]], on="sector", how="left")
-    top50_main["_sp"] = top50_main["_ss"].rank(pct=True, method="average") * 100
-    top50_main["_lp"] = top50_main["median_turnover_42d"].rank(pct=True, method="average") * 100
-    top50_main["_ts"] = 0.65 * top50_main["_sp"] + 0.35 * top50_main["_lp"]
-    thematic_df = (
-        top50_main.sort_values("_ts", ascending=False).head(20).reset_index(drop=True)
-    )
-
-    tp_txt_path = reports_dir / f"thematic_picks_{cutoff_date.strftime('%d%b%Y').lower()}.txt"
-    tp_lines = [
-        f"### Thematic Picks — {cutoff_date.strftime('%d %b %Y')}",
-        f"### Selection: Top 50 by score → 65% Leading Sector + 35% Liquidity",
-        "",
-    ]
-    for _, row in thematic_df.iterrows():
-        symbol = str(row.get("symbol", "")).strip().upper().replace("NSE:", "")
-        if symbol:
-            tp_lines.append(f"NSE:{symbol}")
-
-    tp_txt_path.write_text("\n".join(tp_lines).rstrip() + "\n", encoding="utf-8")
-    print(f"  Themat → {tp_txt_path}")
 
     # ── Auto-run sector_discovery2.py if present ──────────────────────────
     sd2_script = Path(__file__).resolve().parent / "sector_discovery2.py"
