@@ -75,6 +75,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--big-day-pct",    type=float, default=5.0,  help="Big-day threshold %%  [5.0]")
     p.add_argument("--fired-total",    type=float, default=10.0, help="Fired total %%        [10.0]")
     p.add_argument("--extended-total", type=float, default=20.0, help="Extended total %%     [20.0]")
+    p.add_argument("--laggard-total",  type=float, default=6.0,  help="Laggard threshold %%  [6.0]")
     p.add_argument("--sleep-seconds",  type=float, default=0.35, help="Inter-call delay s   [0.35]")
     return p
 
@@ -188,13 +189,37 @@ def fetch_daily_closes(kite, token: int, from_dt: date, to_dt: date) -> pd.DataF
 # ─────────────────────────────────────────────────────────────────────────────
 
 def classify_stock(sym: str, daily: List[float], big_day_pct: float,
-                   fired_total: float, extended_total: float) -> dict:
-    total   = sum(daily)                        # simple sum (not compounded — fast scan)
+                   fired_total: float, extended_total: float,
+                   laggard_total: float = 6.0) -> dict:
+    """
+    Classify a stock based on its daily % changes since the cutoff date.
+
+    LAGGARD criteria (either condition triggers it):
+      • total return ≤ -laggard_total  (default -6%): significantly underwater
+      • total < 0  AND  fallen ≥ laggard_total% from its intra-period peak
+        (e.g. stock reached +5% then slid to -2% — a 7% drawdown from peak)
+
+    Stocks with small negative returns (-0.1% to -5.9%) that haven't had a
+    meaningful drawdown fall through to YET TO FIRE or STEADY RUNNER.
+    """
+    total    = sum(daily)                       # simple sum (not compounded — fast scan)
     big_days = [d for d in daily if d >= big_day_pct]
-    n_big   = len(big_days)
-    max_day = max(daily) if daily else 0.0
-    recent3 = sum(daily[-3:]) if len(daily) >= 3 else sum(daily)
-    today   = daily[-1] if daily else 0.0
+    n_big    = len(big_days)
+    max_day  = max(daily) if daily else 0.0
+    recent3  = sum(daily[-3:]) if len(daily) >= 3 else sum(daily)
+    today    = daily[-1] if daily else 0.0
+
+    # ── Compute intra-period peak cumulative return ───────────────────────────
+    peak_total = 0.0
+    running    = 0.0
+    for d in daily:
+        running += d
+        if running > peak_total:
+            peak_total = running
+    drawdown_from_peak = peak_total - total     # how far stock has fallen from its high
+
+    # ── True laggard: significantly down OR big drawdown from peak ────────────
+    is_laggard = (total <= -laggard_total) or (total < 0 and drawdown_from_peak >= laggard_total)
 
     if total >= extended_total * 1.5 or n_big >= 3:
         status, emoji, color, order = "HIGHLY EXTENDED", "🚀", "FF4444", 1
@@ -208,7 +233,7 @@ def classify_stock(sym: str, daily: List[float], big_day_pct: float,
             status, emoji, color, order = "FIRED & RETREATING", "🔄", "9370DB", 6
         else:
             status, emoji, color, order = "FIRED", "🔥", "FFD700", 4
-    elif total < 0:
+    elif is_laggard:
         status, emoji, color, order = "LAGGARD", "❌", "C0C0C0", 8
     elif n_big == 0 and total < fired_total:
         status, emoji, color, order = "YET TO FIRE", "⏳", "00B050", 5
@@ -218,6 +243,8 @@ def classify_stock(sym: str, daily: List[float], big_day_pct: float,
     return dict(symbol=sym, daily=daily, total=round(total, 2),
                 max_day=round(max_day, 2), n_big=n_big,
                 recent3=round(recent3, 2), today=round(today, 2),
+                peak_total=round(peak_total, 2),
+                drawdown_from_peak=round(drawdown_from_peak, 2),
                 status=status, emoji=emoji, color=color, order=order)
 
 
@@ -755,6 +782,7 @@ def main():
             big_day_pct=args.big_day_pct,
             fired_total=args.fired_total,
             extended_total=args.extended_total,
+            laggard_total=args.laggard_total,
         )
         stocks.append(st)
 

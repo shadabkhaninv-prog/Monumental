@@ -12,14 +12,19 @@ from __future__ import annotations
 
 import sys
 import time
+import json
+import math
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
+from urllib.parse import urlencode
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.components.v1 as components
 
 # ── import core helpers from ip_fire_report in the same folder ────────────────
 sys.path.insert(0, str(Path(__file__).parent))
@@ -38,20 +43,50 @@ _BASE        = Path(__file__).parent
 REPORTS_DIR  = _BASE / "reports"
 TOKEN_FILE   = _BASE / "kite_token.txt"
 TRADEBOOK_DIR = _BASE / "input" / "tradebook"
-TRADEBOOK_GLOB = "tradebook-DS9072-EQ*.csv"
+TRADEBOOK_GLOB = "tradebook-*.csv"
+
+IST = ZoneInfo("Asia/Kolkata")
 
 
-def latest_available_cutoff_date(reports_dir: Path) -> date:
-    latest: Optional[date] = None
+def previous_weekday(d: date) -> date:
+    out = d - timedelta(days=1)
+    while out.weekday() >= 5:
+        out -= timedelta(days=1)
+    return out
+
+
+def latest_completed_market_day(now: Optional[datetime] = None) -> date:
+    """
+    Treat today's bar as available only after 3:30 PM India time on weekdays.
+    Weekends fall back to the previous weekday.
+    Note: exchange holidays are not modeled here.
+    """
+    now_ist = now.astimezone(IST) if now is not None else datetime.now(IST)
+    today_ist = now_ist.date()
+
+    if today_ist.weekday() >= 5:
+        return previous_weekday(today_ist)
+
+    market_close = now_ist.replace(hour=15, minute=30, second=0, microsecond=0)
+    if now_ist >= market_close:
+        return today_ist
+    return previous_weekday(today_ist)
+
+
+def available_cutoff_dates(reports_dir: Path) -> List[date]:
+    """Return all cutoff dates for which an institutional picks file exists, newest first."""
+    dates: List[date] = []
     for path in reports_dir.glob("institutional_picks_*.txt"):
         tag = path.stem.replace("institutional_picks_", "").strip().lower()
         try:
-            parsed = datetime.strptime(tag, "%d%b%Y").date()
+            dates.append(datetime.strptime(tag, "%d%b%Y").date())
         except ValueError:
             continue
-        if latest is None or parsed > latest:
-            latest = parsed
-    return latest or (date.today() - timedelta(days=14))
+    return sorted(dates, reverse=True)
+
+def latest_available_cutoff_date(reports_dir: Path) -> date:
+    dates = available_cutoff_dates(reports_dir)
+    return dates[0] if dates else (date.today() - timedelta(days=14))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Page configuration
@@ -193,6 +228,7 @@ def fetch_report_data(
     big_day_pct: float,
     fired_total: float,
     extended_total: float,
+    laggard_total: float = 6.0,
 ) -> Tuple[List[dict], List[date], pd.DataFrame, Dict[str, float]]:
     """
     Returns (stocks, ref_dates, pivot_df, end_close_map).
@@ -214,12 +250,24 @@ def fetch_report_data(
     ref_dates: Optional[List[date]] = None
     symbol_data: Dict[str, Dict[date, float]] = {}
     end_close_map: Dict[str, float] = {}
+    # symbol → external chart urls
+    chart_url_map: Dict[str, Dict[str, str]] = {}
 
     for exch, raw_sym in pairs:
         by_upper, by_norm = token_lookups[exch]
         token, _ = resolve_token(by_upper, by_norm, raw_sym)
         if token is None:
             continue
+        chart_url_map[raw_sym] = {
+            "kite": (
+                f"https://kite.zerodha.com/markets/ext/chart/web/ciq/"
+                f"{exch}/{raw_sym}/{token}"
+            ),
+            "tv": (
+                f"https://www.tradingview.com/chart/"
+                f"?symbol={exch}%3A{raw_sym}&interval=D"
+            ),
+        }
         df = fetch_daily_closes(kite, token, fetch_from, end_date)
         if df.empty or len(df) < 2:
             continue
@@ -245,8 +293,8 @@ def fetch_report_data(
         return [], [], pd.DataFrame()
 
     # ── Never include today — its bar is still in progress ────────────────────
-    today      = date.today()
-    ref_dates  = [d for d in ref_dates if d < today]
+    latest_day = latest_completed_market_day()
+    ref_dates  = [d for d in ref_dates if d <= latest_day]
     if not ref_dates:
         return [], [], pd.DataFrame()
 
@@ -266,7 +314,11 @@ def fetch_report_data(
     for sym in pivot.index:
         daily = [float(v) for v in pivot.loc[sym].values if pd.notna(v)]
         if daily:
-            st_data = classify_stock(sym, daily, big_day_pct, fired_total, extended_total)
+            st_data = classify_stock(sym, daily, big_day_pct, fired_total, extended_total,
+                                     laggard_total=laggard_total)
+            urls = chart_url_map.get(sym, {})
+            st_data["chart_url_kite"] = urls.get("kite", "")
+            st_data["chart_url_tv"]   = urls.get("tv",   "")
             stocks.append(st_data)
 
     return stocks, ref_dates, pivot, end_close_map
@@ -319,6 +371,9 @@ def fetch_kite_holdings(token_file: str) -> pd.DataFrame:
 def fetch_tradebook_history(tradebook_dir: str) -> Tuple[pd.DataFrame, Optional[pd.Timestamp], List[str]]:
     """
     Load local Zerodha tradebook CSV exports and deduplicate by trade_id.
+    This supports a mix of:
+    - one-time historical Console backfill files
+    - rolling yearly tradebook CSVs updated from the daily Kite API capture
     These files give us a historical view for exited positions, which Kite's
     live holdings endpoint cannot provide.
     """
@@ -391,6 +446,65 @@ def fetch_tradebook_history(tradebook_dir: str) -> Tuple[pd.DataFrame, Optional[
     history_max = trades["trade_date"].max()
     return trades, history_max, used_files
 
+
+@st.cache_data(show_spinner=False)
+def fetch_chart_board_data(
+    picks_file: str,
+    token_file: str,
+    cutoff_iso: str,
+    end_iso: str,
+    symbols_csv: str,
+) -> Dict[str, pd.DataFrame]:
+    """
+    Fetch daily OHLC for a focused set of symbols so we can render a separate
+    chart-board view frozen to the selected end date.
+    """
+    cutoff_date = date.fromisoformat(cutoff_iso)
+    end_date = date.fromisoformat(end_iso)
+    chart_from = max(cutoff_date - timedelta(days=120), date(2000, 1, 1))
+    requested = [s.strip().upper() for s in symbols_csv.split(",") if s.strip()]
+    if not requested:
+        return {}
+
+    pairs = parse_picks_file(Path(picks_file))
+    pair_map = {sym.upper(): exch for exch, sym in pairs}
+    exchanges = sorted({pair_map.get(sym, "NSE") for sym in requested})
+
+    kite = load_kite(token_file)
+    token_lookups: Dict[str, tuple] = {}
+    for exch in exchanges:
+        token_lookups[exch] = build_token_lookups(kite, exch)
+
+    out: Dict[str, pd.DataFrame] = {}
+    for sym in requested:
+        exch = pair_map.get(sym, "NSE")
+        by_upper, by_norm = token_lookups[exch]
+        token, _ = resolve_token(by_upper, by_norm, sym)
+        if token is None:
+            continue
+        rows = kite.historical_data(
+            instrument_token=int(token),
+            from_date=chart_from,
+            to_date=end_date,
+            interval="day",
+            continuous=False,
+            oi=False,
+        )
+        if not rows:
+            continue
+        df = pd.DataFrame(rows)
+        df["date"] = pd.to_datetime(df["date"]).dt.date
+        for col in ["open", "high", "low", "close", "volume"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        df = (
+            df[["date", "open", "high", "low", "close", "volume"]]
+            .dropna(subset=["date", "open", "high", "low", "close"])
+            .sort_values("date")
+        )
+        if not df.empty:
+            out[sym] = df
+        time.sleep(0.2)
+    return out
 
 def build_exited_watchlist_positions(
     trades_df: pd.DataFrame,
@@ -526,9 +640,11 @@ def build_position_timeline(
     current_holdings_df: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Build end-of-day quantity timeline for watchlist names across the selected
-    trading dates. This lets us compare actual positioning against the watchlist
-    day by day instead of only looking at today's portfolio snapshot.
+    Build a day-level positioned timeline for watchlist names across the
+    selected trading dates. A day is marked as positioned if the stock was
+    held at any point during that trading day, even if it was fully exited
+    before the close. This is more aligned with campaign timing review than
+    strict end-of-day holdings.
     """
     if not ref_dates or not watchlist_syms:
         return pd.DataFrame()
@@ -555,21 +671,26 @@ def build_position_timeline(
             for dt in ref_ts:
                 row[dt.date()] = 0
             if current_qty > 0:
-                row[ref_ts[-1].date()] = int(current_qty)
+                row[ref_ts[-1].date()] = 1
             timeline.append(row)
             continue
 
         qty_by_date = grp.groupby("trade_date", as_index=True)["signed_qty"].sum().sort_index()
         before_first = float(qty_by_date[qty_by_date.index < ref_ts[0]].sum())
         running = before_first
-        date_map = qty_by_date.to_dict()
         row = {"symbol": sym}
         for dt in ref_ts:
-            running += float(date_map.get(dt, 0.0))
-            row[dt.date()] = max(int(round(running)), 0)
+            day_trades = grp[grp["trade_date"] == dt].copy()
+            positioned_today = running > 0
+            if not day_trades.empty:
+                for _, trade in day_trades.iterrows():
+                    running += float(trade["signed_qty"])
+                    if running > 0:
+                        positioned_today = True
+            row[dt.date()] = 1 if positioned_today else 0
 
         if holdings_qty_map.get(sym, 0) > 0:
-            row[ref_ts[-1].date()] = max(int(row[ref_ts[-1].date()]), holdings_qty_map[sym])
+            row[ref_ts[-1].date()] = 1
         timeline.append(row)
 
     if not timeline:
@@ -674,6 +795,57 @@ def build_campaign_meta_maps(
     return closed, open_meta
 
 
+def filter_trades_to_recent_campaigns(
+    trades_df: pd.DataFrame,
+    eligible_from_dt: date,
+    end_dt: date,
+) -> pd.DataFrame:
+    """
+    Keep only trades belonging to campaigns whose entry date is on or after
+    eligible_from_dt. This lets the positioning tab ignore older carried
+    positions even if they remain open during the selected window.
+    """
+    if trades_df.empty:
+        return trades_df.copy()
+
+    end_ts = pd.Timestamp(end_dt)
+    scope = trades_df[trades_df["trade_date"] <= end_ts].copy()
+    if scope.empty:
+        return scope
+
+    scope = scope.sort_values(["symbol", "trade_date", "order_execution_time", "trade_id"], kind="stable")
+    entry_map: Dict[int, Optional[date]] = {}
+
+    for sym, grp in scope.groupby("symbol", sort=False):
+        qty = 0.0
+        current_entry: Optional[date] = None
+        for idx, row in grp.iterrows():
+            trade_qty = float(row["quantity"])
+            trade_type = str(row["trade_type"])
+            trade_date = row["trade_date"].date()
+
+            if trade_type == "buy":
+                if qty <= 0:
+                    current_entry = trade_date
+                qty += trade_qty
+                entry_map[idx] = current_entry
+            elif trade_type == "sell":
+                entry_map[idx] = current_entry
+                qty = max(qty - trade_qty, 0.0)
+                if qty == 0:
+                    current_entry = None
+            else:
+                entry_map[idx] = None
+
+    filtered = scope.copy()
+    filtered["campaign_entry_date"] = filtered.index.map(entry_map.get)
+    filtered = filtered[
+        filtered["campaign_entry_date"].notna() &
+        (filtered["campaign_entry_date"] >= eligible_from_dt)
+    ].copy()
+    return filtered.drop(columns=["campaign_entry_date"])
+
+
 def calc_capture_pct(my_ret_pct: Optional[float], wl_move_pct: Optional[float]) -> Optional[float]:
     if my_ret_pct is None or wl_move_pct is None:
         return None
@@ -704,41 +876,418 @@ def reconstruct_daily_closes(
     return closes
 
 
+def render_focus_board_lightweight(
+    board_data: Dict[str, pd.DataFrame],
+    symbols: List[str],
+    cutoff_dt: date,
+    end_dt: date,
+) -> None:
+    payload: Dict[str, dict] = {}
+    for sym in symbols:
+        df = board_data.get(sym)
+        if df is None or df.empty:
+            payload[sym] = {"has_data": False}
+            continue
+
+        df = df.copy().sort_values("date")
+        df["date"] = pd.to_datetime(df["date"])
+        df["time"] = df["date"].dt.strftime("%Y-%m-%d")
+        df["ema8"] = df["close"].ewm(span=8, adjust=False).mean()
+        df["ema21"] = df["close"].ewm(span=21, adjust=False).mean()
+        df["dma50"] = df["close"].rolling(50, min_periods=1).mean()
+
+        cutoff_rows = df[df["date"].dt.date <= cutoff_dt]
+        cutoff_close = float(cutoff_rows["close"].iloc[-1]) if not cutoff_rows.empty else None
+        end_close = float(df["close"].iloc[-1])
+        move_pct = None
+        if cutoff_close and cutoff_close != 0:
+            move_pct = round((end_close / cutoff_close - 1.0) * 100.0, 2)
+
+        payload[sym] = {
+            "has_data": True,
+            "end_close": round(end_close, 2),
+            "move_pct": move_pct,
+            "candles": [
+                {
+                    "time": row.time,
+                    "open": round(float(row.open), 2),
+                    "high": round(float(row.high), 2),
+                    "low": round(float(row.low), 2),
+                    "close": round(float(row.close), 2),
+                }
+                for row in df.itertuples(index=False)
+            ],
+            "ema8": [
+                {"time": row.time, "value": round(float(row.ema8), 2)}
+                for row in df.itertuples(index=False)
+            ],
+            "ema21": [
+                {"time": row.time, "value": round(float(row.ema21), 2)}
+                for row in df.itertuples(index=False)
+            ],
+            "dma50": [
+                {"time": row.time, "value": round(float(row.dma50), 2)}
+                for row in df.itertuples(index=False)
+            ],
+        }
+
+    rows = max(1, math.ceil(len(symbols) / 3))
+    frame_height = rows * 395 + 48
+    cards_html = []
+    for sym in symbols:
+        cards_html.append(
+            f"""
+            <section class="focus-card">
+              <div class="focus-head">
+                <div class="focus-title">{sym}</div>
+                <div class="focus-meta" id="meta-{sym}"></div>
+              </div>
+              <div class="focus-chart" id="chart-{sym}"></div>
+            </section>
+            """
+        )
+
+    html = f"""
+    <!doctype html>
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+      <style>
+        body {{
+          margin: 0;
+          background: #ffffff;
+          font-family: "Segoe UI", Tahoma, sans-serif;
+          color: #0f172a;
+        }}
+        .board {{
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 18px;
+          padding: 4px 2px 8px 2px;
+        }}
+        .focus-card {{
+          border: 1px solid #e5e7eb;
+          border-radius: 10px;
+          background: #ffffff;
+          padding: 10px 10px 6px 10px;
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+        }}
+        .focus-head {{
+          display: flex;
+          align-items: baseline;
+          justify-content: space-between;
+          gap: 10px;
+          margin-bottom: 8px;
+        }}
+        .focus-title {{
+          font-size: 14px;
+          font-weight: 700;
+          letter-spacing: 0.02em;
+        }}
+        .focus-meta {{
+          font-size: 11px;
+          color: #64748b;
+          white-space: nowrap;
+        }}
+        .focus-meta.positive {{
+          color: #15803d;
+          font-weight: 600;
+        }}
+        .focus-meta.negative {{
+          color: #b91c1c;
+          font-weight: 600;
+        }}
+        .focus-chart {{
+          width: 100%;
+          height: 300px;
+        }}
+        .focus-empty {{
+          height: 300px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: #64748b;
+          font-size: 12px;
+          background: #f8fafc;
+          border-radius: 8px;
+        }}
+        @media (max-width: 1200px) {{
+          .board {{
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }}
+        }}
+        @media (max-width: 760px) {{
+          .board {{
+            grid-template-columns: 1fr;
+          }}
+        }}
+      </style>
+    </head>
+    <body>
+      <div class="board">
+        {''.join(cards_html)}
+      </div>
+      <script>
+        const payload = {json.dumps(payload)};
+        const symbols = {json.dumps(symbols)};
+
+        function applyChart(sym) {{
+          const card = payload[sym];
+          const chartEl = document.getElementById('chart-' + sym);
+          const metaEl = document.getElementById('meta-' + sym);
+          if (!card || !card.has_data) {{
+            chartEl.innerHTML = '<div class="focus-empty">No chart data</div>';
+            metaEl.textContent = '';
+            return;
+          }}
+
+          const moveText = card.move_pct === null ? 'n/a' : ((card.move_pct > 0 ? '+' : '') + card.move_pct.toFixed(2) + '%');
+          metaEl.textContent = 'Close ' + card.end_close.toFixed(2) + ' | ' + moveText;
+          metaEl.classList.toggle('positive', card.move_pct !== null && card.move_pct > 0);
+          metaEl.classList.toggle('negative', card.move_pct !== null && card.move_pct < 0);
+
+          const chart = LightweightCharts.createChart(chartEl, {{
+            width: chartEl.clientWidth,
+            height: chartEl.clientHeight,
+            layout: {{
+              background: {{ type: 'solid', color: '#ffffff' }},
+              textColor: '#64748b',
+              fontFamily: 'Segoe UI, Tahoma, sans-serif',
+              fontSize: 11,
+            }},
+            grid: {{
+              vertLines: {{ color: '#f8fafc' }},
+              horzLines: {{ color: '#eef2f7' }},
+            }},
+            rightPriceScale: {{
+              borderColor: '#e2e8f0',
+              scaleMargins: {{ top: 0.08, bottom: 0.08 }},
+            }},
+            leftPriceScale: {{
+              visible: false,
+            }},
+            timeScale: {{
+              borderColor: '#e2e8f0',
+              timeVisible: false,
+              secondsVisible: false,
+              fixLeftEdge: true,
+              fixRightEdge: true,
+            }},
+            crosshair: {{
+              mode: LightweightCharts.CrosshairMode.Normal,
+            }},
+            handleScroll: false,
+            handleScale: false,
+          }});
+
+          const candleSeries = chart.addCandlestickSeries({{
+            upColor: '#111111',
+            downColor: '#ff4df3',
+            borderUpColor: '#111111',
+            borderDownColor: '#ff4df3',
+            wickUpColor: '#111111',
+            wickDownColor: '#ff4df3',
+            priceLineVisible: false,
+            lastValueVisible: false,
+          }});
+          candleSeries.setData(card.candles);
+
+          const ema8Series = chart.addLineSeries({{
+            color: '#f59e0b',
+            lineWidth: 2,
+            lastValueVisible: false,
+            priceLineVisible: false,
+            crosshairMarkerVisible: false,
+          }});
+          ema8Series.setData(card.ema8);
+
+          const ema21Series = chart.addLineSeries({{
+            color: '#2563eb',
+            lineWidth: 2,
+            lastValueVisible: false,
+            priceLineVisible: false,
+            crosshairMarkerVisible: false,
+          }});
+          ema21Series.setData(card.ema21);
+
+          const dma50Series = chart.addLineSeries({{
+            color: '#16a34a',
+            lineWidth: 2,
+            lastValueVisible: false,
+            priceLineVisible: false,
+            crosshairMarkerVisible: false,
+          }});
+          dma50Series.setData(card.dma50);
+
+          chart.timeScale().fitContent();
+          new ResizeObserver(() => {{
+            chart.applyOptions({{
+              width: chartEl.clientWidth,
+              height: chartEl.clientHeight,
+            }});
+            chart.timeScale().fitContent();
+          }}).observe(chartEl);
+        }}
+
+        symbols.forEach(applyChart);
+      </script>
+    </body>
+    </html>
+    """
+    components.html(html, height=frame_height, scrolling=True)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Sidebar — inputs
 # ─────────────────────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Session-state for date pickers
+# The end-date widget has NO key — we manage its value entirely via _end_val.
+# This avoids the "cannot modify after widget is instantiated" error because
+# Streamlit never "owns" that widget in session_state.
+# Buttons update _end_val and rerun; the widget always renders from _end_val.
+# ─────────────────────────────────────────────────────────────────────────────
+_latest_market_day = latest_completed_market_day()
+
+
+def _parse_iso_or_default(raw: object, fallback: date) -> date:
+    try:
+        return date.fromisoformat(str(raw))
+    except Exception:
+        return fallback
+
+
+_qp_view = str(st.query_params.get("view", "")).strip().lower()
+if _qp_view == "focus_board":
+    _default_cutoff = latest_available_cutoff_date(REPORTS_DIR)
+    _cutoff_q = _parse_iso_or_default(st.query_params.get("cutoff"), _default_cutoff)
+    _end_q = _parse_iso_or_default(st.query_params.get("end"), min(_default_cutoff + timedelta(days=10), _latest_market_day))
+    _symbols_q = str(st.query_params.get("symbols", "")).strip()
+    _symbols = [s.strip().upper() for s in _symbols_q.split(",") if s.strip()]
+    _picks_file = REPORTS_DIR / f"institutional_picks_{_cutoff_q.strftime('%d%b%Y').lower()}.txt"
+
+    st.markdown(
+        f"<h3 style='margin:0 0 10px 0'>📊 Focus Chart Board"
+        f"<span style='font-size:14px;color:#666;font-weight:400'>"
+        f"  |  Cutoff: {_cutoff_q.strftime('%d %b %Y')}  →  End: {_end_q.strftime('%d %b %Y')}"
+        f"</span></h3>",
+        unsafe_allow_html=True,
+    )
+    if not _symbols:
+        st.info("No focus symbols were supplied for the chart board.")
+        st.stop()
+    if not _picks_file.exists():
+        st.error(f"Picks file not found for cutoff: {_picks_file.name}")
+        st.stop()
+
+    board_data = fetch_chart_board_data(
+        picks_file=str(_picks_file),
+        token_file=str(TOKEN_FILE),
+        cutoff_iso=_cutoff_q.isoformat(),
+        end_iso=_end_q.isoformat(),
+        symbols_csv=",".join(_symbols),
+    )
+    render_focus_board_lightweight(board_data, _symbols, _cutoff_q, _end_q)
+    st.stop()
+
+_all_cutoff_dates = available_cutoff_dates(REPORTS_DIR)
+
+if "_co_init" not in st.session_state:
+    _default_co = _all_cutoff_dates[0] if _all_cutoff_dates else date.today() - timedelta(days=14)
+    st.session_state["_cutoff_val"] = _default_co
+    st.session_state["_end_val"]    = min(_default_co + timedelta(days=10), _latest_market_day)
+    st.session_state["_co_init"]    = True
+
+def _on_cutoff_change():
+    """Auto-advance end date when cutoff selection changes."""
+    co = st.session_state["_cutoff_sel"]          # selectbox key
+    st.session_state["_cutoff_val"] = co
+    auto_end = min(co + timedelta(days=10), _latest_market_day)
+    if auto_end <= co:
+        auto_end = _latest_market_day
+    st.session_state["_end_val"] = auto_end
+
 with st.sidebar:
-    default_cutoff_date = latest_available_cutoff_date(REPORTS_DIR)
     st.markdown("### 🔥 Fire Status")
 
-    # ── Date range ────────────────────────────────────────────────────────────
-    cutoff_date = st.date_input(
-        "📅 Cutoff Date  *(picks generated)*",
-        value=default_cutoff_date,
-        help="Date your institutional picks list was created",
-    )
-    # Default end = yesterday so today's in-progress bar is never included
-    _yesterday  = date.today() - timedelta(days=1)
-    end_date    = st.date_input(
-        "📅 End Date  *(last completed day)*",
-        value=_yesterday,
-        max_value=_yesterday,          # prevent selecting today
-        help="Last fully-completed trading day to include",
-    )
+    # ── Cutoff date — dropdown of available picks files ───────────────────────
+    if not _all_cutoff_dates:
+        st.error("No institutional picks files found in reports folder.")
+        st.stop()
 
-    # Picks file auto-resolved from cutoff date
+    # Format dates for display: "02 Apr 2026 (Wed)"
+    _fmt = lambda d: d.strftime("%d %b %Y  (%a)")
+    _date_options  = _all_cutoff_dates                        # list of date objects
+    _label_options = [_fmt(d) for d in _date_options]
+
+    # Find current selection index
+    _cur_co  = st.session_state["_cutoff_val"]
+    _sel_idx = _date_options.index(_cur_co) if _cur_co in _date_options else 0
+
+    st.selectbox(
+        "📅 Cutoff Date  *(picks generated)*",
+        options=_date_options,
+        index=_sel_idx,
+        format_func=_fmt,
+        key="_cutoff_sel",
+        on_change=_on_cutoff_change,
+        help=f"{len(_all_cutoff_dates)} picks file(s) found in reports folder",
+    )
+    cutoff_date = st.session_state["_cutoff_val"]
+
+    # ── End date with ◀ ▶ day-stepper ────────────────────────────────────────
+    # NO key= on the date_input — widget value is driven entirely by _end_val.
+    # Buttons update _end_val, then rerun; widget re-renders from the new value.
+    st.markdown(
+        "<p style='font-size:13px;font-weight:500;margin:4px 0 2px 0'>"
+        "📅 End Date <em style='font-weight:400'>(last completed day)</em></p>",
+        unsafe_allow_html=True,
+    )
+    _ec1, _ec2, _ec3 = st.columns([1, 5, 1])
+    with _ec1:
+        if st.button("<", key="_end_prev", help="Back 1 day",
+                     use_container_width=True):
+            _cand = st.session_state["_end_val"] - timedelta(days=1)
+            if _cand > st.session_state["_cutoff_val"]:
+                st.session_state["_end_val"] = _cand
+                st.rerun()
+    with _ec2:
+        # No key= — Streamlit does not own this widget in session_state
+        _picked_end = st.date_input(
+            "End",
+            value=st.session_state["_end_val"],
+            max_value=_latest_market_day,
+            label_visibility="collapsed",
+        )
+        # Capture manual changes the user makes by typing/clicking the calendar
+        if _picked_end != st.session_state["_end_val"]:
+            st.session_state["_end_val"] = _picked_end
+            st.rerun()
+    with _ec3:
+        if st.button(">", key="_end_next", help="Forward 1 day",
+                     use_container_width=True):
+            _cand = st.session_state["_end_val"] + timedelta(days=1)
+            if _cand <= _latest_market_day:
+                st.session_state["_end_val"] = _cand
+                st.rerun()
+    end_date = st.session_state["_end_val"]
+
+    # Picks file resolved from selected cutoff date (always exists — selectbox only shows real files)
     cutoff_tag = cutoff_date.strftime("%d%b%Y").lower()
     picks_file = REPORTS_DIR / f"institutional_picks_{cutoff_tag}.txt"
-    if picks_file.exists():
-        st.success(f"✅ `{picks_file.name}`")
-    else:
-        st.warning(f"⚠️ Not found: `{picks_file.name}`")
 
     # ── Thresholds ────────────────────────────────────────────────────────────
     with st.expander("⚙️ Thresholds", expanded=False):
-        big_day_pct    = st.slider("Big-day %",       3.0, 10.0,  5.0, 0.5)
-        fired_total    = st.slider("Fired total %",   5.0, 25.0, 10.0, 1.0)
-        extended_total = st.slider("Extended total %",15.0,50.0, 20.0, 1.0)
+        big_day_pct    = st.slider("Big-day %",          3.0, 10.0,  5.0, 0.5)
+        fired_total    = st.slider("Fired total %",      5.0, 25.0, 10.0, 1.0)
+        extended_total = st.slider("Extended total %",  15.0, 50.0, 20.0, 1.0)
+        laggard_total  = st.slider("Laggard threshold %", 3.0, 15.0,  6.0, 0.5,
+                                   help="LAGGARD if total ≤ −n% OR fallen ≥ n% from intra-period peak")
+        st.markdown("---")
+        cooldown_pct   = st.slider("Focus cooldown trigger %", 1.0, 8.0, 3.0, 0.5,
+                                   help="Hide from focus list for 2 trading days after a move this large")
 
     st.markdown("---")
     load_btn = st.button("🚀 Load / Refresh", use_container_width=True, type="primary")
@@ -777,6 +1326,7 @@ with st.spinner("Fetching data from Kite API…"):
         big_day_pct    = big_day_pct,
         fired_total    = fired_total,
         extended_total = extended_total,
+        laggard_total  = laggard_total,
     )
 
 if not stocks:
@@ -831,9 +1381,55 @@ tab_focus, tab_positions, tab_status, tab_heatmap, tab_extended, tab_charts = st
 # TAB 1: Today's Focus
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_focus:
-    ytf_stocks  = [s for s in stocks if s["status"] == "YET TO FIRE"]
-    jft_stocks  = [s for s in stocks if s["status"] == "JUST FIRED TODAY"]
-    ret_stocks  = [s for s in stocks if s["status"] == "FIRED & RETREATING"]
+    # ── Cooldown filter ───────────────────────────────────────────────────────
+    # If a stock moved ≥ cooldown_pct% on either of the 2 trading days BEFORE
+    # the end date, suppress it from the focus list for those 2 days.
+    def in_cooldown(s: dict) -> bool:
+        """True if the stock had a big move in the 2 days preceding the end date."""
+        # daily[-1] = end date (today in dashboard context)
+        # daily[-2] = 1 day before end  → if it ran, suppress today
+        # daily[-3] = 2 days before end → if it ran, suppress today (2nd cool day)
+        prior_2 = s["daily"][-(2 + 1):-1]   # up to 2 days before end date
+        return any(d >= cooldown_pct for d in prior_2)
+
+    ytf_all   = [s for s in stocks if s["status"] == "YET TO FIRE"]
+    jft_all   = [s for s in stocks if s["status"] == "JUST FIRED TODAY"]
+    ret_all   = [s for s in stocks if s["status"] == "FIRED & RETREATING"]
+
+    ytf_stocks = [s for s in ytf_all if not in_cooldown(s)]
+    jft_stocks = [s for s in jft_all if not in_cooldown(s)]
+    ret_stocks = [s for s in ret_all if not in_cooldown(s)]
+
+    cooled_down = (
+        [s for s in ytf_all if in_cooldown(s)] +
+        [s for s in jft_all if in_cooldown(s)] +
+        [s for s in ret_all if in_cooldown(s)]
+    )
+    if cooled_down:
+        cooled_names = ", ".join(s["symbol"] for s in cooled_down)
+        st.caption(
+            f"⏸ **{len(cooled_down)} stock(s) in cooldown** (ran ≥{cooldown_pct:.0f}% in last 2 days, "
+            f"resuming after 2 sessions): {cooled_names}"
+        )
+
+    focus_pool = sorted(
+        {s["symbol"]: s for s in (ytf_stocks + jft_stocks + ret_stocks)}.values(),
+        key=lambda x: (x["order"], -x["total"], x["symbol"]),
+    )
+    if focus_pool:
+        board_qs = urlencode({
+            "view": "focus_board",
+            "cutoff": cutoff_date.isoformat(),
+            "end": end_date.isoformat(),
+            "symbols": ",".join(s["symbol"] for s in focus_pool),
+        })
+        st.markdown(
+            f'<a href="?{board_qs}" target="_blank" rel="noopener" '
+            f'style="display:inline-block;margin:4px 0 10px 0;padding:6px 10px;'
+            f'border:1px solid #1F4E79;border-radius:6px;text-decoration:none;'
+            f'color:#1F4E79;font-size:13px;font-weight:600;">🗂 Open Focus Chart Board</a>',
+            unsafe_allow_html=True,
+        )
 
     def render_card(s: dict):
         meta   = STATUS_META.get(s["status"], ("?", "#888", "lag", ""))
@@ -841,9 +1437,30 @@ with tab_focus:
         card_css  = {"ytf": "card-ytf", "jft": "card-jft", "ret": "card-ret",
                      "ext": "card-ext", "hext": "card-hext", "lag": "card-lag"}.get(css, "card-lag")
         badge_css = f"badge-{css}"
+        kite_url = s.get("chart_url_kite", "")
+        tv_url   = s.get("chart_url_tv",   "")
+        _link_style = (
+            "text-decoration:none;font-size:11px;border-radius:4px;"
+            "padding:1px 6px;line-height:1.6;margin-left:4px;"
+        )
+        chart_link = ""
+        if kite_url:
+            chart_link += (
+                f'<a href="{kite_url}" target="_blank" rel="noopener" '
+                f'style="{_link_style}color:#1F4E79;border:1px solid #1F4E79">'
+                f'📊 Kite</a>'
+            )
+        if tv_url:
+            chart_link += (
+                f'<a href="{tv_url}" target="_blank" rel="noopener" '
+                f'style="{_link_style}color:#1a6b3c;border:1px solid #1a6b3c">'
+                f'📈 TV Live</a>'
+            )
+        if chart_link:
+            chart_link = f'<span style="float:right">{chart_link}</span>'
         st.markdown(f"""
         <div class="card {card_css}">
-          <h4>{emo} {s['symbol']}</h4>
+          <h4>{emo} {s['symbol']}{chart_link}</h4>
           <span class="badge {badge_css}">{s['status']}</span>
           <p>Today: <b>{s['today']:+.2f}%</b> &nbsp;|&nbsp;
              Total: <b>{s['total']:+.2f}%</b> &nbsp;|&nbsp;
@@ -884,6 +1501,7 @@ with tab_focus:
                    "No fresh entry opportunities today.")
 
 
+
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 2: My Holdings — EOD Positioning Quality
 # ══════════════════════════════════════════════════════════════════════════════
@@ -892,10 +1510,16 @@ with tab_positions:
     wl_status_map  = {s["symbol"]: s["status"] for s in stocks}
     wl_total_map   = {s["symbol"]: s["total"]  for s in stocks}
     wl_today_map   = {s["symbol"]: s["today"]  for s in stocks}
+    eligible_entry_from = cutoff_date - timedelta(days=1)
 
     trades_df, trade_history_max, trade_files = fetch_tradebook_history(str(TRADEBOOK_DIR))
-    hld_df = build_holdings_snapshot_from_trades(
+    trades_recent_df = filter_trades_to_recent_campaigns(
         trades_df=trades_df,
+        eligible_from_dt=eligible_entry_from,
+        end_dt=end_date,
+    )
+    hld_df = build_holdings_snapshot_from_trades(
+        trades_df=trades_recent_df,
         end_dt=end_date,
         end_close_map=end_close_map,
     )
@@ -916,7 +1540,7 @@ with tab_positions:
     current_watchlist_symbols = set(in_wl["symbol"].tolist())
 
     exited_wl = build_exited_watchlist_positions(
-        trades_df=trades_df,
+        trades_df=trades_recent_df,
         watchlist_syms=watchlist_syms,
         current_watchlist_symbols=current_watchlist_symbols,
         cutoff_dt=cutoff_date,
@@ -925,10 +1549,10 @@ with tab_positions:
         wl_total_map=wl_total_map,
         wl_today_map=wl_today_map,
     )
-    campaign_return_map = build_campaign_return_map(trades_df=trades_df, end_dt=end_date)
-    closed_campaign_meta, open_campaign_meta = build_campaign_meta_maps(trades_df=trades_df, end_dt=end_date)
+    campaign_return_map = build_campaign_return_map(trades_df=trades_recent_df, end_dt=end_date)
+    closed_campaign_meta, open_campaign_meta = build_campaign_meta_maps(trades_df=trades_recent_df, end_dt=end_date)
     position_timeline = build_position_timeline(
-        trades_df=trades_df,
+        trades_df=trades_recent_df,
         watchlist_syms=watchlist_syms,
         ref_dates=ref_dates,
         current_holdings_df=in_wl,
@@ -1228,7 +1852,7 @@ with tab_positions:
                 y=exit_bar["WL Total%"],
                 marker_color="#FF8C00",
                 text=[f"{v:+.1f}%" if pd.notna(v) else "—" for v in exit_bar["WL Total%"]],
-                textposition="auto",
+                           textposition="auto",
                 hovertemplate="%{x}<br>WL Move: %{y:+.2f}%<extra></extra>",
             ))
             fig_bar.update_layout(

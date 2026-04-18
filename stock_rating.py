@@ -61,8 +61,9 @@ SPIKE_WINDOW_10 = 10
 SPIKE_WINDOW_30 = 30
 SPIKE_WINDOW_60 = 60
 TURNOVER_CRORE_DIVISOR = 10_000_000.0
-MIN_MEDIAN_TURNOVER_CRORES = 15.0
+MIN_MEDIAN_TURNOVER_CRORES = 15.0      # universe hard gate: median 42D turnover must be ≥ 15 Cr
 MIN_AVG_TURNOVER_42D_CRORES = 15.0
+INST_PICKS_MIN_MEDIAN_TURNOVER_CRORES = 10.0  # additional gate for institutional picks only
 MEDIAN_TURNOVER_LOW_THRESHOLD_CRORES = 20.0  # absolute gate for percentile-based median-turnover penalty
 GAPUP_LOOKBACK = 60
 UPTREND_CONSISTENCY_MIN_LOOKBACK = 30
@@ -105,6 +106,8 @@ SECTOR_12M_52W_GT2_BASE = 4   # >2 qualifying stocks → base 4 + 1 per qualifyi
 # IPO performance bonus (applies to stocks listed < 6 months with CMP > issue price)
 IPO_TOP10_POINTS = 6
 IPO_TOP20_POINTS = 4
+IPO_TOP40_POINTS = 3
+IPO_MIN_GAIN = 0.20
 
 
 @dataclass
@@ -513,16 +516,15 @@ def filter_symbols_by_turnover(
                 )
             )
             continue
-        if (
-            float(avg_turnover) < min_avg_turnover_42d_crores
-            and float(median_turnover) < min_median_turnover_crores
-        ):
+        # Hard gate: excluded if BOTH median 42D < min_median AND avg 42D < min_avg.
+        # (Either metric above the floor is sufficient to stay in the rated universe.)
+        if float(median_turnover) < min_median_turnover_crores and float(avg_turnover) < min_avg_turnover_42d_crores:
             warnings.append(
                 WarningLog(
                     symbol,
-                    f"Both avg ({round(float(avg_turnover), 2)} Cr) and median ({round(float(median_turnover), 2)} Cr) turnover below {min_avg_turnover_42d_crores:.2f} Cr; excluded from rating universe.",
+                    f"Turnover too low: median {round(float(median_turnover), 2)} Cr < {min_median_turnover_crores:.0f} Cr AND avg {round(float(avg_turnover), 2)} Cr < {min_avg_turnover_42d_crores:.0f} Cr; excluded from rating universe.",
                     avg_turnover_21d=None if pd.isna(avg_turnover_21d) else float(avg_turnover_21d),
-                    avg_turnover_42d=float(avg_turnover),
+                    avg_turnover_42d=None if pd.isna(avg_turnover) else float(avg_turnover),
                     median_turnover_42d=float(median_turnover),
                 )
             )
@@ -968,6 +970,8 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
     work = df.copy()
 
     thresholds = {
+        "turnover_bottom10": bottom_n_threshold(work["avg_turnover_42d"], 10),
+        "turnover_bottom20": bottom_n_threshold(work["avg_turnover_42d"], 20),
         "turnover_bottom30": bottom_n_threshold(work["avg_turnover_42d"], 30),
         "median_turnover_bottom10": bottom_n_threshold(work["median_turnover_42d"], 10),
         "median_turnover_bottom20": bottom_n_threshold(work["median_turnover_42d"], 20),
@@ -1041,8 +1045,15 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
     work["score_above_21ema"] = np.where(work["above_21ema"], 2, 0)
     work["score_above_8ema"] = np.where(work["above_8ema"], 2, 0)
 
-    work["score_liquidity"] = np.where(
-        work["avg_turnover_42d"] <= thresholds["turnover_bottom30"], -8, 0
+    _liq_low = work["avg_turnover_42d"] < 40.0   # penalty only applies when avg TO < 40 Cr
+    work["score_liquidity"] = np.select(
+        [
+            _liq_low & (work["avg_turnover_42d"] <= thresholds["turnover_bottom10"]),
+            _liq_low & (work["avg_turnover_42d"] <= thresholds["turnover_bottom20"]),
+            _liq_low & (work["avg_turnover_42d"] <= thresholds["turnover_bottom30"]),
+        ],
+        [-8, -6, -4],
+        default=0,
     )
     work["score_median_turnover"] = np.select(
         [
@@ -1228,13 +1239,16 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
     work.loc[recent_listing_trend_mask, "score_uptrend_consistency"] = median_score_uptrend
     work.loc[recent_listing_trend_mask, "score_ema21_uptrend"] = median_score_ema21_uptrend
     work.loc[recent_listing_trend_mask, "score_green_candles"] = median_score_green
-    # IPO performance bonus — stocks listed < 6M with CMP above issue price
+    # IPO performance bonus — stocks listed < 6M with CMP above issue price.
+    # Keep the original top-10 / top-20 scoring and add an extra +3
+    # for names in the top 40 percentile with at least 20% IPO gain.
     ipo_sub = (work["listed_days"] < LOOKBACK_6M) & (work["ipo_gain"] > 0)
     if ipo_sub.sum() >= 2:
         ipo_gains = work.loc[ipo_sub, "ipo_gain"]
         ipo_top10_t = top_n_threshold(ipo_gains, 10)
         ipo_top20_t = top_n_threshold(ipo_gains, 20)
-        work["score_ipo_perf"] = np.select(
+        ipo_top40_t = top_n_threshold(ipo_gains, 40)
+        base_ipo_score = np.select(
             [
                 ipo_sub & (work["ipo_gain"] >= ipo_top10_t),
                 ipo_sub & (work["ipo_gain"] >= ipo_top20_t),
@@ -1242,6 +1256,12 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
             [IPO_TOP10_POINTS, IPO_TOP20_POINTS],
             default=0,
         )
+        extra_ipo_bonus = np.where(
+            ipo_sub & (work["ipo_gain"] >= ipo_top40_t) & (work["ipo_gain"] >= IPO_MIN_GAIN),
+            IPO_TOP40_POINTS,
+            0,
+        )
+        work["score_ipo_perf"] = base_ipo_score + extra_ipo_bonus
     else:
         work["score_ipo_perf"] = 0
 
@@ -2219,8 +2239,13 @@ def export_workbook(
         IP_WT_RATING    * top50["_ip_rating_pct"]
     )
 
+    # Additional liquidity gate for institutional picks: exclude stocks where
+    # median 42D turnover < INST_PICKS_MIN_MEDIAN_TURNOVER_CRORES (10 Cr).
+    # This is stricter than the universe gate (15 Cr AND logic) — a stock can pass
+    # the universe filter via avg turnover but still be too illiquid for inst picks.
+    _inst_eligible = top50["median_turnover_42d"] >= INST_PICKS_MIN_MEDIAN_TURNOVER_CRORES
     inst_picks = (
-        top50
+        top50[_inst_eligible]
         .sort_values("inst_score", ascending=False)
         .head(20)
         .reset_index(drop=True)
@@ -3070,8 +3095,11 @@ def export_workbook(
 
     rr_rows = [
         ("Liquidity", "Universe inclusion", "Average 42D turnover must be available", "Required", "Missing value => excluded"),
-        ("Liquidity", "Universe inclusion", f"Excluded if BOTH avg AND median 42D turnover < {MIN_AVG_TURNOVER_42D_CRORES:.2f} Cr", "Required", f"Both must be < {MIN_AVG_TURNOVER_42D_CRORES:.2f} Cr to exclude"),
-        ("Liquidity", "Avg turnover 42D", "Bottom 30% of rated universe", "-8", rr_value("turnover_bottom30")),
+        ("Liquidity", "Universe inclusion", f"Excluded if median < {MIN_MEDIAN_TURNOVER_CRORES:.0f} Cr AND avg < {MIN_AVG_TURNOVER_42D_CRORES:.0f} Cr (42D)", "Required", f"Both below threshold => excluded from universe"),
+        ("Liquidity", "Inst Picks gate", f"Excluded from inst picks if median 42D turnover < {INST_PICKS_MIN_MEDIAN_TURNOVER_CRORES:.0f} Cr", "Required", f"Median < {INST_PICKS_MIN_MEDIAN_TURNOVER_CRORES:.0f} Cr => excluded from institutional picks"),
+        ("Liquidity", "Avg turnover 42D", "Bottom 10% of rated universe AND avg TO < 40 Cr", "-8", rr_value("turnover_bottom10")),
+        ("Liquidity", "Avg turnover 42D", "Bottom 20% of rated universe AND avg TO < 40 Cr", "-6", rr_value("turnover_bottom20")),
+        ("Liquidity", "Avg turnover 42D", "Bottom 30% of rated universe AND avg TO < 40 Cr", "-4", rr_value("turnover_bottom30")),
         ("Liquidity", "Median turnover 42D", f"Bottom 10% of universe AND < {MEDIAN_TURNOVER_LOW_THRESHOLD_CRORES:.0f} Cr", "-8", rr_value("median_turnover_bottom10")),
         ("Liquidity", "Median turnover 42D", f"Bottom 20% of universe AND < {MEDIAN_TURNOVER_LOW_THRESHOLD_CRORES:.0f} Cr", "-6", rr_value("median_turnover_bottom20")),
         ("Liquidity", "Liquid leaders bonus", "Top 10 symbols in liquid leaders source order", "+6", "Based on updated_gmlist order"),
@@ -3129,6 +3157,7 @@ def export_workbook(
         ("Performance", "12M return + 52W proximity", "Top 30% 12M return AND within 15% of 52W high", "+4", "Bonus on top of regular 12M score"),
         ("IPO Performance", "IPO gain vs issue price", "Top 10% of IPOs listed < 6M with CMP > issue price", f"+{IPO_TOP10_POINTS}", "Percentile within IPO sub-universe"),
         ("IPO Performance", "IPO gain vs issue price", "Top 20% of IPOs listed < 6M with CMP > issue price", f"+{IPO_TOP20_POINTS}", "Percentile within IPO sub-universe"),
+        ("IPO Performance", "IPO gain vs issue price", "Additional: Top 40% of IPOs listed < 6M with CMP > issue price and IPO gain >= 20%", f"+{IPO_TOP40_POINTS}", "Added on top of the regular IPO percentile score"),
         ("Listing", "New listing", "Listed < 60 days", "+2", ""),
         ("Sector", "Sector strength", "Top 10% eligible sectors by leadership score", f"+{SECTOR_TOP10_POINTS}", rr_value("sector_top10_threshold")),
         ("Sector", "Sector strength", "Top 20% eligible sectors by leadership score", f"+{SECTOR_TOP20_POINTS}", rr_value("sector_top20_threshold")),
@@ -3164,10 +3193,13 @@ def export_workbook(
         ("Uptrend Consistency Window",    f"max({UPTREND_CONSISTENCY_MIN_LOOKBACK} trading candles, days since reset)"),
         ("─── Turnover ───",               ""),
         ("Turnover Unit",                  "Crores"),
-        ("Exclusion: Both Avg & Median < (Cr)", f"{MIN_AVG_TURNOVER_42D_CRORES:.2f} Cr"),
+        ("Universe exclusion (Cr)",        f"Median < {MIN_MEDIAN_TURNOVER_CRORES:.0f} Cr AND Avg < {MIN_AVG_TURNOVER_42D_CRORES:.0f} Cr (42D)"),
+        ("Inst Picks median gate (Cr)",   f"< {INST_PICKS_MIN_MEDIAN_TURNOVER_CRORES:.0f} Cr median 42D => excluded from inst picks"),
         ("─── Thresholds ───",             ""),
         ("Top Score",                     round_or_blank(scored["composite_score"].max()) if not scored.empty else ""),
         ("Bottom Score",                  round_or_blank(scored["composite_score"].min()) if not scored.empty else ""),
+        ("Liquidity Bottom-10 Threshold", round_or_blank(scored["turnover_bottom10"].iloc[0])          if not scored.empty else ""),
+        ("Liquidity Bottom-20 Threshold", round_or_blank(scored["turnover_bottom20"].iloc[0])          if not scored.empty else ""),
         ("Liquidity Bottom-30 Threshold", round_or_blank(scored["turnover_bottom30"].iloc[0])          if not scored.empty else ""),
         ("Med TO Bottom-10% Threshold",   round_or_blank(scored["median_turnover_bottom10"].iloc[0])    if not scored.empty else ""),
         ("Med TO Bottom-20% Threshold",   round_or_blank(scored["median_turnover_bottom20"].iloc[0])    if not scored.empty else ""),
@@ -3457,8 +3489,12 @@ def main() -> None:
     top50_ip["_lp"] = top50_ip["median_turnover_42d"].rank(pct=True, method="average") * 100
     top50_ip["_rp"] = top50_ip["composite_score"].rank(pct=True, method="average") * 100
     top50_ip["_is"] = 0.40 * top50_ip["_sp"] + 0.30 * top50_ip["_lp"] + 0.30 * top50_ip["_rp"]
+    _inst_eligible_txt = top50_ip["median_turnover_42d"] >= INST_PICKS_MIN_MEDIAN_TURNOVER_CRORES
     inst_picks_df = (
-        top50_ip.sort_values("_is", ascending=False).head(20).reset_index(drop=True)
+        top50_ip[_inst_eligible_txt]
+        .sort_values("_is", ascending=False)
+        .head(20)
+        .reset_index(drop=True)
     )
 
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -3467,6 +3503,7 @@ def main() -> None:
     ip_lines = [
         f"### Institutional Picks — {cutoff_date.strftime('%d %b %Y')}",
         f"### Selection: Top 50 by score → 40% Sector Strength + 30% Liquidity + 30% Rating",
+        f"### Additional gate: median 42D turnover >= {INST_PICKS_MIN_MEDIAN_TURNOVER_CRORES:.0f} Cr",
         "",
     ]
     for _, row in inst_picks_df.iterrows():
