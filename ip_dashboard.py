@@ -44,8 +44,45 @@ REPORTS_DIR  = _BASE / "reports"
 TOKEN_FILE   = _BASE / "kite_token.txt"
 TRADEBOOK_DIR = _BASE / "input" / "tradebook"
 TRADEBOOK_GLOB = "tradebook-*.csv"
+SECTOR_CACHE_FILE = _BASE / "bse_master.csv"
 
 IST = ZoneInfo("Asia/Kolkata")
+
+
+@st.cache_data(show_spinner=False)
+def load_local_sector_map(cache_file: str) -> Dict[str, str]:
+    path = Path(cache_file)
+    if not path.exists():
+        return {}
+    try:
+        df = pd.read_csv(path, usecols=["symbol", "sector"])
+    except Exception:
+        return {}
+    if df.empty:
+        return {}
+    df["symbol"] = df["symbol"].astype(str).str.upper().str.strip()
+    df["sector"] = df["sector"].astype(str).str.strip()
+    df = df[(df["symbol"] != "") & (df["sector"] != "")]
+    return dict(zip(df["symbol"], df["sector"]))
+
+
+def order_symbols_by_sector(symbols: List[str], sector_map: Dict[str, str]) -> List[str]:
+    if not symbols:
+        return []
+    original_index = {sym: idx for idx, sym in enumerate(symbols)}
+    sector_order: Dict[str, int] = {}
+    for sym in symbols:
+        sector = sector_map.get(sym.upper(), "Unknown")
+        if sector not in sector_order:
+            sector_order[sector] = len(sector_order)
+    return sorted(
+        symbols,
+        key=lambda sym: (
+            sector_order.get(sector_map.get(sym.upper(), "Unknown"), 10_000),
+            sector_map.get(sym.upper(), "Unknown"),
+            original_index[sym],
+        ),
+    )
 
 
 def previous_weekday(d: date) -> date:
@@ -882,11 +919,16 @@ def render_focus_board_lightweight(
     cutoff_dt: date,
     end_dt: date,
 ) -> None:
+    sector_map = load_local_sector_map(str(SECTOR_CACHE_FILE))
+    ordered_symbols = order_symbols_by_sector(symbols, sector_map)
     payload: Dict[str, dict] = {}
-    for sym in symbols:
+    for sym in ordered_symbols:
         df = board_data.get(sym)
         if df is None or df.empty:
-            payload[sym] = {"has_data": False}
+            payload[sym] = {
+                "has_data": False,
+                "sector": sector_map.get(sym.upper(), "Unknown"),
+            }
             continue
 
         df = df.copy().sort_values("date")
@@ -895,6 +937,7 @@ def render_focus_board_lightweight(
         df["ema8"] = df["close"].ewm(span=8, adjust=False).mean()
         df["ema21"] = df["close"].ewm(span=21, adjust=False).mean()
         df["dma50"] = df["close"].rolling(50, min_periods=1).mean()
+        df["pct_change"] = df["close"].pct_change() * 100.0
 
         cutoff_rows = df[df["date"].dt.date <= cutoff_dt]
         cutoff_close = float(cutoff_rows["close"].iloc[-1]) if not cutoff_rows.empty else None
@@ -905,6 +948,7 @@ def render_focus_board_lightweight(
 
         payload[sym] = {
             "has_data": True,
+            "sector": sector_map.get(sym.upper(), "Unknown"),
             "end_close": round(end_close, 2),
             "move_pct": move_pct,
             "candles": [
@@ -914,6 +958,15 @@ def render_focus_board_lightweight(
                     "high": round(float(row.high), 2),
                     "low": round(float(row.low), 2),
                     "close": round(float(row.close), 2),
+                    "pct_change": round(float(row.pct_change), 2) if pd.notna(row.pct_change) else None,
+                }
+                for row in df.itertuples(index=False)
+            ],
+            "volume": [
+                {
+                    "time": row.time,
+                    "value": int(float(row.volume)),
+                    "color": "#58b65b" if float(row.close) >= float(row.open) else "#ef6a6a",
                 }
                 for row in df.itertuples(index=False)
             ],
@@ -931,18 +984,27 @@ def render_focus_board_lightweight(
             ],
         }
 
-    rows = max(1, math.ceil(len(symbols) / 3))
-    frame_height = rows * 395 + 48
+    rows = max(1, math.ceil(len(ordered_symbols) / 3))
+    frame_height = rows * 395 + 72
     cards_html = []
-    for sym in symbols:
+    for sym in ordered_symbols:
         cards_html.append(
             f"""
             <section class="focus-card">
               <div class="focus-head">
-                <div class="focus-title">{sym}</div>
-                <div class="focus-meta" id="meta-{sym}"></div>
+                <div>
+                  <div class="focus-title">{sym}</div>
+                  <div class="focus-sector" id="sector-{sym}"></div>
+                </div>
+                <div class="focus-actions">
+                  <div class="focus-meta" id="meta-{sym}"></div>
+                  <button class="zoom-btn" type="button" onclick="openZoom('{sym}')">⛶</button>
+                </div>
               </div>
-              <div class="focus-chart" id="chart-{sym}"></div>
+              <div class="chart-wrap">
+                <div class="chart-tooltip" id="tooltip-{sym}"></div>
+                <div class="focus-chart" id="chart-{sym}" onclick="openZoom('{sym}')"></div>
+              </div>
             </section>
             """
         )
@@ -956,9 +1018,9 @@ def render_focus_board_lightweight(
       <style>
         body {{
           margin: 0;
-          background: #ffffff;
+          background: #171a1f;
           font-family: "Segoe UI", Tahoma, sans-serif;
-          color: #0f172a;
+          color: #e5e7eb;
         }}
         .board {{
           display: grid;
@@ -967,11 +1029,11 @@ def render_focus_board_lightweight(
           padding: 4px 2px 8px 2px;
         }}
         .focus-card {{
-          border: 1px solid #e5e7eb;
+          border: 1px solid #303744;
           border-radius: 10px;
-          background: #ffffff;
+          background: #1f2329;
           padding: 10px 10px 6px 10px;
-          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+          box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
         }}
         .focus-head {{
           display: flex;
@@ -985,32 +1047,161 @@ def render_focus_board_lightweight(
           font-weight: 700;
           letter-spacing: 0.02em;
         }}
+        .focus-sector {{
+          font-size: 11px;
+          color: #94a3b8;
+          margin-top: 2px;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+        }}
+        .focus-actions {{
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }}
         .focus-meta {{
           font-size: 11px;
-          color: #64748b;
+          color: #cbd5e1;
           white-space: nowrap;
         }}
         .focus-meta.positive {{
-          color: #15803d;
+          color: #6ccf6b;
           font-weight: 600;
         }}
         .focus-meta.negative {{
-          color: #b91c1c;
+          color: #ff6b6b;
           font-weight: 600;
         }}
         .focus-chart {{
           width: 100%;
           height: 300px;
+          cursor: zoom-in;
         }}
         .focus-empty {{
           height: 300px;
           display: flex;
           align-items: center;
           justify-content: center;
-          color: #64748b;
+          color: #94a3b8;
           font-size: 12px;
-          background: #f8fafc;
+          background: #171a1f;
           border-radius: 8px;
+        }}
+        .zoom-btn {{
+          border: 1px solid #3a4250;
+          background: #1f2329;
+          color: #cbd5e1;
+          border-radius: 6px;
+          width: 28px;
+          height: 28px;
+          font-size: 14px;
+          cursor: pointer;
+        }}
+        .zoom-btn:hover {{
+          background: #262b33;
+          border-color: #64748b;
+        }}
+        .zoom-overlay {{
+          position: fixed;
+          inset: 0;
+          background: rgba(15, 23, 42, 0.55);
+          display: none;
+          align-items: flex-start;
+          justify-content: center;
+          z-index: 9999;
+          padding: 14px 24px 24px 24px;
+        }}
+        .zoom-overlay.open {{
+          display: flex;
+        }}
+        .zoom-card {{
+          width: min(1200px, 96vw);
+          height: min(760px, calc(100vh - 28px));
+          background: #1f2329;
+          border-radius: 14px;
+          box-shadow: 0 20px 50px rgba(15, 23, 42, 0.25);
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+        }}
+        .zoom-head {{
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          padding: 12px 16px;
+          border-bottom: 1px solid #303744;
+        }}
+        .zoom-title {{
+          font-size: 18px;
+          font-weight: 700;
+          color: #f8fafc;
+        }}
+        .zoom-subtitle {{
+          font-size: 12px;
+          color: #94a3b8;
+          margin-top: 2px;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+        }}
+        .zoom-meta {{
+          font-size: 12px;
+          color: #cbd5e1;
+        }}
+        .zoom-close {{
+          border: 1px solid #3a4250;
+          background: #1f2329;
+          color: #cbd5e1;
+          border-radius: 8px;
+          padding: 6px 10px;
+          font-size: 13px;
+          cursor: pointer;
+        }}
+        .zoom-close:hover {{
+          background: #262b33;
+        }}
+        .chart-wrap {{
+          position: relative;
+          width: 100%;
+          height: 100%;
+        }}
+        .chart-tooltip {{
+          position: absolute;
+          top: 8px;
+          left: 8px;
+          z-index: 20;
+          background: rgba(15, 23, 42, 0.92);
+          color: #e5e7eb;
+          border: 1px solid #334155;
+          border-radius: 8px;
+          padding: 6px 8px;
+          font-size: 11px;
+          line-height: 1.35;
+          pointer-events: none;
+          min-width: 180px;
+          display: none;
+          box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+        }}
+        .chart-tooltip.visible {{
+          display: block;
+        }}
+        .chart-tooltip .tt-date {{
+          color: #cbd5e1;
+          font-weight: 600;
+          margin-bottom: 2px;
+        }}
+        .chart-tooltip .tt-pos {{
+          color: #6ccf6b;
+          font-weight: 600;
+        }}
+        .chart-tooltip .tt-neg {{
+          color: #ff6b6b;
+          font-weight: 600;
+        }}
+        .zoom-chart {{
+          width: 100%;
+          height: 100%;
+          min-height: 0;
         }}
         @media (max-width: 1200px) {{
           .board {{
@@ -1028,47 +1219,100 @@ def render_focus_board_lightweight(
       <div class="board">
         {''.join(cards_html)}
       </div>
+      <div class="zoom-overlay" id="zoom-overlay" onclick="closeZoomOnBackdrop(event)">
+        <div class="zoom-card">
+          <div class="zoom-head">
+            <div>
+              <div class="zoom-title" id="zoom-title"></div>
+              <div class="zoom-subtitle" id="zoom-sector"></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;">
+              <div class="zoom-meta" id="zoom-meta"></div>
+              <button class="zoom-close" type="button" onclick="closeZoom()">Close</button>
+            </div>
+          </div>
+          <div class="chart-wrap" style="flex:1;min-height:0;">
+            <div class="chart-tooltip" id="tooltip-zoom"></div>
+            <div class="zoom-chart" id="zoom-chart"></div>
+          </div>
+        </div>
+      </div>
       <script>
         const payload = {json.dumps(payload)};
-        const symbols = {json.dumps(symbols)};
+        const symbols = {json.dumps(ordered_symbols)};
+        let zoomChart = null;
+        let zoomResizeObserver = null;
 
-        function applyChart(sym) {{
-          const card = payload[sym];
-          const chartEl = document.getElementById('chart-' + sym);
-          const metaEl = document.getElementById('meta-' + sym);
-          if (!card || !card.has_data) {{
-            chartEl.innerHTML = '<div class="focus-empty">No chart data</div>';
-            metaEl.textContent = '';
-            return;
-          }}
+        function formatVolume(value) {{
+          if (value === null || value === undefined) return 'n/a';
+          const abs = Math.abs(Number(value));
+          if (abs >= 10000000) return (value / 10000000).toFixed(2) + 'Cr';
+          if (abs >= 100000) return (value / 100000).toFixed(2) + 'L';
+          if (abs >= 1000) return (value / 1000).toFixed(1) + 'K';
+          return String(Math.round(value));
+        }}
 
+        function setMeta(metaEl, card) {{
           const moveText = card.move_pct === null ? 'n/a' : ((card.move_pct > 0 ? '+' : '') + card.move_pct.toFixed(2) + '%');
           metaEl.textContent = 'Close ' + card.end_close.toFixed(2) + ' | ' + moveText;
           metaEl.classList.toggle('positive', card.move_pct !== null && card.move_pct > 0);
           metaEl.classList.toggle('negative', card.move_pct !== null && card.move_pct < 0);
+        }}
 
+        function bindTooltip(chart, card, tooltipEl) {{
+          const byTime = new Map(card.candles.map(row => [row.time, row]));
+          const byVolumeTime = new Map((card.volume || []).map(row => [row.time, row]));
+          chart.subscribeCrosshairMove((param) => {{
+            if (!tooltipEl) return;
+            if (!param || !param.time || !param.point || param.point.x < 0 || param.point.y < 0) {{
+              tooltipEl.classList.remove('visible');
+              return;
+            }}
+            const key = typeof param.time === 'string'
+              ? param.time
+              : `${{param.time.year}}-${{String(param.time.month).padStart(2, '0')}}-${{String(param.time.day).padStart(2, '0')}}`;
+            const row = byTime.get(key);
+            if (!row) {{
+              tooltipEl.classList.remove('visible');
+              return;
+            }}
+            const volumeRow = byVolumeTime.get(key);
+            const pct = row.pct_change;
+            const pctClass = pct === null || pct === undefined ? '' : (pct >= 0 ? 'tt-pos' : 'tt-neg');
+            const pctText = pct === null || pct === undefined ? 'n/a' : `${{pct >= 0 ? '+' : ''}}${{pct.toFixed(2)}}%`;
+            tooltipEl.innerHTML = `
+              <div class="tt-date">${{key}}</div>
+              <div>O ${{row.open.toFixed(2)}}  H ${{row.high.toFixed(2)}}</div>
+              <div>L ${{row.low.toFixed(2)}}  C ${{row.close.toFixed(2)}}</div>
+              <div>Vol ${{formatVolume(volumeRow ? volumeRow.value : null)}}  <span class="${{pctClass}}">${{pctText}}</span></div>
+            `;
+            tooltipEl.classList.add('visible');
+          }});
+        }}
+
+        function drawChart(chartEl, card, tooltipEl = null, isZoom = false) {{
           const chart = LightweightCharts.createChart(chartEl, {{
-            width: chartEl.clientWidth,
-            height: chartEl.clientHeight,
+            width: Math.max(chartEl.clientWidth, 400),
+            height: Math.max(chartEl.clientHeight, isZoom ? 520 : 300),
             layout: {{
-              background: {{ type: 'solid', color: '#ffffff' }},
-              textColor: '#64748b',
+              background: {{ type: 'solid', color: '#1f2329' }},
+              textColor: '#94a3b8',
               fontFamily: 'Segoe UI, Tahoma, sans-serif',
               fontSize: 11,
             }},
             grid: {{
-              vertLines: {{ color: '#f8fafc' }},
-              horzLines: {{ color: '#eef2f7' }},
+              vertLines: {{ color: '#303744' }},
+              horzLines: {{ color: '#303744' }},
             }},
             rightPriceScale: {{
-              borderColor: '#e2e8f0',
-              scaleMargins: {{ top: 0.08, bottom: 0.08 }},
+              borderColor: '#3a4250',
+              scaleMargins: isZoom ? {{ top: 0.06, bottom: 0.22 }} : {{ top: 0.08, bottom: 0.24 }},
             }},
             leftPriceScale: {{
               visible: false,
             }},
             timeScale: {{
-              borderColor: '#e2e8f0',
+              borderColor: '#3a4250',
               timeVisible: false,
               secondsVisible: false,
               fixLeftEdge: true,
@@ -1077,21 +1321,34 @@ def render_focus_board_lightweight(
             crosshair: {{
               mode: LightweightCharts.CrosshairMode.Normal,
             }},
-            handleScroll: false,
-            handleScale: false,
+            handleScroll: isZoom,
+            handleScale: isZoom,
           }});
 
           const candleSeries = chart.addCandlestickSeries({{
-            upColor: '#111111',
-            downColor: '#ff4df3',
-            borderUpColor: '#111111',
-            borderDownColor: '#ff4df3',
-            wickUpColor: '#111111',
-            wickDownColor: '#ff4df3',
+            upColor: '#58b65b',
+            downColor: '#ef6a6a',
+            borderUpColor: '#58b65b',
+            borderDownColor: '#ef6a6a',
+            wickUpColor: '#58b65b',
+            wickDownColor: '#ef6a6a',
             priceLineVisible: false,
             lastValueVisible: false,
           }});
           candleSeries.setData(card.candles);
+
+          const volumeSeries = chart.addHistogramSeries({{
+            priceFormat: {{
+              type: 'volume',
+            }},
+            priceScaleId: '',
+            lastValueVisible: false,
+            priceLineVisible: false,
+          }});
+          volumeSeries.priceScale().applyOptions({{
+            scaleMargins: isZoom ? {{ top: 0.82, bottom: 0.02 }} : {{ top: 0.80, bottom: 0.02 }},
+          }});
+          volumeSeries.setData(card.volume);
 
           const ema8Series = chart.addLineSeries({{
             color: '#f59e0b',
@@ -1120,7 +1377,26 @@ def render_focus_board_lightweight(
           }});
           dma50Series.setData(card.dma50);
 
+          bindTooltip(chart, card, tooltipEl);
           chart.timeScale().fitContent();
+          return chart;
+        }}
+
+        function applyChart(sym) {{
+          const card = payload[sym];
+          const chartEl = document.getElementById('chart-' + sym);
+          const tooltipEl = document.getElementById('tooltip-' + sym);
+          const metaEl = document.getElementById('meta-' + sym);
+          const sectorEl = document.getElementById('sector-' + sym);
+          sectorEl.textContent = (card && card.sector) ? card.sector : 'Unknown';
+          if (!card || !card.has_data) {{
+            chartEl.innerHTML = '<div class="focus-empty">No chart data</div>';
+            metaEl.textContent = '';
+            return;
+          }}
+
+          setMeta(metaEl, card);
+          const chart = drawChart(chartEl, card, tooltipEl, false);
           new ResizeObserver(() => {{
             chart.applyOptions({{
               width: chartEl.clientWidth,
@@ -1130,7 +1406,66 @@ def render_focus_board_lightweight(
           }}).observe(chartEl);
         }}
 
+        function openZoom(sym) {{
+          const card = payload[sym];
+          if (!card || !card.has_data) return;
+          const overlay = document.getElementById('zoom-overlay');
+          const zoomEl = document.getElementById('zoom-chart');
+          const tooltipEl = document.getElementById('tooltip-zoom');
+          document.getElementById('zoom-title').textContent = sym;
+          document.getElementById('zoom-sector').textContent = card.sector || 'Unknown';
+          setMeta(document.getElementById('zoom-meta'), card);
+          zoomEl.innerHTML = '';
+          tooltipEl.classList.remove('visible');
+          overlay.classList.add('open');
+          window.scrollTo({{ top: 0, behavior: 'smooth' }});
+          if (zoomChart) {{
+            zoomChart.remove();
+            zoomChart = null;
+          }}
+          if (zoomResizeObserver) {{
+            zoomResizeObserver.disconnect();
+            zoomResizeObserver = null;
+          }}
+          requestAnimationFrame(() => {{
+            zoomChart = drawChart(zoomEl, card, tooltipEl, true);
+            zoomResizeObserver = new ResizeObserver(() => {{
+              if (!zoomChart) return;
+              zoomChart.applyOptions({{
+                width: Math.max(zoomEl.clientWidth, 400),
+                height: Math.max(zoomEl.clientHeight, 520),
+              }});
+              zoomChart.timeScale().fitContent();
+            }});
+            zoomResizeObserver.observe(zoomEl);
+          }});
+        }}
+
+        function closeZoom() {{
+          const overlay = document.getElementById('zoom-overlay');
+          overlay.classList.remove('open');
+          if (zoomResizeObserver) {{
+            zoomResizeObserver.disconnect();
+            zoomResizeObserver = null;
+          }}
+          if (zoomChart) {{
+            zoomChart.remove();
+            zoomChart = null;
+          }}
+        }}
+
+        function closeZoomOnBackdrop(event) {{
+          if (event.target && event.target.id === 'zoom-overlay') {{
+            closeZoom();
+          }}
+        }}
+
         symbols.forEach(applyChart);
+        document.addEventListener('keydown', (event) => {{
+          if (event.key === 'Escape') {{
+            closeZoom();
+          }}
+        }});
       </script>
     </body>
     </html>
@@ -1165,11 +1500,13 @@ if _qp_view == "focus_board":
     _cutoff_q = _parse_iso_or_default(st.query_params.get("cutoff"), _default_cutoff)
     _end_q = _parse_iso_or_default(st.query_params.get("end"), min(_default_cutoff + timedelta(days=10), _latest_market_day))
     _symbols_q = str(st.query_params.get("symbols", "")).strip()
+    _board_kind = str(st.query_params.get("board", "focus")).strip().lower()
+    _board_label = "Institutional Chart Board" if _board_kind == "institutional" else "Focus Chart Board"
     _symbols = [s.strip().upper() for s in _symbols_q.split(",") if s.strip()]
     _picks_file = REPORTS_DIR / f"institutional_picks_{_cutoff_q.strftime('%d%b%Y').lower()}.txt"
 
     st.markdown(
-        f"<h3 style='margin:0 0 10px 0'>📊 Focus Chart Board"
+        f"<h3 style='margin:0 0 10px 0'>📊 {_board_label}"
         f"<span style='font-size:14px;color:#666;font-weight:400'>"
         f"  |  Cutoff: {_cutoff_q.strftime('%d %b %Y')}  →  End: {_end_q.strftime('%d %b %Y')}"
         f"</span></h3>",
@@ -1419,15 +1756,29 @@ with tab_focus:
     if focus_pool:
         board_qs = urlencode({
             "view": "focus_board",
+            "board": "focus",
             "cutoff": cutoff_date.isoformat(),
             "end": end_date.isoformat(),
             "symbols": ",".join(s["symbol"] for s in focus_pool),
         })
+        inst_board_qs = urlencode({
+            "view": "focus_board",
+            "board": "institutional",
+            "cutoff": cutoff_date.isoformat(),
+            "end": end_date.isoformat(),
+            "symbols": ",".join(s["symbol"] for s in stocks),
+        })
         st.markdown(
+            f'<div style="display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 10px 0;">'
             f'<a href="?{board_qs}" target="_blank" rel="noopener" '
-            f'style="display:inline-block;margin:4px 0 10px 0;padding:6px 10px;'
+            f'style="display:inline-block;padding:6px 10px;'
             f'border:1px solid #1F4E79;border-radius:6px;text-decoration:none;'
-            f'color:#1F4E79;font-size:13px;font-weight:600;">🗂 Open Focus Chart Board</a>',
+            f'color:#1F4E79;font-size:13px;font-weight:600;">🗂 Open Focus Chart Board</a>'
+            f'<a href="?{inst_board_qs}" target="_blank" rel="noopener" '
+            f'style="display:inline-block;padding:6px 10px;'
+            f'border:1px solid #6E2F8A;border-radius:6px;text-decoration:none;'
+            f'color:#6E2F8A;font-size:13px;font-weight:600;">🏦 Open Institutional Chart Board</a>'
+            f'</div>',
             unsafe_allow_html=True,
         )
 
@@ -2006,7 +2357,8 @@ with tab_heatmap:
         margin    = dict(l=0, r=40, t=30, b=4),
         xaxis     = dict(side="top", tickfont=dict(size=13, family="Arial"),
                          fixedrange=True),
-        yaxis     = dict(tickfont=dict(size=13, family="Arial", color="#222"),
+        yaxis     = dict(autorange="reversed",
+                         tickfont=dict(size=13, family="Arial", color="#222"),
                          fixedrange=True),
         paper_bgcolor = "white",
         plot_bgcolor  = "white",
@@ -2176,9 +2528,4 @@ with tab_charts:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Footer
-# ─────────────────────────────────────────────────────────────────────────────
-st.markdown("---")
-st.caption(
-    f"Data fetched via Kite API · Period: {cutoff_date.strftime('%d %b %Y')} → "
-    f"{end_date.strftime('%d %b %Y')} · {n_td} trading days · {len(stocks)} stocks"
-)
+# ────────────────────────────────────────────────────�

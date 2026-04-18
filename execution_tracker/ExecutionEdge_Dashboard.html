@@ -1,0 +1,650 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Execution Edge — private trading execution dashboard (mockup)</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0b1220;
+    --panel: #111a2e;
+    --panel-2: #16223b;
+    --line: #27334d;
+    --ink: #e6edf7;
+    --ink-dim: #93a3be;
+    --muted: #6b7a96;
+    --good: #22c55e;
+    --warn: #f59e0b;
+    --bad: #ef4444;
+    --accent: #60a5fa;
+    --accent-2: #a78bfa;
+    --shadow: 0 6px 20px rgba(0,0,0,.35);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); }
+  a { color: var(--accent); text-decoration: none; }
+  body { min-height: 100vh; display: flex; flex-direction: column; }
+
+  /* top bar */
+  header.topbar {
+    display: flex; align-items: center; gap: 16px;
+    padding: 14px 24px; background: #0a1122; border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; z-index: 10;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .logo {
+    width: 30px; height: 30px; border-radius: 8px;
+    background: linear-gradient(135deg, #60a5fa, #a78bfa);
+    display:flex; align-items:center; justify-content:center;
+    font-weight: 900; color: #0b1220;
+  }
+  .brand h1 { font-size: 16px; margin: 0; letter-spacing: .2px; }
+  .brand .sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .lock {
+    margin-left: auto; font-size: 12px; color: var(--good);
+    background: rgba(34,197,94,.08); border: 1px solid rgba(34,197,94,.35);
+    padding: 4px 10px; border-radius: 999px;
+  }
+  .lock::before { content: "●"; margin-right: 6px; }
+
+  /* layout */
+  .wrap { display: grid; grid-template-columns: 220px 1fr; flex: 1; min-height: 0; }
+  nav.side {
+    background: #0a1122; border-right: 1px solid var(--line);
+    padding: 16px 8px; display: flex; flex-direction: column; gap: 2px;
+  }
+  nav.side button {
+    appearance: none; background: transparent; color: var(--ink-dim);
+    border: none; text-align: left; padding: 10px 14px;
+    border-radius: 8px; font-size: 13px; cursor: pointer;
+    display: flex; align-items: center; gap: 10px;
+  }
+  nav.side button:hover { background: #0f1a33; color: var(--ink); }
+  nav.side button.active { background: #162745; color: var(--ink); font-weight: 600; }
+  nav.side .gap { height: 10px; }
+  nav.side .label { font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--muted); padding: 8px 14px 4px; }
+
+  main { padding: 22px 28px 40px; min-width: 0; }
+  .page-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 16px; }
+  .page-head h2 { margin: 0; font-size: 20px; }
+  .page-head .sub { color: var(--ink-dim); font-size: 13px; }
+
+  .grid { display: grid; gap: 14px; }
+  .g-4 { grid-template-columns: repeat(4, minmax(0,1fr)); }
+  .g-3 { grid-template-columns: repeat(3, minmax(0,1fr)); }
+  .g-2 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px; box-shadow: var(--shadow);
+  }
+  .card h3 { margin: 0 0 8px; font-size: 13px; color: var(--ink-dim); font-weight: 600; letter-spacing: .3px; text-transform: uppercase; }
+  .kpi .val { font-size: 28px; font-weight: 800; letter-spacing: -.5px; }
+  .kpi .delta { font-size: 12px; margin-top: 4px; }
+  .up { color: var(--good); } .down { color: var(--bad); } .flat { color: var(--muted); }
+  .pill { display:inline-block; font-size: 10px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink-dim); }
+  .pill.good { color: var(--good); border-color: rgba(34,197,94,.35); background: rgba(34,197,94,.08); }
+  .pill.warn { color: var(--warn); border-color: rgba(245,158,11,.35); background: rgba(245,158,11,.08); }
+  .pill.bad { color: var(--bad);  border-color: rgba(239,68,68,.35);  background: rgba(239,68,68,.08); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--ink-dim); font-weight: 600; }
+  tr:hover td { background: #0f1a33; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+  .bar { height: 8px; background: #21304f; border-radius: 999px; overflow: hidden; }
+  .bar > span { display: block; height: 100%; background: linear-gradient(90deg, #60a5fa, #a78bfa); }
+
+  .page { display: none; }
+  .page.active { display: block; }
+
+  .scatter-wrap, .chart-wrap { position: relative; height: 280px; }
+  .chart-wrap.tall { height: 360px; }
+
+  .list { list-style: none; padding: 0; margin: 0; }
+  .list li { padding: 8px 0; border-bottom: 1px dashed var(--line); font-size: 13px; color: var(--ink-dim); }
+  .list li:last-child { border-bottom: none; }
+
+  .slider-row { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--ink-dim); }
+  input[type=range] { accent-color: var(--accent); width: 200px; }
+  .spec dt { font-weight: 700; color: var(--ink); margin-top: 10px; }
+  .spec dd { margin: 2px 0 0; color: var(--ink-dim); font-size: 13px; }
+  footer.foot {
+    padding: 18px 28px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--line);
+  }
+  .stamp {
+    background: rgba(239,68,68,.08); color: #fecaca; border: 1px solid rgba(239,68,68,.35);
+    padding: 6px 10px; border-radius: 8px; font-size: 12px;
+  }
+  @media (max-width: 900px) {
+    .wrap { grid-template-columns: 1fr; }
+    nav.side { flex-direction: row; overflow-x: auto; padding: 8px; }
+    nav.side .label { display:none; }
+    .g-4, .g-3, .g-2 { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <div class="logo">EE</div>
+    <div>
+      <h1>Execution Edge <span class="pill">mockup</span></h1>
+      <div class="sub">Private trading execution dashboard — local data only</div>
+    </div>
+  </div>
+  <span class="lock">Private · shadabkhaninv@gmail.com</span>
+</header>
+
+<div class="wrap">
+  <nav class="side" id="nav">
+    <div class="label">Overview</div>
+    <button class="nav active" data-target="home">Home</button>
+    <div class="label">Calling</div>
+    <button class="nav" data-target="windows">Windows</button>
+    <div class="label">Execution</div>
+    <button class="nav" data-target="deployment">Capital deployment</button>
+    <button class="nav" data-target="sizing">Position sizing</button>
+    <button class="nav" data-target="scorecard">Monthly scorecard</button>
+    <div class="label">Reference</div>
+    <button class="nav" data-target="spec">App spec</button>
+    <button class="nav" data-target="privacy">Privacy</button>
+  </nav>
+
+  <main>
+    <!-- HOME -->
+    <section class="page active" id="home">
+      <div class="page-head">
+        <h2>Home</h2>
+        <span class="sub">FY 2025–26 · swing / positional · 12 windows logged</span>
+      </div>
+
+      <div class="grid g-4">
+        <div class="card kpi">
+          <h3>Execution Score</h3>
+          <div class="val">57.4<span style="font-size:14px;color:var(--ink-dim)"> / 100</span></div>
+          <div class="delta up">▲ 6.8 vs last 3m · target ≥ 70</div>
+        </div>
+        <div class="card kpi">
+          <h3>Avg Capital Deployment</h3>
+          <div class="val">24.6<span style="font-size:14px;color:var(--ink-dim)">%</span></div>
+          <div class="delta up">▲ 4.1pp vs Q1 · target ≥ 60%</div>
+        </div>
+        <div class="card kpi">
+          <h3>Window Hit Rate</h3>
+          <div class="val">75<span style="font-size:14px;color:var(--ink-dim)">%</span></div>
+          <div class="delta flat">9 of 12 — calling is not the gap</div>
+        </div>
+        <div class="card kpi">
+          <h3>Execution Gap</h3>
+          <div class="val">₹1.84<span style="font-size:14px;color:var(--ink-dim)"> L</span></div>
+          <div class="delta down">left on the table from under-deployment</div>
+        </div>
+      </div>
+
+      <div class="grid g-2" style="margin-top:14px;">
+        <div class="card">
+          <h3>Execution score — monthly trend</h3>
+          <div class="chart-wrap"><canvas id="chartScore"></canvas></div>
+        </div>
+        <div class="card">
+          <h3>Deployment vs hit rate</h3>
+          <div class="chart-wrap"><canvas id="chartDeployHit"></canvas></div>
+        </div>
+      </div>
+
+      <div class="grid g-2" style="margin-top:14px;">
+        <div class="card">
+          <h3>What to watch next</h3>
+          <ul class="list">
+            <li><span class="pill bad">Under-deployed</span> Avg CDR 24.6% is well below target 60% — the dominant drag on returns.</li>
+            <li><span class="pill warn">Sizing drift</span> Size-to-conviction correlation is 0.28; conviction-5 trades not consistently larger than conviction-3.</li>
+            <li><span class="pill good">Calling is solid</span> 75% window hit rate and +7.4pp leader edge over benchmark.</li>
+            <li><span class="pill warn">Leader coverage</span> 48% of identified leaders actually traded — ~half the alpha is being left on the shelf.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Last window</h3>
+          <div style="display:flex; gap:18px; align-items:flex-start;">
+            <div style="flex:1">
+              <div style="font-weight:800; font-size:18px;">W12 · FY-end rotation</div>
+              <div style="color:var(--ink-dim); font-size:13px; margin-bottom:8px;">16 Mar – 03 Apr 2026 · conviction 4 · Banks, FMCG leaders</div>
+              <div>Leader median <b>+8.6%</b> vs NIFTY <b>+2.4%</b> · <span class="pill good">hit</span></div>
+              <div style="margin-top:10px;">CDR <b>34.8%</b> · Coverage <b>60%</b> · Size corr <b>0.41</b></div>
+              <div style="margin-top:10px;">P&amp;L <b style="color:var(--good)">+₹48,920</b> · Execution Gap <b style="color:var(--warn)">−₹71,400</b></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- WINDOWS -->
+    <section class="page" id="windows">
+      <div class="page-head">
+        <h2>Windows</h2>
+        <span class="sub">One row per identified market timing window.</span>
+      </div>
+      <div class="card" style="overflow:auto;">
+        <table id="winTable">
+          <thead>
+            <tr>
+              <th>ID</th><th>Start</th><th>End</th><th>Thesis</th><th>Sector</th>
+              <th class="num">Conv</th><th class="num">Leaders</th><th class="num">Traded</th>
+              <th class="num">Bench %</th><th class="num">Leader Med %</th>
+              <th class="num">Capital ₹</th><th class="num">Deployed ₹</th>
+              <th class="num">CDR</th><th>Hit?</th><th class="num">P&amp;L ₹</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- DEPLOYMENT -->
+    <section class="page" id="deployment">
+      <div class="page-head">
+        <h2>Capital deployment</h2>
+        <span class="sub">How much of your available capital actually got to work, and what it cost you.</span>
+      </div>
+      <div class="card" style="margin-bottom:14px;">
+        <div class="slider-row">
+          <span>Target CDR:</span>
+          <input type="range" id="targetCdr" min="0.2" max="0.9" step="0.05" value="0.6">
+          <b id="targetCdrLbl">60%</b>
+          <span style="margin-left:auto">Shortfall vs target is shown in the chart and table below.</span>
+        </div>
+      </div>
+      <div class="grid g-2">
+        <div class="card">
+          <h3>CDR per window vs target</h3>
+          <div class="chart-wrap tall"><canvas id="chartCdr"></canvas></div>
+        </div>
+        <div class="card">
+          <h3>Execution gap — ₹ left on the table</h3>
+          <div class="chart-wrap tall"><canvas id="chartGap"></canvas></div>
+        </div>
+      </div>
+      <div class="card" style="margin-top:14px; overflow:auto;">
+        <table id="depTable">
+          <thead>
+            <tr>
+              <th>ID</th><th>Window</th>
+              <th class="num">Capital ₹</th><th class="num">Deployed ₹</th>
+              <th class="num">CDR</th><th class="num">Target ₹</th>
+              <th class="num">Shortfall ₹</th><th class="num">Leader Med %</th>
+              <th class="num">Exec Gap ₹</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- SIZING -->
+    <section class="page" id="sizing">
+      <div class="page-head">
+        <h2>Position sizing</h2>
+        <span class="sub">Does size track conviction? Each dot is one trade.</span>
+      </div>
+      <div class="grid g-3">
+        <div class="card kpi">
+          <h3>Size–Conviction Correlation</h3>
+          <div class="val">0.28</div>
+          <div class="delta down">below target 0.45 — sizing not yet disciplined</div>
+        </div>
+        <div class="card kpi">
+          <h3>Trades under-sized vs ladder</h3>
+          <div class="val">71%</div>
+          <div class="delta down">most positions below their conviction target</div>
+        </div>
+        <div class="card kpi">
+          <h3>Avg sizing gap</h3>
+          <div class="val">−3.4 pp</div>
+          <div class="delta flat">i.e., ~3.4% of capital unused per trade</div>
+        </div>
+      </div>
+      <div class="grid g-2" style="margin-top:14px;">
+        <div class="card">
+          <h3>Conviction vs position % of capital</h3>
+          <div class="chart-wrap tall"><canvas id="chartScatter"></canvas></div>
+        </div>
+        <div class="card">
+          <h3>Conviction ladder (editable in app)</h3>
+          <table>
+            <thead><tr><th>Conviction</th><th class="num">Target position %</th><th>Example ₹ (₹12L base)</th></tr></thead>
+            <tbody>
+              <tr><td>1</td><td class="num">2.0%</td><td>₹24,000</td></tr>
+              <tr><td>2</td><td class="num">4.0%</td><td>₹48,000</td></tr>
+              <tr><td>3</td><td class="num">7.0%</td><td>₹84,000</td></tr>
+              <tr><td>4</td><td class="num">10.0%</td><td>₹1,20,000</td></tr>
+              <tr><td>5</td><td class="num">14.0%</td><td>₹1,68,000</td></tr>
+            </tbody>
+          </table>
+          <div style="color:var(--muted); font-size:12px; margin-top:8px;">
+            Target conviction=5 × 5 leaders = 70% CDR. Rebalance ladder if you prefer a different risk budget.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SCORECARD -->
+    <section class="page" id="scorecard">
+      <div class="page-head">
+        <h2>Monthly scorecard</h2>
+        <span class="sub">Month-over-month execution. Trend matters more than any single month.</span>
+      </div>
+      <div class="card" style="overflow:auto;">
+        <table id="scTable">
+          <thead>
+            <tr>
+              <th>Month</th><th class="num">Windows</th>
+              <th class="num">Avg CDR</th><th class="num">Coverage</th>
+              <th class="num">Hit rate</th><th class="num">Size corr</th>
+              <th class="num">Exec gap %</th><th class="num">Exec score</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="card" style="margin-top:14px;">
+        <h3>Are all three axes improving together?</h3>
+        <div class="chart-wrap tall"><canvas id="chartThreeAxis"></canvas></div>
+      </div>
+    </section>
+
+    <!-- SPEC -->
+    <section class="page" id="spec">
+      <div class="page-head">
+        <h2>App spec — Execution Edge</h2>
+        <span class="sub">Private single-user desktop/web app. Local data. No sharing.</span>
+      </div>
+      <div class="card spec">
+        <dl>
+          <dt>1. Purpose</dt>
+          <dd>Separate calling quality (windows + leaders) from execution quality (deployment + sizing) so progress on the weak axis is visible and measurable over months.</dd>
+          <dt>2. Users</dt>
+          <dd>Single user (owner). No multi-tenant. No sharing. No leaderboards.</dd>
+          <dt>3. Privacy & data</dt>
+          <dd>All data stays on the user's machine. No cloud sync, no telemetry. Kite API credentials in OS keychain only. Local SQLite + CSV on disk; rely on OS-level full-disk encryption.</dd>
+          <dt>4. Data sources</dt>
+          <dd>Zerodha Kite Tradebook CSV (primary), Holdings CSV (for capital base), optional Kite Connect API with user's own key, user-entered Windows log.</dd>
+          <dt>5. Core entities</dt>
+          <dd>Window, Leader, Trade, Position, AccountSnapshot, MonthlyScorecard. Window has 0..N Leaders (identified), 0..N Trades (executed). Each trade may reference a Window and optionally a Leader.</dd>
+          <dt>6. Screens</dt>
+          <dd>Home, Windows, Capital Deployment, Position Sizing, Monthly Scorecard, Settings. Every KPI is shown with its trend, denominator, and thresholds on hover.</dd>
+          <dt>7. KPI definitions (frozen)</dt>
+          <dd>
+            <ul>
+              <li><b>CDR</b> = Σ deployed / capital available per window</li>
+              <li><b>Leader Coverage</b> = leaders traded / leaders identified</li>
+              <li><b>Window Hit Rate</b> = % windows where leader median beat benchmark by ≥ 2pp</li>
+              <li><b>Leader Edge</b> = median(leader return) − benchmark return</li>
+              <li><b>Size–Conviction Correlation</b> = Pearson corr(conviction tag, position % of capital)</li>
+              <li><b>Execution Gap</b> = (target_deployment − actual_deployment) × leader_median_return</li>
+              <li><b>Execution Score</b> = 100 × (0.4·CDR + 0.3·Coverage + 0.2·SizeDisc + 0.1·(1 − Gap/5%))</li>
+              <li><b>Deployment Velocity</b> = days from window start to reaching 80% of peak deployment</li>
+            </ul>
+          </dd>
+          <dt>8. Computation</dt>
+          <dd>Local Python service (FastAPI) + SQLite + pandas. All KPIs recomputed idempotently from raw Windows + Trades on each refresh.</dd>
+          <dt>9. UX rules</dt>
+          <dd>Never show a KPI without its 3-month trend. Never show a ratio without its denominator. Every KPI has a Good / Watch threshold on hover and a drill-through to the rows that produced it.</dd>
+          <dt>10. Inputs to log per window</dt>
+          <dd>Start, end, regime/thesis, conviction (1–5), list of leader symbols, notes. Everything else is derived from Trades.</dd>
+          <dt>11. Acceptance criteria</dt>
+          <dd>On ≥ 12 windows, renders all six screens in &lt; 2s, recomputes KPIs deterministically, exports a 1-page monthly PDF review.</dd>
+          <dt>12. Non-goals</dt>
+          <dd>No signal generation or stock picking. No brokerage/tax attribution (use Zerodha Console). No social features.</dd>
+          <dt>13. Behavioural guardrails (opt-in)</dt>
+          <dd>Pre-trade checklist: "Is this inside a logged window? Conviction tag set? Position size within ±2pp of ladder?" Logged, never enforced.</dd>
+          <dt>14. Roadmap v2</dt>
+          <dd>Kite Connect auto-sync, intraday execution view, NIFTY / NIFTYMIDCAP overlay on window P&amp;L, what-if simulator for "P&amp;L at target CDR".</dd>
+        </dl>
+      </div>
+    </section>
+
+    <!-- PRIVACY -->
+    <section class="page" id="privacy">
+      <div class="page-head">
+        <h2>Privacy</h2>
+        <span class="sub">This data is yours. Keep it that way.</span>
+      </div>
+      <div class="card">
+        <p class="stamp">⚠ Confidential — shadabkhaninv@gmail.com. Do not share.</p>
+        <ul class="list">
+          <li>All calculations in this mockup run locally in your browser. No network calls are made with your trading data.</li>
+          <li>In the production app, credentials (Kite API key/secret, access token) are stored in the OS keychain and never written to plain files.</li>
+          <li>The SQLite database and any CSV exports live in a folder you choose. Recommended: a folder on an encrypted volume (FileVault / BitLocker / LUKS).</li>
+          <li>No telemetry. No crash reporting. No third-party analytics.</li>
+          <li>You can wipe everything by deleting the app's data folder; there is no server-side copy.</li>
+          <li>Any cloud backup (iCloud / OneDrive / GDrive) is opt-in and off by default.</li>
+        </ul>
+      </div>
+    </section>
+  </main>
+</div>
+
+<footer class="foot">
+  Execution Edge · mockup only · no live trading data · generated 2026-04-18
+</footer>
+
+<script>
+/* ---------- synthetic demo data (same shape as the Excel tracker) ---------- */
+const WIN = [
+  {id:"W01", start:"2025-04-08", end:"2025-04-25", thesis:"Post-correction base-breakout", sector:"PSU/Defence", conv:4, leaders:5, traded:3, bench:3.2,  lm: 9.8, capital:1200000, deployed: 204000, pnl: 18200, hit:1},
+  {id:"W02", start:"2025-05-14", end:"2025-05-30", thesis:"Sector rotation to Capital Goods", sector:"Capital Goods", conv:3, leaders:5, traded:2, bench:1.6,  lm: 6.4, capital:1218000, deployed: 256000, pnl: 14100, hit:1},
+  {id:"W03", start:"2025-06-09", end:"2025-06-27", thesis:"Earnings momentum", sector:"Pharma", conv:4, leaders:6, traded:4, bench:2.9,  lm:11.2, capital:1232000, deployed: 233000, pnl: 23900, hit:1},
+  {id:"W04", start:"2025-07-07", end:"2025-07-22", thesis:"Breadth thrust", sector:"Auto", conv:5, leaders:6, traded:4, bench:4.1,  lm:13.7, capital:1255000, deployed: 322000, pnl: 42800, hit:1},
+  {id:"W05", start:"2025-08-11", end:"2025-08-22", thesis:"Consolidation fakeout", sector:"Mixed", conv:2, leaders:4, traded:2, bench:-1.2, lm: 1.4, capital:1298000, deployed: 128000, pnl: -2100, hit:0},
+  {id:"W06", start:"2025-09-03", end:"2025-09-19", thesis:"IT bounce", sector:"IT", conv:3, leaders:5, traded:2, bench:2.1,  lm: 5.8, capital:1296000, deployed: 281000, pnl:  9800, hit:1},
+  {id:"W07", start:"2025-10-06", end:"2025-10-24", thesis:"Pre-Diwali rally", sector:"Capex/Infra", conv:5, leaders:6, traded:4, bench:5.2,  lm:14.1, capital:1306000, deployed: 404000, pnl: 52300, hit:1},
+  {id:"W08", start:"2025-11-10", end:"2025-11-28", thesis:"Small/mid leadership", sector:"Midcap Quality", conv:4, leaders:6, traded:3, bench:3.0,  lm:10.6, capital:1358000, deployed: 379000, pnl: 31400, hit:1},
+  {id:"W09", start:"2025-12-08", end:"2025-12-19", thesis:"Year-end squeeze", sector:"FMCG", conv:3, leaders:5, traded:2, bench:1.8,  lm: 4.9, capital:1389000, deployed: 332000, pnl: 12100, hit:1},
+  {id:"W10", start:"2026-01-12", end:"2026-01-30", thesis:"Budget positioning", sector:"Railways", conv:4, leaders:6, traded:4, bench:3.6,  lm: 9.7, capital:1401000, deployed: 460000, pnl: 38600, hit:1},
+  {id:"W11", start:"2026-02-16", end:"2026-03-06", thesis:"Post-budget follow-through", sector:"Banks", conv:3, leaders:5, traded:2, bench:1.1,  lm: 3.2, capital:1440000, deployed: 389000, pnl:  6800, hit:0},
+  {id:"W12", start:"2026-03-16", end:"2026-04-03", thesis:"FY-end rotation", sector:"Banks/FMCG", conv:4, leaders:5, traded:3, bench:2.4,  lm: 8.6, capital:1446000, deployed: 503000, pnl: 48900, hit:1},
+];
+
+/* synthetic trades for scatter */
+const TR = [];
+(function(){
+  const seed = 7;
+  let s = seed;
+  const rnd = () => { s = (s * 9301 + 49297) % 233280; return s/233280; };
+  WIN.forEach(w => {
+    for (let i=0;i<w.traded;i++){
+      // position % varies 1.5% ... 12% loosely by conviction but noisy
+      const base = [0, 0.02, 0.035, 0.055, 0.08, 0.1][w.conv];
+      const pct = Math.max(0.008, base * (0.55 + rnd()*0.9));
+      TR.push({conv: w.conv + (rnd()-0.5)*0.25, pos: pct, win:w.id});
+    }
+  });
+})();
+
+/* ---------- nav ---------- */
+document.querySelectorAll('#nav .nav').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#nav .nav').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    const t = btn.dataset.target;
+    document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+    document.getElementById(t).classList.add('active');
+    // Resize charts when page becomes active
+    window.dispatchEvent(new Event('resize'));
+  });
+});
+
+/* ---------- tables ---------- */
+function fmtInr(n){ if (n==null) return ''; const s = Math.round(n).toString(); return '₹' + s.replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+function pct(x){ return (x*100).toFixed(1) + '%'; }
+function fmtSigned(n){ if (n>=0) return '+' + fmtInr(n).replace('₹','₹'); return '−' + fmtInr(-n).replace('₹','₹'); }
+
+const winTbody = document.querySelector('#winTable tbody');
+WIN.forEach(w => {
+  const cdr = w.deployed / w.capital;
+  const tr = document.createElement('tr');
+  const hit = w.hit ? '<span class="pill good">hit</span>' : '<span class="pill bad">miss</span>';
+  tr.innerHTML = `
+    <td>${w.id}</td><td>${w.start}</td><td>${w.end}</td><td>${w.thesis}</td><td>${w.sector}</td>
+    <td class="num">${w.conv}</td><td class="num">${w.leaders}</td><td class="num">${w.traded}</td>
+    <td class="num">${w.bench.toFixed(1)}</td><td class="num">${w.lm.toFixed(1)}</td>
+    <td class="num">${fmtInr(w.capital)}</td><td class="num">${fmtInr(w.deployed)}</td>
+    <td class="num">${pct(cdr)}</td><td>${hit}</td>
+    <td class="num" style="color:${w.pnl>=0?'var(--good)':'var(--bad)'}">${fmtSigned(w.pnl)}</td>`;
+  winTbody.appendChild(tr);
+});
+
+/* deployment table + charts driven by slider */
+const depTbody = document.querySelector('#depTable tbody');
+const cdrSlider = document.getElementById('targetCdr');
+const cdrLbl = document.getElementById('targetCdrLbl');
+
+function renderDeployment() {
+  const target = parseFloat(cdrSlider.value);
+  cdrLbl.textContent = Math.round(target*100) + '%';
+  depTbody.innerHTML = '';
+  WIN.forEach(w => {
+    const cdr = w.deployed / w.capital;
+    const targetInr = w.capital * target;
+    const shortfall = Math.max(0, targetInr - w.deployed);
+    const gap = shortfall * w.lm / 100;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${w.id}</td><td>${w.thesis}</td>
+      <td class="num">${fmtInr(w.capital)}</td>
+      <td class="num">${fmtInr(w.deployed)}</td>
+      <td class="num" style="color:${cdr<target?'var(--bad)':'var(--good)'}">${pct(cdr)}</td>
+      <td class="num">${fmtInr(targetInr)}</td>
+      <td class="num" style="color:var(--warn)">${fmtInr(shortfall)}</td>
+      <td class="num">${w.lm.toFixed(1)}%</td>
+      <td class="num" style="color:var(--warn)">${fmtInr(gap)}</td>`;
+    depTbody.appendChild(tr);
+  });
+  // update charts
+  if (chartCdr) {
+    chartCdr.data.datasets[1].data = WIN.map(()=>target*100);
+    chartCdr.update();
+  }
+  if (chartGap) {
+    chartGap.data.datasets[0].data = WIN.map(w => {
+      const shortfall = Math.max(0, w.capital*target - w.deployed);
+      return Math.round(shortfall * w.lm / 100);
+    });
+    chartGap.update();
+  }
+}
+cdrSlider.addEventListener('input', renderDeployment);
+
+/* scorecard table */
+const SC = (function(){
+  const byMonth = {};
+  WIN.forEach(w => {
+    const m = w.start.slice(0,7);
+    byMonth[m] = byMonth[m] || {n:0, cdr:0, cov:0, hit:0};
+    byMonth[m].n++;
+    byMonth[m].cdr += w.deployed/w.capital;
+    byMonth[m].cov += w.traded/w.leaders;
+    byMonth[m].hit += w.hit;
+  });
+  // fake-but-plausible size correlation / exec gap %
+  const sizeCorr = [0.18,0.22,0.21,0.25,0.14,0.28,0.31,0.33,0.30,0.38,0.35,0.41];
+  const execGap  = [0.039,0.022,0.030,0.032,0.012,0.018,0.042,0.027,0.014,0.036,0.018,0.024];
+  const months = Object.keys(byMonth).sort();
+  return months.map((m,i) => {
+    const d = byMonth[m];
+    const cdr = d.cdr/d.n, cov=d.cov/d.n, hit=d.hit/d.n, sc=sizeCorr[i], eg=execGap[i];
+    const sizeDisc = Math.max(0, Math.min(1, (sc+0.2)/0.7));
+    const score = 100*(0.4*cdr + 0.3*cov + 0.2*sizeDisc + 0.1*Math.max(0, 1-eg/0.05));
+    return {m, n:d.n, cdr, cov, hit, sc, eg, score};
+  });
+})();
+
+const scTbody = document.querySelector('#scTable tbody');
+SC.forEach(r => {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td>${r.m}</td><td class="num">${r.n}</td>
+    <td class="num">${pct(r.cdr)}</td>
+    <td class="num">${pct(r.cov)}</td>
+    <td class="num">${pct(r.hit)}</td>
+    <td class="num">${r.sc.toFixed(2)}</td>
+    <td class="num">${(r.eg*100).toFixed(2)}%</td>
+    <td class="num"><b style="color:${r.score>=70?'var(--good)':r.score>=50?'var(--warn)':'var(--bad)'}">${r.score.toFixed(1)}</b></td>`;
+  scTbody.appendChild(tr);
+});
+
+/* ---------- charts ---------- */
+Chart.defaults.color = '#93a3be';
+Chart.defaults.borderColor = '#27334d';
+Chart.defaults.font.family = '-apple-system, "Segoe UI", Roboto, Arial, sans-serif';
+
+const months = SC.map(s => s.m.slice(2));
+new Chart(document.getElementById('chartScore'), {
+  type:'line',
+  data:{ labels: months,
+    datasets: [{label:'Execution score', data: SC.map(s=>s.score), borderColor:'#60a5fa', backgroundColor:'rgba(96,165,250,.18)', fill:true, tension:.35, borderWidth:2, pointRadius:3}]},
+  options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{y:{min:0,max:100}}}
+});
+
+new Chart(document.getElementById('chartDeployHit'), {
+  type:'line',
+  data:{ labels: months,
+    datasets: [
+      {label:'Avg CDR', data: SC.map(s=>s.cdr*100), borderColor:'#a78bfa', backgroundColor:'rgba(167,139,250,.1)', tension:.35, borderWidth:2, pointRadius:3},
+      {label:'Hit rate', data: SC.map(s=>s.hit*100), borderColor:'#22c55e', borderDash:[4,4], borderWidth:2, pointRadius:3}
+    ]},
+  options:{ responsive:true, maintainAspectRatio:false, scales:{y:{min:0,max:100, ticks:{callback:v=>v+'%'}}}}
+});
+
+let chartCdr = new Chart(document.getElementById('chartCdr'), {
+  type:'bar',
+  data:{ labels: WIN.map(w=>w.id),
+    datasets: [
+      {label:'Actual CDR %', data: WIN.map(w=>(w.deployed/w.capital)*100), backgroundColor:'#60a5fa'},
+      {type:'line', label:'Target CDR %', data: WIN.map(()=>60), borderColor:'#f59e0b', borderWidth:2, pointRadius:0}
+    ]},
+  options:{ responsive:true, maintainAspectRatio:false, scales:{y:{ticks:{callback:v=>v+'%'}}}}
+});
+
+let chartGap = new Chart(document.getElementById('chartGap'), {
+  type:'bar',
+  data:{ labels: WIN.map(w=>w.id),
+    datasets: [{label:'Execution gap ₹', data: WIN.map(w=>{
+      const short = Math.max(0, w.capital*0.6 - w.deployed);
+      return Math.round(short * w.lm / 100);
+    }), backgroundColor:'#f59e0b'}]},
+  options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}},
+    scales:{y:{ticks:{callback:v=>'₹'+(v/1000).toFixed(0)+'k'}}}}
+});
+
+new Chart(document.getElementById('chartScatter'), {
+  type:'scatter',
+  data:{ datasets:[
+    {label:'Trades', data: TR.map(t=>({x:t.conv, y:t.pos*100})),
+     backgroundColor:'rgba(96,165,250,.7)', borderColor:'#60a5fa', pointRadius:5},
+    {type:'line', label:'Target ladder', data: [{x:1,y:2},{x:2,y:4},{x:3,y:7},{x:4,y:10},{x:5,y:14}],
+     borderColor:'#22c55e', borderDash:[4,4], pointRadius:3, showLine:true, fill:false}
+  ]},
+  options:{ responsive:true, maintainAspectRatio:false,
+    scales:{x:{min:0.5, max:5.5, title:{display:true, text:'Conviction tag'}},
+            y:{title:{display:true,text:'Position % of capital'}, ticks:{callback:v=>v+'%'}}}}
+});
+
+new Chart(document.getElementById('chartThreeAxis'), {
+  type:'line',
+  data:{ labels: months,
+    datasets:[
+      {label:'Avg CDR %', data: SC.map(s=>s.cdr*100), borderColor:'#60a5fa', borderWidth:2, tension:.3, pointRadius:3},
+      {label:'Leader coverage %', data: SC.map(s=>s.cov*100), borderColor:'#a78bfa', borderWidth:2, tension:.3, pointRadius:3},
+      {label:'Hit rate %', data: SC.map(s=>s.hit*100), borderColor:'#22c55e', borderWidth:2, tension:.3, pointRadius:3}
+    ]},
+  options:{ responsive:true, maintainAspectRatio:false, scales:{y:{min:0,max:100, ticks:{callback:v=>v+'%'}}}}
+});
+
+renderDeployment();
+</script>
+</body>
+</html>

@@ -690,10 +690,12 @@ def compute_stock_metrics(
     stock_close_12m = trading_lookback_value(history["close"], LOOKBACK_12M)
     stock_close_6m = trading_lookback_value(history["close"], LOOKBACK_6M)
     stock_close_3m = trading_lookback_value(history["close"], LOOKBACK_3M)
+    stock_close_15d = trading_lookback_value(history["close"], 15)
     prev_close = float(history["close"].iloc[-2]) if len(history) >= 2 else math.nan
     ret_12m = safe_return(current_close, stock_close_12m)
     ret_6m = safe_return(current_close, stock_close_6m)
     ret_3m = safe_return(current_close, stock_close_3m)
+    ret_15d = safe_return(current_close, stock_close_15d)
     ret_1d = safe_return(current_close, prev_close)
 
     reset_row = first_row_on_or_after(history, reset_date)
@@ -896,6 +898,7 @@ def compute_stock_metrics(
         "return_12m": ret_12m,
         "return_6m": ret_6m,
         "return_3m": ret_3m,
+        "return_15d": ret_15d,
         "return_1d": ret_1d,
         "reset_date_used": reset_date_used,
         "reset_low": reset_low,
@@ -1215,7 +1218,7 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
         ],
         [4, 2, 2, 1],
         default=0,
-    )
+    ).astype(float)
     work["score_daysbelow50dma_penalty"] = 0
 
     def median_or_default(series: pd.Series, default_value: float = 0.0) -> float:
@@ -1859,7 +1862,7 @@ def export_workbook(
         ("high_52w_close",          "52W High",        "52w",   9,  "#,##0.##"),
         ("high_52w_date",           "52W High\nDate",  "52w",  11,  None),
         ("pct_from_52w_high",       "% from\n52W Hi",  "52w",   8,  "0.0%"),
-        ("days_since_52w_high",     "Days\n52W Hi",    "52w",   7,  "0"),
+        ("days_since_52w_high",     "Days Since\nHigh", "52w",   9,  "0"),
         ("score_52w_price",         "Sc\nDist",        "52w",   5,  "0"),
         ("score_52w_recency",       "Sc\nRec",         "52w",   5,  "0"),
         ("score_52w_bonus",         "Sc\nAdj",         "52w",   5,  "0"),
@@ -2139,7 +2142,6 @@ def export_workbook(
         ("score_liquidity",         "Liquidity",      8),
         ("score_median_turnover",   "Median\nTO",     8),
         ("score_liquid_leaders_bonus","Liq\nLead",    8),
-        ("sector_leadership_score", "Sector\nScore", 10),
         ("score_sector",            "Sector\nPts",    7),
         ("composite_score",         "TOTAL\nSCORE",  10),
     ]
@@ -2243,7 +2245,15 @@ def export_workbook(
     # median 42D turnover < INST_PICKS_MIN_MEDIAN_TURNOVER_CRORES (10 Cr).
     # This is stricter than the universe gate (15 Cr AND logic) — a stock can pass
     # the universe filter via avg turnover but still be too illiquid for inst picks.
-    _inst_eligible = top50["median_turnover_42d"] >= INST_PICKS_MIN_MEDIAN_TURNOVER_CRORES
+    _inst_eligible = (
+        (top50["median_turnover_42d"] >= INST_PICKS_MIN_MEDIAN_TURNOVER_CRORES)
+        & (top50["pct_from_52w_high"] < 0.30)
+        & (top50["return_15d"].isna() | (top50["return_15d"] > -0.30))
+        & ~(
+            (top50["pct_from_52w_high"] >= 0.25)
+            & (top50["days_since_52w_high"] > 30)
+        )
+    )
     inst_picks = (
         top50[_inst_eligible]
         .sort_values("inst_score", ascending=False)
@@ -2292,7 +2302,7 @@ def export_workbook(
     ip_ws.merge_cells(f"A2:{get_column_letter(ncols_ip)}2")
     ip_ws["A2"] = (
         "Institutional Score = 40% Sector Strength + 30% Liquidity (Median Turnover) + 30% Stock Rating — "
-        "all components percentile-ranked within top 50"
+        "all components percentile-ranked within top 50; excludes >=30% off 52W high, <=-30% in 15 trading days, or >=25% off high with high older than 30 days"
     )
     sc(ip_ws["A2"], italic=True, color="FFFFFF", fill=IP_H, size=10, align="center")
     ip_ws.row_dimensions[2].height = 18
@@ -3097,6 +3107,9 @@ def export_workbook(
         ("Liquidity", "Universe inclusion", "Average 42D turnover must be available", "Required", "Missing value => excluded"),
         ("Liquidity", "Universe inclusion", f"Excluded if median < {MIN_MEDIAN_TURNOVER_CRORES:.0f} Cr AND avg < {MIN_AVG_TURNOVER_42D_CRORES:.0f} Cr (42D)", "Required", f"Both below threshold => excluded from universe"),
         ("Liquidity", "Inst Picks gate", f"Excluded from inst picks if median 42D turnover < {INST_PICKS_MIN_MEDIAN_TURNOVER_CRORES:.0f} Cr", "Required", f"Median < {INST_PICKS_MIN_MEDIAN_TURNOVER_CRORES:.0f} Cr => excluded from institutional picks"),
+        ("Institutional Picks", "Breakdown gate", "Excluded if >= 30% below 52W high", "Required", "Removes names that have already topped out and broken down"),
+        ("Institutional Picks", "Breakdown gate", "Excluded if 15-trading-day return <= -30%", "Required", "Removes sharp recent breakdowns even if 52W distance is smaller"),
+        ("Institutional Picks", "Stale-high gate", "Excluded if >= 25% below 52W high and high is older than 30 trading days", "Required", "Removes names that are well off highs and no longer recently strong"),
         ("Liquidity", "Avg turnover 42D", "Bottom 10% of rated universe AND avg TO < 40 Cr", "-8", rr_value("turnover_bottom10")),
         ("Liquidity", "Avg turnover 42D", "Bottom 20% of rated universe AND avg TO < 40 Cr", "-6", rr_value("turnover_bottom20")),
         ("Liquidity", "Avg turnover 42D", "Bottom 30% of rated universe AND avg TO < 40 Cr", "-4", rr_value("turnover_bottom30")),
@@ -3422,8 +3435,11 @@ def main() -> None:
             continue
 
         turnover_override = turnover_map.get(symbol.upper()) or turnover_map.get(kite_symbol.upper())
+        resolved_sector = sector_map.get(symbol.upper(), "Unknown")
+        if resolved_sector == "Unknown":
+            resolved_sector = sector_map.get(kite_symbol.upper(), "Unknown")
         result = compute_stock_metrics(
-            kite_symbol, df, index_df, sector_map.get(symbol, sector_map.get(kite_symbol, "Unknown")),
+            kite_symbol, df, index_df, resolved_sector,
             cutoff_date, reset_date, listing_date,
             turnover_override,
             liquid_leader_bonus_map.get(symbol.upper(), liquid_leader_bonus_map.get(kite_symbol.upper(), 0)),
@@ -3489,7 +3505,15 @@ def main() -> None:
     top50_ip["_lp"] = top50_ip["median_turnover_42d"].rank(pct=True, method="average") * 100
     top50_ip["_rp"] = top50_ip["composite_score"].rank(pct=True, method="average") * 100
     top50_ip["_is"] = 0.40 * top50_ip["_sp"] + 0.30 * top50_ip["_lp"] + 0.30 * top50_ip["_rp"]
-    _inst_eligible_txt = top50_ip["median_turnover_42d"] >= INST_PICKS_MIN_MEDIAN_TURNOVER_CRORES
+    _inst_eligible_txt = (
+        (top50_ip["median_turnover_42d"] >= INST_PICKS_MIN_MEDIAN_TURNOVER_CRORES)
+        & (top50_ip["pct_from_52w_high"] < 0.30)
+        & (top50_ip["return_15d"].isna() | (top50_ip["return_15d"] > -0.30))
+        & ~(
+            (top50_ip["pct_from_52w_high"] >= 0.25)
+            & (top50_ip["days_since_52w_high"] > 30)
+        )
+    )
     inst_picks_df = (
         top50_ip[_inst_eligible_txt]
         .sort_values("_is", ascending=False)
@@ -3503,7 +3527,7 @@ def main() -> None:
     ip_lines = [
         f"### Institutional Picks — {cutoff_date.strftime('%d %b %Y')}",
         f"### Selection: Top 50 by score → 40% Sector Strength + 30% Liquidity + 30% Rating",
-        f"### Additional gate: median 42D turnover >= {INST_PICKS_MIN_MEDIAN_TURNOVER_CRORES:.0f} Cr",
+        f"### Additional gates: median 42D turnover >= {INST_PICKS_MIN_MEDIAN_TURNOVER_CRORES:.0f} Cr; <30% off 52W high; >-30% over last 15 trading days; not >=25% off high with high older than 30 days",
         "",
     ]
     for _, row in inst_picks_df.iterrows():
