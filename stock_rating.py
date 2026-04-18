@@ -516,13 +516,13 @@ def filter_symbols_by_turnover(
                 )
             )
             continue
-        # Hard gate: excluded if BOTH median 42D < min_median AND avg 42D < min_avg.
-        # (Either metric above the floor is sufficient to stay in the rated universe.)
-        if float(median_turnover) < min_median_turnover_crores and float(avg_turnover) < min_avg_turnover_42d_crores:
+        # Hard gate: excluded if EITHER median 42D < min_median OR avg 42D < min_avg.
+        # Both liquidity measures must clear the floor to stay in the rated universe.
+        if float(median_turnover) < min_median_turnover_crores or float(avg_turnover) < min_avg_turnover_42d_crores:
             warnings.append(
                 WarningLog(
                     symbol,
-                    f"Turnover too low: median {round(float(median_turnover), 2)} Cr < {min_median_turnover_crores:.0f} Cr AND avg {round(float(avg_turnover), 2)} Cr < {min_avg_turnover_42d_crores:.0f} Cr; excluded from rating universe.",
+                    f"Turnover too low: median {round(float(median_turnover), 2)} Cr < {min_median_turnover_crores:.0f} Cr OR avg {round(float(avg_turnover), 2)} Cr < {min_avg_turnover_42d_crores:.0f} Cr; excluded from rating universe.",
                     avg_turnover_21d=None if pd.isna(avg_turnover_21d) else float(avg_turnover_21d),
                     avg_turnover_42d=None if pd.isna(avg_turnover) else float(avg_turnover),
                     median_turnover_42d=float(median_turnover),
@@ -3105,7 +3105,7 @@ def export_workbook(
 
     rr_rows = [
         ("Liquidity", "Universe inclusion", "Average 42D turnover must be available", "Required", "Missing value => excluded"),
-        ("Liquidity", "Universe inclusion", f"Excluded if median < {MIN_MEDIAN_TURNOVER_CRORES:.0f} Cr AND avg < {MIN_AVG_TURNOVER_42D_CRORES:.0f} Cr (42D)", "Required", f"Both below threshold => excluded from universe"),
+        ("Liquidity", "Universe inclusion", f"Excluded if median < {MIN_MEDIAN_TURNOVER_CRORES:.0f} Cr OR avg < {MIN_AVG_TURNOVER_42D_CRORES:.0f} Cr (42D)", "Required", f"Either below threshold => excluded from universe"),
         ("Liquidity", "Inst Picks gate", f"Excluded from inst picks if median 42D turnover < {INST_PICKS_MIN_MEDIAN_TURNOVER_CRORES:.0f} Cr", "Required", f"Median < {INST_PICKS_MIN_MEDIAN_TURNOVER_CRORES:.0f} Cr => excluded from institutional picks"),
         ("Institutional Picks", "Breakdown gate", "Excluded if >= 30% below 52W high", "Required", "Removes names that have already topped out and broken down"),
         ("Institutional Picks", "Breakdown gate", "Excluded if 15-trading-day return <= -30%", "Required", "Removes sharp recent breakdowns even if 52W distance is smaller"),
@@ -3206,7 +3206,7 @@ def export_workbook(
         ("Uptrend Consistency Window",    f"max({UPTREND_CONSISTENCY_MIN_LOOKBACK} trading candles, days since reset)"),
         ("─── Turnover ───",               ""),
         ("Turnover Unit",                  "Crores"),
-        ("Universe exclusion (Cr)",        f"Median < {MIN_MEDIAN_TURNOVER_CRORES:.0f} Cr AND Avg < {MIN_AVG_TURNOVER_42D_CRORES:.0f} Cr (42D)"),
+        ("Universe exclusion (Cr)",        f"Median < {MIN_MEDIAN_TURNOVER_CRORES:.0f} Cr OR Avg < {MIN_AVG_TURNOVER_42D_CRORES:.0f} Cr (42D)"),
         ("Inst Picks median gate (Cr)",   f"< {INST_PICKS_MIN_MEDIAN_TURNOVER_CRORES:.0f} Cr median 42D => excluded from inst picks"),
         ("─── Thresholds ───",             ""),
         ("Top Score",                     round_or_blank(scored["composite_score"].max()) if not scored.empty else ""),

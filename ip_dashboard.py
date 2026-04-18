@@ -253,6 +253,25 @@ def load_kite(token_file: str):
     return kite
 
 
+def fetch_daily_ohlcv(kite, token: int, from_dt: date, to_dt: date) -> pd.DataFrame:
+    rows = kite.historical_data(
+        instrument_token=token,
+        from_date=datetime.combine(from_dt, datetime.min.time()),
+        to_date=datetime.combine(to_dt, datetime.min.time()),
+        interval="day",
+        continuous=False,
+        oi=False,
+    )
+    if not rows:
+        return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
+    df = pd.DataFrame(rows)
+    df["date"] = pd.to_datetime(df["date"]).dt.date
+    for col in ["open", "high", "low", "close", "volume"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df[["date", "open", "high", "low", "close", "volume"]].dropna().sort_values("date")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Data fetching (cached — only re-fetches when inputs change)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -273,7 +292,7 @@ def fetch_report_data(
     cutoff_date = date.fromisoformat(cutoff_iso)
     end_date    = date.fromisoformat(end_iso)
     start_date  = cutoff_date + timedelta(days=1)
-    fetch_from  = cutoff_date - timedelta(days=5)
+    fetch_from  = cutoff_date - timedelta(days=25)
 
     pairs = parse_picks_file(Path(picks_file))
     exchanges = sorted({e for e, _ in pairs})
@@ -286,6 +305,7 @@ def fetch_report_data(
 
     ref_dates: Optional[List[date]] = None
     symbol_data: Dict[str, Dict[date, float]] = {}
+    symbol_ohlcv: Dict[str, pd.DataFrame] = {}
     end_close_map: Dict[str, float] = {}
     # symbol → external chart urls
     chart_url_map: Dict[str, Dict[str, str]] = {}
@@ -305,10 +325,11 @@ def fetch_report_data(
                 f"?symbol={exch}%3A{raw_sym}&interval=D"
             ),
         }
-        df = fetch_daily_closes(kite, token, fetch_from, end_date)
+        df = fetch_daily_ohlcv(kite, token, fetch_from, end_date)
         if df.empty or len(df) < 2:
             continue
         df["pct_change"] = df["close"].pct_change() * 100.0
+        df["range_pct"] = ((df["high"] - df["low"]) / df["close"]).replace([float("inf"), -float("inf")], pd.NA) * 100.0
         mask = (df["date"] >= start_date) & (df["date"] <= end_date)
         df2  = df[mask]
         if df2.empty:
@@ -316,6 +337,7 @@ def fetch_report_data(
         last_close = df.loc[df["date"] <= end_date, "close"]
         if not last_close.empty and pd.notna(last_close.iloc[-1]):
             end_close_map[raw_sym] = round(float(last_close.iloc[-1]), 2)
+        symbol_ohlcv[raw_sym] = df.copy()
         symbol_data[raw_sym] = {
             r_d: float(r_p)
             for r_d, r_p in zip(df2["date"], df2["pct_change"])
@@ -353,6 +375,33 @@ def fetch_report_data(
         if daily:
             st_data = classify_stock(sym, daily, big_day_pct, fired_total, extended_total,
                                      laggard_total=laggard_total)
+            full_df = symbol_ohlcv.get(sym, pd.DataFrame()).copy()
+            if not full_df.empty:
+                full_df = full_df[full_df["date"] <= end_date].copy()
+            lookback_df = full_df.tail(min(len(full_df), 15)).copy() if not full_df.empty else pd.DataFrame()
+            recent2_df = lookback_df.tail(min(len(lookback_df), 2)).copy()
+            recent3_df = lookback_df.tail(min(len(lookback_df), 3)).copy()
+            price_muted = bool(
+                not recent3_df.empty and
+                (recent3_df["pct_change"].abs().max() <= max(2.5, big_day_pct * 0.6))
+            )
+            range_tight = bool(
+                len(lookback_df) >= 6 and not recent2_df.empty and
+                (recent2_df["range_pct"].mean() <= lookback_df["range_pct"].quantile(0.35))
+            )
+            volume_tight = bool(
+                len(lookback_df) >= 6 and not recent2_df.empty and
+                (recent2_df["volume"].mean() <= lookback_df["volume"].quantile(0.35))
+            )
+            st_data["tight_steady_setup"] = bool(
+                st_data["status"] == "STEADY RUNNER"
+                and st_data.get("n_big", 0) >= 1
+                and price_muted
+                and range_tight
+                and volume_tight
+            )
+            st_data["tight_setup_range_pct"] = round(float(recent2_df["range_pct"].mean()), 2) if not recent2_df.empty else None
+            st_data["tight_setup_volume_avg"] = round(float(recent2_df["volume"].mean()), 0) if not recent2_df.empty else None
             urls = chart_url_map.get(sym, {})
             st_data["chart_url_kite"] = urls.get("kite", "")
             st_data["chart_url_tv"]   = urls.get("tv",   "")
@@ -1732,15 +1781,18 @@ with tab_focus:
     ytf_all   = [s for s in stocks if s["status"] == "YET TO FIRE"]
     jft_all   = [s for s in stocks if s["status"] == "JUST FIRED TODAY"]
     ret_all   = [s for s in stocks if s["status"] == "FIRED & RETREATING"]
+    steady_tight_all = [s for s in stocks if s.get("tight_steady_setup")]
 
     ytf_stocks = [s for s in ytf_all if not in_cooldown(s)]
     jft_stocks = [s for s in jft_all if not in_cooldown(s)]
     ret_stocks = [s for s in ret_all if not in_cooldown(s)]
+    steady_tight_stocks = [s for s in steady_tight_all if not in_cooldown(s)]
 
     cooled_down = (
         [s for s in ytf_all if in_cooldown(s)] +
         [s for s in jft_all if in_cooldown(s)] +
-        [s for s in ret_all if in_cooldown(s)]
+        [s for s in ret_all if in_cooldown(s)] +
+        [s for s in steady_tight_all if in_cooldown(s)]
     )
     if cooled_down:
         cooled_names = ", ".join(s["symbol"] for s in cooled_down)
@@ -1750,7 +1802,7 @@ with tab_focus:
         )
 
     focus_pool = sorted(
-        {s["symbol"]: s for s in (ytf_stocks + jft_stocks + ret_stocks)}.values(),
+        {s["symbol"]: s for s in (ytf_stocks + jft_stocks + ret_stocks + steady_tight_stocks)}.values(),
         key=lambda x: (x["order"], -x["total"], x["symbol"]),
     )
     if focus_pool:
@@ -1785,6 +1837,8 @@ with tab_focus:
     def render_card(s: dict):
         meta   = STATUS_META.get(s["status"], ("?", "#888", "lag", ""))
         emo, color, css, action = meta
+        if s.get("tight_steady_setup"):
+            emo, css, action = "📈", "ytf", "📈 Tight base — monitor for expansion"
         card_css  = {"ytf": "card-ytf", "jft": "card-jft", "ret": "card-ret",
                      "ext": "card-ext", "hext": "card-hext", "lag": "card-lag"}.get(css, "card-lag")
         badge_css = f"badge-{css}"
@@ -1821,6 +1875,14 @@ with tab_focus:
         </div>
         """, unsafe_allow_html=True)
 
+    if steady_tight_stocks:
+        st.markdown("<b style='color:#1F4E79'>📈 Tight Steady Runners — Contraction Setup</b>",
+                    unsafe_allow_html=True)
+        cols = st.columns(min(len(steady_tight_stocks), 4))
+        for i, s in enumerate(sorted(steady_tight_stocks, key=lambda x: (x["recent3"], x["total"]), reverse=True)):
+            with cols[i % len(cols)]:
+                render_card(s)
+
     if ytf_stocks:
         st.markdown("<b style='color:#00703C'>⏳ Yet to Fire — Prime Watchlist</b>",
                     unsafe_allow_html=True)
@@ -1828,7 +1890,7 @@ with tab_focus:
         for i, s in enumerate(sorted(ytf_stocks, key=lambda x: x["total"], reverse=True)):
             with cols[i % len(cols)]:
                 render_card(s)
-    else:
+    elif not steady_tight_stocks:
         st.info("No 'Yet to Fire' stocks in this period.")
 
     if jft_stocks:
@@ -1847,7 +1909,7 @@ with tab_focus:
             with cols[i % len(cols)]:
                 render_card(s)
 
-    if not ytf_stocks and not jft_stocks and not ret_stocks:
+    if not ytf_stocks and not jft_stocks and not ret_stocks and not steady_tight_stocks:
         st.success("All stocks have already fired or are extended. "
                    "No fresh entry opportunities today.")
 
