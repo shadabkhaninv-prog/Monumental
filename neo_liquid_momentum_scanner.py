@@ -45,7 +45,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 KITE_RATE_LIMIT = 3          # requests per second
 KITE_BATCH_PAUSE = 0.34      # seconds between calls
-TOP_N = 100
+TOP_N = 125
 TOP_N_REPORT = 30
 MIN_CLOSE = 50.0             # ₹
 MIN_EXTENDED_TURNOVER_CR = 20.0   # ₹ Crore
@@ -60,7 +60,7 @@ MAX_TDS_SINCE_52W_HIGH = 15        # ≤15 trading days for recency override
 MAX_RECENCY_GATE_DIST_PCT = 20.0   # hard cap for recent-high inclusion
 
 # 12M return gate (60th percentile)
-RETURN_GATE_PERCENTILE = 60
+RETURN_GATE_PERCENTILE = 50
 
 # Nifty Smallcap 250 benchmark from indexbhav
 NIFTY_SMALLCAP_250_SYMBOL = "NIFTY SMALLCAP 250"
@@ -422,20 +422,25 @@ def fetch_ohlcv(kite, conn, symbol: str, from_date: datetime, to_date: datetime,
 # Metric computation
 # ---------------------------------------------------------------------------
 
-def compute_return(df: pd.DataFrame, as_of: datetime, days: int, fallback_to_listing: bool = False) -> float:
-    """Return % gain from `days` calendar days ago to as_of.
+def calendar_anchor(as_of: datetime, *, years: int = 0, months: int = 0, days: int = 0) -> pd.Timestamp:
+    ts = pd.Timestamp(as_of)
+    if years or months:
+        ts = ts - pd.DateOffset(years=years, months=months)
+    if days:
+        ts = ts - pd.Timedelta(days=days)
+    return ts
 
-    If fallback_to_listing is enabled and there is not enough history for the
-    requested window, use the first available trading day's open as the base.
-    This is a practical IPO/listing-price proxy for newer stocks.
-    """
+
+def compute_return_from_anchor(df: pd.DataFrame, as_of: datetime, start_date: datetime | pd.Timestamp,
+                               fallback_to_listing: bool = False) -> float:
+    """Return % gain from a calendar anchor date to as_of."""
     if df.empty:
         return np.nan
     df = df[df["date"] <= pd.Timestamp(as_of)]
     if df.empty:
         return np.nan
     end_price = df.iloc[-1]["close"]
-    start_date = pd.Timestamp(as_of) - timedelta(days=days)
+    start_date = pd.Timestamp(start_date)
     past = df[df["date"] <= start_date]
     if past.empty:
         if not fallback_to_listing:
@@ -450,6 +455,16 @@ def compute_return(df: pd.DataFrame, as_of: datetime, days: int, fallback_to_lis
     if start_price == 0:
         return np.nan
     return (end_price - start_price) / start_price * 100
+
+
+def compute_return(df: pd.DataFrame, as_of: datetime, days: int, fallback_to_listing: bool = False) -> float:
+    """Return % gain from `days` calendar days ago to as_of."""
+    return compute_return_from_anchor(
+        df,
+        as_of,
+        calendar_anchor(as_of, days=days),
+        fallback_to_listing=fallback_to_listing,
+    )
 
 
 def compute_reset_return(df: pd.DataFrame, as_of: datetime, reset_date: datetime) -> float:
@@ -504,8 +519,8 @@ def compute_52w_metrics(df: pd.DataFrame, as_of: datetime):
     """Return (high_52w, pct_from_high, tds_since_high)."""
     if df.empty:
         return np.nan, np.nan, np.nan
-    window_start = pd.Timestamp(as_of) - timedelta(days=365)
-    df_window = df[(df["date"] > window_start) & (df["date"] <= pd.Timestamp(as_of))].copy()
+    window_start = calendar_anchor(as_of, years=1)
+    df_window = df[(df["date"] >= window_start) & (df["date"] <= pd.Timestamp(as_of))].copy()
     if df_window.empty:
         return np.nan, np.nan, np.nan
     idx_high = df_window["high"].idxmax()
@@ -555,16 +570,20 @@ def compute_volume_metrics(df: pd.DataFrame, as_of: datetime):
     else:
         vol_period = "none"
 
-    # Move on the selected qualifying day (close vs prev close)
+    # Move on the selected qualifying day (close vs prev close).
+    # Only positive expansion should qualify for a bullish momentum score.
     row = df_window.iloc[idx_max_vol]
     if idx_max_vol > 0:
         prev_close = df_window.iloc[idx_max_vol - 1]["close"]
         if prev_close > 0:
-            vol_day_move_pct = abs((row["close"] - prev_close) / prev_close * 100)
+            vol_day_move_pct = (row["close"] - prev_close) / prev_close * 100
         else:
             vol_day_move_pct = np.nan
     else:
         vol_day_move_pct = np.nan
+
+    if pd.isna(vol_day_move_pct) or vol_day_move_pct <= 0:
+        return "none", np.nan
 
     return vol_period, vol_day_move_pct
 
@@ -647,11 +666,17 @@ def compute_rs_composite(stock_df: pd.DataFrame, index_df: pd.DataFrame, as_of: 
     Compute RS excess returns and weighted composite vs benchmark index.
     Returns dict: rs_1m, rs_3m, rs_6m, rs_12m, rs_composite
     """
-    timeframes = {"1m": 30, "3m": 91, "6m": 182, "12m": 365}
+    timeframes = {
+        "1m": {"months": 1},
+        "3m": {"months": 3},
+        "6m": {"months": 6},
+        "12m": {"years": 1},
+    }
     rs_values = {}
-    for key, days in timeframes.items():
-        stock_ret = compute_return(stock_df, as_of, days)
-        idx_ret = compute_return(index_df, as_of, days)
+    for key, offset_kwargs in timeframes.items():
+        anchor = calendar_anchor(as_of, **offset_kwargs)
+        stock_ret = compute_return_from_anchor(stock_df, as_of, anchor)
+        idx_ret = compute_return_from_anchor(index_df, as_of, anchor)
         if pd.isna(stock_ret) or pd.isna(idx_ret):
             rs_values[key] = np.nan
         else:
@@ -849,10 +874,10 @@ def compute_all_metrics(symbols: list, ohlcv_map: dict, index_df: pd.DataFrame,
         df = ohlcv_map.get(sym, pd.DataFrame())
         if df.empty:
             continue
-        ret_12m = compute_return(df, as_of, 365, fallback_to_listing=True)
-        ret_6m = compute_return(df, as_of, 182)
-        ret_3m = compute_return(df, as_of, 91)
-        ret_1m = compute_return(df, as_of, 30)
+        ret_12m = compute_return_from_anchor(df, as_of, calendar_anchor(as_of, years=1), fallback_to_listing=True)
+        ret_6m = compute_return_from_anchor(df, as_of, calendar_anchor(as_of, months=6))
+        ret_3m = compute_return_from_anchor(df, as_of, calendar_anchor(as_of, months=3))
+        ret_1m = compute_return_from_anchor(df, as_of, calendar_anchor(as_of, months=1))
         ret_1d = compute_1d_return(df, as_of)
         ret_reset = compute_reset_return(df, as_of, reset_date)
         atr_pct_val = compute_atr_pct(df, as_of)
@@ -1534,11 +1559,11 @@ def write_updated_gmlist(top30: pd.DataFrame, as_of_date: datetime) -> Path:
     return updated_path
 
 
-def build_liquid_leader_bonus_payload(all_scored: pd.DataFrame) -> dict[str, int]:
+def build_liquid_leader_bonus_payload(liquid_leaders: pd.DataFrame) -> dict[str, int]:
     payload: dict[str, int] = {}
-    if "symbol" not in all_scored.columns or all_scored.empty:
+    if "symbol" not in liquid_leaders.columns or liquid_leaders.empty:
         return payload
-    for index, raw_symbol in enumerate(all_scored.sort_values("rank").head(20)["symbol"].tolist(), start=1):
+    for index, raw_symbol in enumerate(liquid_leaders.head(20)["symbol"].tolist(), start=1):
         symbol = str(raw_symbol).strip().upper().replace("NSE:", "").replace("-", "_")
         if not symbol or symbol == "NAN":
             continue
@@ -1949,7 +1974,7 @@ def main():
     # ------------------------------------------------------------------
     tv_path = REPORTS_DIR / f"final_wl_{as_of.strftime('%d%b%Y')}.txt"
     write_tradingview_watchlist(top30, sectors_df, tv_path, as_of)
-    liquid_leader_bonus_payload = build_liquid_leader_bonus_payload(all_scored)
+    liquid_leader_bonus_payload = build_liquid_leader_bonus_payload(top30)
     updated_gmlist_path = write_updated_gmlist(top30, as_of)
 
     # ------------------------------------------------------------------

@@ -47,11 +47,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 
-NSE_YEAR_TRADING_DAYS = 248   # NSE trading days in a 365-calendar-day fetch window
-LOOKBACK_52W = NSE_YEAR_TRADING_DAYS
-LOOKBACK_12M = NSE_YEAR_TRADING_DAYS
-LOOKBACK_6M = 125
-LOOKBACK_3M = 60
+CALENDAR_LOOKBACK_FETCH_BUFFER_DAYS = 7
 TURNOVER_LOOKBACK = 42
 TURNOVER_LOOKBACK_SHORT = 21
 ATR_LOOKBACK = 21
@@ -64,6 +60,12 @@ TURNOVER_CRORE_DIVISOR = 10_000_000.0
 MIN_MEDIAN_TURNOVER_CRORES = 15.0      # universe hard gate: median 42D turnover must be ≥ 15 Cr
 MIN_AVG_TURNOVER_42D_CRORES = 15.0
 INST_PICKS_MIN_MEDIAN_TURNOVER_CRORES = 10.0  # additional gate for institutional picks only
+PARABOLIC_RUNUP_LOOKBACK = 7
+PARABOLIC_RUNUP_MIN = 0.30
+PARABOLIC_TOP_12M_RETURN_MIN = 1.50
+PARABOLIC_TOP_PCT_FROM_HIGH_MIN = 0.14
+PARABOLIC_TOP_DAYS_SINCE_HIGH_MIN = 10
+PARABOLIC_TOP_15D_RETURN_MAX = -0.10
 MEDIAN_TURNOVER_LOW_THRESHOLD_CRORES = 20.0  # absolute gate for percentile-based median-turnover penalty
 GAPUP_LOOKBACK = 60
 UPTREND_CONSISTENCY_MIN_LOOKBACK = 30
@@ -383,7 +385,7 @@ def load_index_history(conn, start_date: date, cutoff_date: date, preferred_symb
             f"Could not load Nifty Smallcap 250 data from indexbhav between {start_date} and {cutoff_date}."
         )
     df = pd.DataFrame(rows, columns=["date", "open", "high", "low", "close", "symbol"])
-    df["date"] = pd.to_datetime(df["date"]).dt.date
+    df["date"] = normalize_datetime_series(df["date"])
     df = df.drop_duplicates(subset=["date"], keep="last").sort_values("date").set_index("date")
     return df
 
@@ -580,7 +582,7 @@ def fetch_history_with_retry(
             if not rows:
                 return None
             df = pd.DataFrame(rows)
-            df["date"] = pd.to_datetime(df["date"]).dt.date
+            df["date"] = normalize_datetime_series(df["date"])
             df = df.sort_values("date").set_index("date")
             return df[["open", "high", "low", "close", "volume"]]
         except Exception as exc:
@@ -597,7 +599,37 @@ def fetch_history_with_retry(
     return None
 
 
-def trading_lookback_value(series: pd.Series, lookback: int) -> float:
+def calendar_anchor(target: date | datetime | pd.Timestamp, *, years: int = 0, months: int = 0, days: int = 0) -> pd.Timestamp:
+    ts = pd.Timestamp(target)
+    if years or months:
+        ts = ts - pd.DateOffset(years=years, months=months)
+    if days:
+        ts = ts - pd.Timedelta(days=days)
+    return ts.normalize()
+
+
+def normalize_datetime_series(values: pd.Series) -> pd.Series:
+    parsed = pd.to_datetime(values)
+    try:
+        parsed = parsed.dt.tz_localize(None)
+    except TypeError:
+        pass
+    return parsed.dt.normalize()
+
+
+def series_value_on_or_before(series: pd.Series, anchor: date | datetime | pd.Timestamp, fallback_first: bool = True) -> float:
+    clean = series.dropna()
+    if clean.empty:
+        return math.nan
+    past = clean[clean.index <= pd.Timestamp(anchor)]
+    if not past.empty:
+        return float(past.iloc[-1])
+    if fallback_first:
+        return float(clean.iloc[0])
+    return math.nan
+
+
+def trading_session_lookback_value(series: pd.Series, lookback: int) -> float:
     clean = series.dropna()
     if clean.empty:
         return math.nan
@@ -632,7 +664,7 @@ def compute_atr_percent(df: pd.DataFrame, period: int = ATR_LOOKBACK) -> float:
 
 
 def first_row_on_or_after(df: pd.DataFrame, target_date: date) -> Optional[pd.Series]:
-    subset = df[df.index >= target_date]
+    subset = df[df.index >= pd.Timestamp(target_date)]
     if subset.empty:
         return None
     return subset.iloc[0]
@@ -651,26 +683,43 @@ def compute_stock_metrics(
     issue_price: Optional[float],
     warnings: List[WarningLog],
 ) -> Optional[Dict[str, object]]:
-    history = df[df.index <= cutoff_date].copy()
+    cutoff_ts = pd.Timestamp(cutoff_date)
+    history = df[df.index <= cutoff_ts].copy()
     if history.empty:
         warnings.append(WarningLog(symbol, "No price history returned by Kite; skipped."))
         return None
 
+    history.index = normalize_datetime_series(pd.Series(history.index)).array
+    index_df = index_df.copy()
+    index_df.index = normalize_datetime_series(pd.Series(index_df.index)).array
+
     if listing_date is not None:
-        listed_days = len(history[history.index >= listing_date])
+        listed_days = len(history[history.index >= pd.Timestamp(listing_date)])
     else:
         listed_days = len(history)
 
+    start_52w = calendar_anchor(cutoff_ts, years=1)
+    start_12m = start_52w
+    start_6m = calendar_anchor(cutoff_ts, months=6)
+    start_3m = calendar_anchor(cutoff_ts, months=3)
+
     current_close = float(history["close"].iloc[-1])
-    price_window = history.tail(LOOKBACK_52W)
-    if len(history) < LOOKBACK_52W:
-        warnings.append(WarningLog(symbol, "Insufficient history (<250 trading days); used available history for 52W high."))
+    price_window = history[(history.index >= start_52w) & (history.index <= cutoff_ts)].copy()
+    if price_window.empty:
+        price_window = history.copy()
+    if history.index.min() > start_52w:
+        warnings.append(WarningLog(symbol, "Insufficient history (<1 calendar year); used available history for 52W high."))
 
     high_52w = float(price_window["high"].max())
     high_rows = price_window[price_window["high"] == high_52w]
     high_date = high_rows.index[-1]
     days_since_high = len(price_window.loc[high_date:]) - 1
     pct_from_high = ((high_52w - current_close) / high_52w) if high_52w else math.nan
+    high_pos = int(price_window.index.get_loc(high_date))
+    runup_base_pos = max(0, high_pos - PARABOLIC_RUNUP_LOOKBACK)
+    runup_base_close = float(price_window["close"].iloc[runup_base_pos]) if not price_window.empty else math.nan
+    runup_base_date = price_window.index[runup_base_pos] if not price_window.empty else None
+    runup_to_52w_high_7d = safe_return(high_52w, runup_base_close)
 
     turnover_42d = (history["close"] * history["volume"]).tail(TURNOVER_LOOKBACK)
     avg_turnover_42d = (
@@ -687,10 +736,10 @@ def compute_stock_metrics(
         if not pd.isna(median_value):
             median_turnover_42d = float(median_value)
 
-    stock_close_12m = trading_lookback_value(history["close"], LOOKBACK_12M)
-    stock_close_6m = trading_lookback_value(history["close"], LOOKBACK_6M)
-    stock_close_3m = trading_lookback_value(history["close"], LOOKBACK_3M)
-    stock_close_15d = trading_lookback_value(history["close"], 15)
+    stock_close_12m = series_value_on_or_before(history["close"], start_12m)
+    stock_close_6m = series_value_on_or_before(history["close"], start_6m)
+    stock_close_3m = series_value_on_or_before(history["close"], start_3m)
+    stock_close_15d = trading_session_lookback_value(history["close"], 15)
     prev_close = float(history["close"].iloc[-2]) if len(history) >= 2 else math.nan
     ret_12m = safe_return(current_close, stock_close_12m)
     ret_6m = safe_return(current_close, stock_close_6m)
@@ -709,9 +758,9 @@ def compute_stock_metrics(
         return None
 
     index_current_close = float(aligned["index_close"].iloc[-1])
-    index_close_12m = trading_lookback_value(aligned["index_close"], LOOKBACK_12M)
-    index_close_6m = trading_lookback_value(aligned["index_close"], LOOKBACK_6M)
-    index_close_3m = trading_lookback_value(aligned["index_close"], LOOKBACK_3M)
+    index_close_12m = series_value_on_or_before(aligned["index_close"], start_12m)
+    index_close_6m = series_value_on_or_before(aligned["index_close"], start_6m)
+    index_close_3m = series_value_on_or_before(aligned["index_close"], start_3m)
     index_ret_12m = safe_return(index_current_close, index_close_12m)
     index_ret_6m = safe_return(index_current_close, index_close_6m)
     index_ret_3m = safe_return(index_current_close, index_close_3m)
@@ -721,7 +770,10 @@ def compute_stock_metrics(
     rs_3m = ret_3m - index_ret_3m if not (pd.isna(ret_3m) or pd.isna(index_ret_3m)) else math.nan
 
     rs_line = aligned["close"] / aligned["index_close"]
-    rs_line_high_52w = float(rs_line.tail(LOOKBACK_52W).max()) if not rs_line.empty else math.nan
+    rs_line_window = rs_line[rs_line.index >= start_52w]
+    if rs_line_window.empty:
+        rs_line_window = rs_line
+    rs_line_high_52w = float(rs_line_window.max()) if not rs_line_window.empty else math.nan
     rs_line_at_high = bool(not rs_line.empty and rs_line.iloc[-1] >= rs_line_high_52w)
     if len(rs_line) >= RS_SLOPE_LOOKBACK:
         rs_line_slope_21d = float(rs_line.iloc[-1] - rs_line.iloc[-RS_SLOPE_LOOKBACK])
@@ -736,7 +788,7 @@ def compute_stock_metrics(
     ema8_value = float(ema8.iloc[-1]) if not ema8.empty and not pd.isna(ema8.iloc[-1]) else math.nan
     ema21_value = float(ema21.iloc[-1]) if not ema21.empty and not pd.isna(ema21.iloc[-1]) else math.nan
     uptrend_stack = (ema8 > ema21) & (ema21 > dma50)
-    reset_history = history[history.index >= reset_date]
+    reset_history = history[history.index >= pd.Timestamp(reset_date)]
     uptrend_lookback = max(UPTREND_CONSISTENCY_MIN_LOOKBACK, len(reset_history))
     uptrend_consistency_pct = float(uptrend_stack.tail(uptrend_lookback).mean()) if not uptrend_stack.empty else math.nan
     ema21_window = history.tail(uptrend_lookback).copy()
@@ -805,6 +857,11 @@ def compute_stock_metrics(
     if not spike_window.empty:
         spike_top1_threshold = top_n_threshold(spike_window["volume"], 1)
         spike_candidates = spike_window[spike_window["volume"] >= spike_top1_threshold].copy()
+        if not spike_candidates.empty:
+            spike_candidates = spike_candidates[
+                spike_candidates["price_change_pct"].notna()
+                & (spike_candidates["price_change_pct"] > 0)
+            ].copy()
         if not spike_candidates.empty:
             spike_candidates["window_days"] = spike_candidates.index.map(lambda d: len(spike_window.loc[d:]))
             spike_candidates = spike_candidates[spike_candidates["window_days"] <= SPIKE_WINDOW_60]
@@ -893,6 +950,8 @@ def compute_stock_metrics(
         "high_52w_date": high_date,
         "pct_from_52w_high": pct_from_high,
         "days_since_52w_high": days_since_high,
+        "runup_base_date_7d": runup_base_date,
+        "runup_to_52w_high_7d": runup_to_52w_high_7d,
         "avg_turnover_42d": avg_turnover_42d,
         "median_turnover_42d": median_turnover_42d,
         "return_12m": ret_12m,
@@ -904,6 +963,9 @@ def compute_stock_metrics(
         "reset_low": reset_low,
         "reset_recovery": reset_recovery,
         "index_return_12m": index_ret_12m,
+        "has_full_6m_history": bool(history.index.min() <= start_6m),
+        "has_full_3m_history": bool(history.index.min() <= start_3m),
+        "has_full_12m_history": bool(history.index.min() <= start_12m),
         "index_return_6m": index_ret_6m,
         "index_return_3m": index_ret_3m,
         "rs_12m": rs_12m,
@@ -1080,8 +1142,8 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
     top3_30 = work["return_3m"] >= thresholds["ret3_top30"]
     top1d_10 = work["return_1d"] >= thresholds["ret1_top10"]
     top1d_20 = work["return_1d"] >= thresholds["ret1_top20"]
-    mature_listing = work["listed_days"] >= LOOKBACK_3M
-    full_12m_history = work["listed_days"] >= LOOKBACK_12M   # must have full year to be penalised
+    mature_listing = work["has_full_3m_history"].fillna(False)
+    full_12m_history = work["has_full_12m_history"].fillna(False)   # must have full calendar year to be penalised
     bottom12_10 = full_12m_history & (work["return_12m"] <= thresholds["ret12_bottom10"])
     bottom12_20 = full_12m_history & (work["return_12m"] <= thresholds["ret12_bottom20"])
     bottom6_10 = mature_listing & (work["return_6m"] <= thresholds["ret6_bottom10"])
@@ -1138,8 +1200,8 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
             return 0.0
         return float(clean.median())
 
-    missing_12m_history_mask = work["listed_days"] < LOOKBACK_12M
-    missing_6m_history_mask = work["listed_days"] < LOOKBACK_6M
+    missing_12m_history_mask = ~work["has_full_12m_history"].fillna(False)
+    missing_6m_history_mask = ~work["has_full_6m_history"].fillna(False)
     median_12m_score = median_score(work.loc[~missing_12m_history_mask, "score_perf_12m"])
     median_6m_score = median_score(work.loc[~missing_6m_history_mask, "score_perf_6m"])
 
@@ -1245,7 +1307,7 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
     # IPO performance bonus — stocks listed < 6M with CMP above issue price.
     # Keep the original top-10 / top-20 scoring and add an extra +3
     # for names in the top 40 percentile with at least 20% IPO gain.
-    ipo_sub = (work["listed_days"] < LOOKBACK_6M) & (work["ipo_gain"] > 0)
+    ipo_sub = (~work["has_full_6m_history"].fillna(False)) & (work["ipo_gain"] > 0)
     if ipo_sub.sum() >= 2:
         ipo_gains = work.loc[ipo_sub, "ipo_gain"]
         ipo_top10_t = top_n_threshold(ipo_gains, 10)
@@ -1863,6 +1925,7 @@ def export_workbook(
         ("high_52w_date",           "52W High\nDate",  "52w",  11,  None),
         ("pct_from_52w_high",       "% from\n52W Hi",  "52w",   8,  "0.0%"),
         ("days_since_52w_high",     "Days Since\nHigh", "52w",   9,  "0"),
+        ("runup_to_52w_high_7d",    "7D Runup\ninto High", "52w",  9,  "0.0%"),
         ("score_52w_price",         "Sc\nDist",        "52w",   5,  "0"),
         ("score_52w_recency",       "Sc\nRec",         "52w",   5,  "0"),
         ("score_52w_bonus",         "Sc\nAdj",         "52w",   5,  "0"),
@@ -1984,11 +2047,11 @@ def export_workbook(
         "sector_top_quartile_count",
     }
 
-    PCT_COLS  = {"pct_from_52w_high","return_12m","return_6m","return_3m",
+    PCT_COLS  = {"pct_from_52w_high","runup_to_52w_high_7d","return_12m","return_6m","return_3m",
                  "reset_recovery","rs_12m","rs_6m","rs_3m",
                  "uptrend_consistency_pct","spike_price_change_pct",
                  "gapup_pct","gapup_close_pct","sector_strength_ratio"}
-    DATE_COLS = {"listing_date","high_52w_date","spike_date","gapup_date"}
+    DATE_COLS = {"listing_date","high_52w_date","runup_base_date_7d","spike_date","gapup_date"}
     SCORE_KEYS= {k for k, *_ in COL_SPEC if k.startswith("score_") or k.startswith("pre_")}
     INT_COLS  = {"rank","listed_days","days_since_52w_high",
                  "sector_stock_count","sector_top_quartile_count","spike_window_days",
@@ -2241,10 +2304,21 @@ def export_workbook(
         IP_WT_RATING    * top50["_ip_rating_pct"]
     )
 
+    _parabolic_rollover = (
+        (top50["return_12m"] >= PARABOLIC_TOP_12M_RETURN_MIN)
+        & (top50["days_since_52w_high"] > PARABOLIC_TOP_DAYS_SINCE_HIGH_MIN)
+        & (top50["pct_from_52w_high"] >= PARABOLIC_TOP_PCT_FROM_HIGH_MIN)
+        & (top50["runup_to_52w_high_7d"] >= PARABOLIC_RUNUP_MIN)
+        & (~top50["above_21ema"])
+        & (~top50["above_8ema"])
+        & (top50["return_15d"] <= PARABOLIC_TOP_15D_RETURN_MAX)
+    )
+
     # Additional liquidity gate for institutional picks: exclude stocks where
     # median 42D turnover < INST_PICKS_MIN_MEDIAN_TURNOVER_CRORES (10 Cr).
-    # This is stricter than the universe gate (15 Cr AND logic) — a stock can pass
-    # the universe filter via avg turnover but still be too illiquid for inst picks.
+    # This is distinct from the universe gate (which now excludes if median OR avg 42D
+    # turnover is below 15 Cr) — a stock can remain rated yet still fail this
+    # institutional-liquidity screen.
     _inst_eligible = (
         (top50["median_turnover_42d"] >= INST_PICKS_MIN_MEDIAN_TURNOVER_CRORES)
         & (top50["pct_from_52w_high"] < 0.30)
@@ -2253,6 +2327,7 @@ def export_workbook(
             (top50["pct_from_52w_high"] >= 0.25)
             & (top50["days_since_52w_high"] > 30)
         )
+        & (~_parabolic_rollover)
     )
     inst_picks = (
         top50[_inst_eligible]
@@ -2302,7 +2377,10 @@ def export_workbook(
     ip_ws.merge_cells(f"A2:{get_column_letter(ncols_ip)}2")
     ip_ws["A2"] = (
         "Institutional Score = 40% Sector Strength + 30% Liquidity (Median Turnover) + 30% Stock Rating — "
-        "all components percentile-ranked within top 50; excludes >=30% off 52W high, <=-30% in 15 trading days, or >=25% off high with high older than 30 days"
+        f"all components percentile-ranked within top 50; excludes >=30% off 52W high, <=-30% in 15 trading days, >=25% off high with high older than 30 days, "
+        f"and parabolic rollovers where 12M >= {PARABOLIC_TOP_12M_RETURN_MIN*100:.0f}%, >{PARABOLIC_TOP_DAYS_SINCE_HIGH_MIN} days since high, "
+        f">= {PARABOLIC_TOP_PCT_FROM_HIGH_MIN*100:.0f}% off high, 15D <= {PARABOLIC_TOP_15D_RETURN_MAX*100:.0f}%, below 8EMA & 21EMA, "
+        f"and {PARABOLIC_RUNUP_LOOKBACK}D runup into high >= {PARABOLIC_RUNUP_MIN*100:.0f}%"
     )
     sc(ip_ws["A2"], italic=True, color="FFFFFF", fill=IP_H, size=10, align="center")
     ip_ws.row_dimensions[2].height = 18
@@ -3110,13 +3188,14 @@ def export_workbook(
         ("Institutional Picks", "Breakdown gate", "Excluded if >= 30% below 52W high", "Required", "Removes names that have already topped out and broken down"),
         ("Institutional Picks", "Breakdown gate", "Excluded if 15-trading-day return <= -30%", "Required", "Removes sharp recent breakdowns even if 52W distance is smaller"),
         ("Institutional Picks", "Stale-high gate", "Excluded if >= 25% below 52W high and high is older than 30 trading days", "Required", "Removes names that are well off highs and no longer recently strong"),
+        ("Institutional Picks", "Parabolic rollover gate", f"12M >= {PARABOLIC_TOP_12M_RETURN_MIN*100:.0f}%, >{PARABOLIC_TOP_DAYS_SINCE_HIGH_MIN} days since high, >= {PARABOLIC_TOP_PCT_FROM_HIGH_MIN*100:.0f}% off high, 15D <= {PARABOLIC_TOP_15D_RETURN_MAX*100:.0f}%, below 8EMA & 21EMA, and {PARABOLIC_RUNUP_LOOKBACK}D runup into high >= {PARABOLIC_RUNUP_MIN*100:.0f}%", "Required", "Targets blowoff tops that have already rolled over after a fast run into the high"),
         ("Liquidity", "Avg turnover 42D", "Bottom 10% of rated universe AND avg TO < 40 Cr", "-8", rr_value("turnover_bottom10")),
         ("Liquidity", "Avg turnover 42D", "Bottom 20% of rated universe AND avg TO < 40 Cr", "-6", rr_value("turnover_bottom20")),
         ("Liquidity", "Avg turnover 42D", "Bottom 30% of rated universe AND avg TO < 40 Cr", "-4", rr_value("turnover_bottom30")),
         ("Liquidity", "Median turnover 42D", f"Bottom 10% of universe AND < {MEDIAN_TURNOVER_LOW_THRESHOLD_CRORES:.0f} Cr", "-8", rr_value("median_turnover_bottom10")),
         ("Liquidity", "Median turnover 42D", f"Bottom 20% of universe AND < {MEDIAN_TURNOVER_LOW_THRESHOLD_CRORES:.0f} Cr", "-6", rr_value("median_turnover_bottom20")),
-        ("Liquidity", "Liquid leaders bonus", "Top 10 symbols in liquid leaders source order", "+6", "Based on updated_gmlist order"),
-        ("Liquidity", "Liquid leaders bonus", "Top 20 symbols in liquid leaders source order", "+3", "Ranks 11-20"),
+        ("Liquidity", "Liquid leaders bonus", "Top 10 symbols in inline neo liquid leaders map", "+6", "Based on neo liquid leader report order"),
+        ("Liquidity", "Liquid leaders bonus", "Top 20 symbols in inline neo liquid leaders map", "+3", "Ranks 11-20 in neo liquid leader report"),
         ("52W High", "Distance from 52W high", "<= 10% / 15% / 20% from 52W high", "+10 / +6 / +2", "Daily high basis"),
         ("52W High", "Distance penalty", "> 20% and < 25% from 52W high", "-4", "Applied even if 52W high is recent"),
         ("52W High", "Distance penalty", ">= 25% and < 30% from 52W high", "-10", "Applied even if 52W high is recent"),
@@ -3374,7 +3453,7 @@ def main() -> None:
     sector_map = load_sector_map(conn, list(dict.fromkeys(symbols + effective_kite_symbols)))
 
     # ── Date window for history — exactly 1 year back from cutoff ────────
-    fetch_start = cutoff_date - timedelta(days=365)
+    fetch_start = (calendar_anchor(cutoff_date, years=1) - pd.Timedelta(days=CALENDAR_LOOKBACK_FETCH_BUFFER_DAYS)).date()
     fetch_start = max(fetch_start, date(2000, 1, 1))
 
     # ── Index history (for RS) ────────────────────────────────────────────
@@ -3505,6 +3584,15 @@ def main() -> None:
     top50_ip["_lp"] = top50_ip["median_turnover_42d"].rank(pct=True, method="average") * 100
     top50_ip["_rp"] = top50_ip["composite_score"].rank(pct=True, method="average") * 100
     top50_ip["_is"] = 0.40 * top50_ip["_sp"] + 0.30 * top50_ip["_lp"] + 0.30 * top50_ip["_rp"]
+    _parabolic_rollover_txt = (
+        (top50_ip["return_12m"] >= PARABOLIC_TOP_12M_RETURN_MIN)
+        & (top50_ip["days_since_52w_high"] > PARABOLIC_TOP_DAYS_SINCE_HIGH_MIN)
+        & (top50_ip["pct_from_52w_high"] >= PARABOLIC_TOP_PCT_FROM_HIGH_MIN)
+        & (top50_ip["runup_to_52w_high_7d"] >= PARABOLIC_RUNUP_MIN)
+        & (~top50_ip["above_21ema"])
+        & (~top50_ip["above_8ema"])
+        & (top50_ip["return_15d"] <= PARABOLIC_TOP_15D_RETURN_MAX)
+    )
     _inst_eligible_txt = (
         (top50_ip["median_turnover_42d"] >= INST_PICKS_MIN_MEDIAN_TURNOVER_CRORES)
         & (top50_ip["pct_from_52w_high"] < 0.30)
@@ -3513,6 +3601,7 @@ def main() -> None:
             (top50_ip["pct_from_52w_high"] >= 0.25)
             & (top50_ip["days_since_52w_high"] > 30)
         )
+        & (~_parabolic_rollover_txt)
     )
     inst_picks_df = (
         top50_ip[_inst_eligible_txt]
@@ -3527,7 +3616,7 @@ def main() -> None:
     ip_lines = [
         f"### Institutional Picks — {cutoff_date.strftime('%d %b %Y')}",
         f"### Selection: Top 50 by score → 40% Sector Strength + 30% Liquidity + 30% Rating",
-        f"### Additional gates: median 42D turnover >= {INST_PICKS_MIN_MEDIAN_TURNOVER_CRORES:.0f} Cr; <30% off 52W high; >-30% over last 15 trading days; not >=25% off high with high older than 30 days",
+        f"### Additional gates: median 42D turnover >= {INST_PICKS_MIN_MEDIAN_TURNOVER_CRORES:.0f} Cr; <30% off 52W high; >-30% over last 15 trading days; not >=25% off high with high older than 30 days; exclude parabolic rollovers where 12M >= {PARABOLIC_TOP_12M_RETURN_MIN*100:.0f}%, >={PARABOLIC_TOP_DAYS_SINCE_HIGH_MIN} days since high, >= {PARABOLIC_TOP_PCT_FROM_HIGH_MIN*100:.0f}% off high, 15D <= {PARABOLIC_TOP_15D_RETURN_MAX*100:.0f}%, below 8EMA & 21EMA, and {PARABOLIC_RUNUP_LOOKBACK}D runup into high >= {PARABOLIC_RUNUP_MIN*100:.0f}%",
         "",
     ]
     for _, row in inst_picks_df.iterrows():

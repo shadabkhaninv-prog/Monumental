@@ -1,17 +1,10 @@
 #!/usr/bin/env python3
 """
 Institutional Picks — Performance Tracker
-==========================================
-Streamlit app: loads institutional_picks_*.txt, fetches OHLC via Kite API,
-benchmarks against Nifty Smallcap 250 from bhav.indexbhav (MySQL).
-
 Launch:  python -m streamlit run performance_tracker.py
 """
-
 from __future__ import annotations
-
-import re
-import time
+import re, time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -21,1021 +14,751 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Config
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Config ────────────────────────────────────────────────────────────────────
 BASE_DIR    = Path(__file__).parent
 REPORTS_DIR = BASE_DIR / "reports"
 TOKEN_FILE  = BASE_DIR / "kite_token.txt"
+DB_HOST, DB_PORT, DB_USER, DB_PASS, DB_NAME = "localhost", 3306, "root", "root", "bhav"
+SLEEP_S     = 0.35
+PERIODS: Dict[str, int] = {"1 Week": 7, "15 Days": 15, "1 Month": 30}
+PERIOD_KEYS = list(PERIODS.keys())
+TODAY       = date.today()
 
-DB_HOST = "localhost"
-DB_PORT = 3306
-DB_USER = "root"
-DB_PASS = "root"
-DB_NAME = "bhav"
+# ── Page config ───────────────────────────────────────────────────────────────
+st.set_page_config(page_title="Picks Performance", page_icon="📈",
+                   layout="wide", initial_sidebar_state="expanded")
 
-SLEEP_S = 0.35          # delay between Kite calls
-
-PERIODS: Dict[str, int] = {      # label -> calendar days from cutoff
-    "1 Week":  7,
-    "15 Days": 15,
-    "1 Month": 30,
-}
-PERIOD_KEYS  = list(PERIODS.keys())
-TODAY        = date.today()
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Page config  (MUST be first Streamlit call)
-# ─────────────────────────────────────────────────────────────────────────────
-st.set_page_config(
-    page_title="Picks Performance",
-    page_icon="📈",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Global CSS
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Design system ─────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
 
-/* ── Kill ALL Streamlit chrome ─────────────────────────── */
-#stDecoration, header[data-testid="stHeader"],
-[data-testid="stHeader"], [data-testid="stToolbar"],
+/* ── Kill Streamlit chrome ───────────────────────────────────── */
+#stDecoration, [data-testid="stHeader"], [data-testid="stToolbar"],
 [data-testid="stMainMenu"], [data-testid="stStatusWidget"],
 [data-testid="stSidebarHeader"], .viewerBadge_container__r5tak,
-footer, #MainMenu { display: none !important; height:0 !important; }
+footer, #MainMenu { display:none !important; }
 
-/* ── Nuke every source of top whitespace ───────────────── */
-.main .block-container          { padding-top: 0.5rem !important; }
-section[data-testid="stMain"]   { padding-top: 0 !important; }
-.appview-container              { padding-top: 0 !important; }
-.appview-container .main section{ padding-top: 0 !important; }
-[data-testid="block-container"] { padding-top: 0.5rem !important; }
-[data-testid="stSidebar"] > div:first-child { padding-top: 0.8rem !important; }
+/* ── Base ────────────────────────────────────────────────────── */
+html, body { background:#070d18 !important; }
+[data-testid="stAppViewContainer"],
+[data-testid="stMain"],
+.appview-container { background:#070d18 !important; }
 
-/* ── Selectbox control box ──────────────────────────────── */
-[data-testid="stSidebar"] [data-baseweb="select"] > div {
-    background-color: #161e2c !important;
-    border: 1px solid #2e4460 !important;
-    border-radius: 8px !important;
+/* ── Remove ALL top padding ──────────────────────────────────── */
+.main .block-container,
+section[data-testid="stMain"],
+.appview-container .main section,
+[data-testid="block-container"] {
+    padding-top: 0 !important;
+    background: #070d18 !important;
 }
-/* Selected value text */
-[data-testid="stSidebar"] [data-baseweb="select"] [data-testid="stMarkdown"] p,
-[data-testid="stSidebar"] [data-baseweb="select"] > div > div > div,
-[data-testid="stSidebar"] [data-baseweb="select"] input,
-[data-testid="stSidebar"] [data-baseweb="select"] span {
-    color: #e0eeff !important;
-    font-weight: 700 !important;
-    font-size: 0.9rem !important;
-}
-[data-testid="stSidebar"] [data-baseweb="select"] svg { fill: #4a7aaa !important; }
+[data-testid="stSidebar"] > div:first-child { padding-top: 1.2rem !important; }
 
-/* ── Dropdown popup list ─────────────────────────────────── */
-[data-baseweb="popover"] { z-index: 9999 !important; }
-[data-baseweb="popover"] > div,
-ul[data-baseweb="menu"],
-[data-baseweb="menu"] {
-    background-color: #101828 !important;
-    border: 1px solid #1e3858 !important;
-    border-radius: 8px !important;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.7) !important;
-}
-/* Each option — target role="option" not li */
-[data-baseweb="menu"] [role="option"],
-[data-baseweb="menu"] li {
-    background-color: #101828 !important;
-    color: #c0d8f0 !important;
-    font-size: 0.88rem !important;
-    font-weight: 600 !important;
-    padding: 8px 14px !important;
-}
-[data-baseweb="menu"] [role="option"]:hover,
-[data-baseweb="menu"] [aria-selected="true"],
-[data-baseweb="menu"] li:hover {
-    background-color: #1a3358 !important;
-    color: #ffffff !important;
-}
-
-/* ── Selectbox label ────────────────────────────────────── */
-[data-testid="stSidebar"] label {
-    color: #3a5570 !important;
-    font-size: 0.64rem !important;
-    font-weight: 700 !important;
-    text-transform: uppercase;
-    letter-spacing: 1.5px;
-}
-
-/* ── Custom HTML table ──────────────────────────────────── */
-.perf-table-wrap {
-    overflow-x: auto;
-    border-radius: 10px;
-    border: 1px solid #1a2638;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.6);
-    margin-top: 8px;
-}
-.perf-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
-    font-size: 0.85rem;
-    background: #0c1118;
-}
-.perf-table thead th {
-    background: #0a1020;
-    color: #4a7090;
-    font-size: 0.68rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1.2px;
-    padding: 10px 14px;
-    border-bottom: 1px solid #1a2638;
-    text-align: right;
-    white-space: nowrap;
-}
-.perf-table thead th:first-child { text-align: left; }
-.perf-table tbody tr { border-bottom: 1px solid #111820; }
-.perf-table tbody tr:nth-child(even) td { background: #0a1118; }
-.perf-table tbody tr:hover td { filter: brightness(1.15); }
-.perf-table td {
-    padding: 8px 14px;
-    text-align: right;
-    white-space: nowrap;
-    color: #8aaac8;
-    font-size: 0.84rem;
-    font-weight: 500;
-}
-.perf-table td.stock-name {
-    text-align: left;
-    color: #ddeeff;
-    font-weight: 700;
-    font-size: 0.87rem;
-    letter-spacing: 0.3px;
-    background: #0c1320 !important;
-}
-.perf-table td.ret-cell {
-    font-weight: 700;
-    font-size: 0.86rem;
-    color: #ffffff;
-}
-
-/* ── Base ──────────────────────────────────────────────── */
-html, body, [data-testid="stAppViewContainer"],
-[data-testid="stMain"], [data-testid="block-container"] {
-    background: #10141a !important;
-    color: #f0f4f8 !important;
-    font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
-}
-
-/* ── Sidebar ───────────────────────────────────────────── */
+/* ── Sidebar ─────────────────────────────────────────────────── */
 [data-testid="stSidebar"] {
-    background: #0c1018 !important;
-    border-right: 1px solid #1e2530 !important;
+    background: #060c17 !important;
+    border-right: 1px solid #0f1e30 !important;
 }
-[data-testid="stSidebar"] * { color: #d0dae6 !important; }
-[data-testid="stSidebar"] .stSelectbox label,
-[data-testid="stSidebar"] .stCaption { color: #7a8fa6 !important; }
+[data-testid="stSidebar"] * { color: #c8dff0 !important; }
 
-/* ── Metric cards ──────────────────────────────────────── */
-[data-testid="stMetric"] {
-    background: #171d27 !important;
-    border: 1px solid #242e3d !important;
-    border-radius: 12px !important;
-    padding: 18px 22px !important;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.5) !important;
-}
-[data-testid="stMetricValue"] {
-    font-size: 1.55rem !important;
-    font-weight: 800 !important;
-    color: #f0f4f8 !important;
-    letter-spacing: -0.5px;
-}
-[data-testid="stMetricLabel"] {
-    font-size: 0.72rem !important;
-    font-weight: 700 !important;
-    text-transform: uppercase;
-    letter-spacing: 1.2px;
-    color: #6b7f96 !important;
-}
-[data-testid="stMetricDelta"] svg { display: none !important; }
-[data-testid="stMetricDelta"] > div {
-    font-size: 0.78rem !important;
-    font-weight: 600 !important;
-    color: #7a8fa6 !important;
-}
-
-/* ── Primary button ────────────────────────────────────── */
-.stButton > button[kind="primary"] {
-    background: linear-gradient(135deg, #1a6b34 0%, #238636 100%) !important;
-    border: 1px solid #2ea043 !important;
+/* ── Selectbox control ───────────────────────────────────────── */
+[data-baseweb="select"] > div:first-child {
+    background: #0c1a2a !important;
+    border: 1px solid #1a3550 !important;
     border-radius: 8px !important;
-    color: #ffffff !important;
-    font-weight: 700 !important;
-    font-size: 0.92rem !important;
-    letter-spacing: 0.3px;
-    padding: 10px 0 !important;
-    box-shadow: 0 2px 10px rgba(35,134,54,0.4) !important;
-    transition: all 0.15s ease !important;
+    min-height: 40px !important;
+}
+/* The actual text value shown */
+[data-baseweb="select"] [data-testid="stMarkdown"] p,
+[data-baseweb="select"] > div span,
+[data-baseweb="select"] > div div,
+[data-baseweb="select"] input { color: #d8eeff !important; font-weight:600 !important; font-size:0.9rem !important; }
+[data-baseweb="select"] svg { fill:#3b6a9a !important; }
+
+/* ── Dropdown popup ──────────────────────────────────────────── */
+[data-baseweb="popover"], [data-baseweb="popover"] > div {
+    background:#0a1622 !important;
+    border:1px solid #1a3550 !important;
+    border-radius:10px !important;
+    box-shadow:0 12px 40px rgba(0,0,0,0.8) !important;
+}
+[data-baseweb="menu"] { background:#0a1622 !important; border-radius:10px !important; }
+[data-baseweb="menu"] li,
+[data-baseweb="menu"] [role="option"] {
+    background:#0a1622 !important;
+    color:#b8d8f8 !important;
+    font-size:0.88rem !important;
+    font-weight:600 !important;
+    padding:10px 16px !important;
+    border-bottom:1px solid #0f2035 !important;
+}
+[data-baseweb="menu"] li:hover,
+[data-baseweb="menu"] [role="option"]:hover,
+[data-baseweb="menu"] [aria-selected="true"] {
+    background:#112640 !important;
+    color:#ffffff !important;
+}
+[data-testid="stSidebar"] label {
+    color:#1e4060 !important;
+    font-size:0.62rem !important;
+    font-weight:700 !important;
+    text-transform:uppercase;
+    letter-spacing:1.6px;
+}
+
+/* ── Run button ──────────────────────────────────────────────── */
+.stButton > button[kind="primary"] {
+    background:linear-gradient(135deg,#1a6b34,#238636) !important;
+    border:none !important; border-radius:8px !important;
+    color:#fff !important; font-weight:700 !important;
+    font-size:0.88rem !important; letter-spacing:0.4px;
+    height:40px !important;
+    box-shadow:0 0 20px rgba(34,197,94,0.25) !important;
+    transition:all 0.15s !important;
 }
 .stButton > button[kind="primary"]:hover {
-    background: linear-gradient(135deg, #238636 0%, #2ea043 100%) !important;
-    box-shadow: 0 4px 18px rgba(46,160,67,0.55) !important;
-    transform: translateY(-1px);
+    box-shadow:0 0 30px rgba(34,197,94,0.45) !important;
+    transform:translateY(-1px);
 }
 
-/* ── Section label ─────────────────────────────────────── */
-.section-label {
-    font-size: 0.65rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1.8px;
-    color: #4a6278;
-    margin: 4px 0 10px 0;
-    padding-bottom: 6px;
-    border-bottom: 1px solid #1e2a38;
+/* ── Progress bar ────────────────────────────────────────────── */
+[data-testid="stProgress"] > div > div {
+    background:linear-gradient(90deg,#1a6b34,#3b82f6) !important;
 }
 
-/* ── Banner ────────────────────────────────────────────── */
-.banner {
-    background: linear-gradient(135deg, #131920 0%, #171f2b 50%, #131920 100%);
-    border: 1px solid #1e2a38;
-    border-left: 4px solid #2563eb;
-    border-radius: 12px;
-    padding: 18px 26px;
-    margin-bottom: 22px;
+/* ── Sort selectbox (main area) ──────────────────────────────── */
+.sort-wrap [data-baseweb="select"] > div:first-child {
+    background:#0c1829 !important;
+    border:1px solid #162438 !important;
 }
-.banner h1 {
-    margin: 0 0 6px 0;
-    font-size: 1.45rem;
-    font-weight: 800;
-    color: #f0f4f8;
-    letter-spacing: -0.3px;
-}
-.banner .meta { color: #6b7f96; font-size: 0.82rem; margin: 0; line-height: 1.7; }
-.banner .meta b { color: #c9d8e8; font-weight: 600; }
 
-/* ── Skip chip ─────────────────────────────────────────── */
+/* ── Tabs ────────────────────────────────────────────────────── */
+[data-testid="stTabs"] [role="tab"] {
+    color:#2a5a80 !important;
+    font-weight:600 !important;
+    font-size:0.82rem !important;
+}
+[data-testid="stTabs"] [role="tab"][aria-selected="true"] {
+    color:#7abcf0 !important;
+    border-bottom:2px solid #3b82f6 !important;
+}
+[data-testid="stTabs"] [role="tablist"] {
+    border-bottom:1px solid #0f2035 !important;
+}
+
+/* ── Custom metric cards ─────────────────────────────────────── */
+.metric-row { display:flex; gap:12px; margin:0 0 20px 0; }
+.mc {
+    flex:1; background:#0c1829;
+    border:1px solid #162438;
+    border-radius:12px; padding:16px 20px;
+    box-shadow:0 2px 16px rgba(0,0,0,0.4);
+    transition:border-color 0.2s;
+}
+.mc:hover { border-color:#1e3a58; }
+.mc-label {
+    font-size:0.62rem; font-weight:700; text-transform:uppercase;
+    letter-spacing:1.8px; color:#2a5070; margin-bottom:8px;
+}
+.mc-value {
+    font-size:1.8rem; font-weight:900; letter-spacing:-1px;
+    line-height:1; margin-bottom:6px;
+}
+.mc-value.pos { color:#22c55e; }
+.mc-value.neg { color:#f43f5e; }
+.mc-value.neu { color:#7abcf0; }
+.mc-sub { font-size:0.7rem; color:#1e4060; font-weight:600; }
+.mc-bm  { font-size:0.7rem; color:#1a5038; margin-top:3px; font-weight:600; }
+
+/* ── Stat row (portfolio snapshot) ──────────────────────────── */
+.stat-row { display:flex; gap:10px; margin:0 0 20px 0; flex-wrap:wrap; }
+.stat {
+    flex:1; min-width:140px;
+    background:#0a1525; border:1px solid #10202f;
+    border-radius:10px; padding:12px 16px;
+}
+.stat-label { font-size:0.6rem; font-weight:700; text-transform:uppercase;
+              letter-spacing:1.5px; color:#1e4060; margin-bottom:5px; }
+.stat-value { font-size:1.1rem; font-weight:800; color:#c8e4ff; }
+.stat-delta { font-size:0.7rem; font-weight:600; margin-top:3px; }
+.stat-delta.pos { color:#22c55e; }
+.stat-delta.neg { color:#f43f5e; }
+
+/* ── Section divider ─────────────────────────────────────────── */
+.sec-label {
+    font-size:0.6rem; font-weight:700; text-transform:uppercase;
+    letter-spacing:2px; color:#1a3a56;
+    border-bottom:1px solid #0c1e30;
+    padding-bottom:6px; margin:20px 0 12px 0;
+}
+
+/* ── Top bar ─────────────────────────────────────────────────── */
+.topbar {
+    display:flex; align-items:center; gap:16px;
+    padding:10px 0 14px 0;
+    border-bottom:1px solid #0c1e30;
+    margin-bottom:18px;
+}
+.topbar-title {
+    font-size:0.88rem; font-weight:800; color:#5a9adf;
+    text-transform:uppercase; letter-spacing:1px;
+}
+.topbar-pill {
+    background:#0c1829; border:1px solid #162438;
+    border-radius:20px; padding:3px 12px;
+    font-size:0.7rem; font-weight:600; color:#2a6090;
+}
+.topbar-pill b { color:#4a90c8; }
+
+/* ── Performance table ───────────────────────────────────────── */
+.pt-wrap {
+    overflow-x:auto; border-radius:12px;
+    border:1px solid #0f2035;
+    box-shadow:0 4px 30px rgba(0,0,0,0.6);
+}
+table.pt {
+    width:100%; border-collapse:collapse;
+    font-family:'Inter','Segoe UI',system-ui,sans-serif;
+    background:#080f1c;
+}
+table.pt thead th {
+    background:#060c18; padding:11px 16px;
+    font-size:0.62rem; font-weight:700;
+    text-transform:uppercase; letter-spacing:1.4px;
+    color:#1e4060; border-bottom:2px solid #0c1e30;
+    white-space:nowrap; text-align:right;
+    position:sticky; top:0;
+}
+table.pt thead th.left { text-align:left; }
+table.pt thead th.center { text-align:center; }
+table.pt tbody tr { border-bottom:1px solid #0a1828; }
+table.pt tbody tr:nth-child(even) td { background:#060d1a; }
+table.pt tbody tr:hover td { background:#0c1e30 !important; transition:background 0.1s; }
+table.pt td {
+    padding:9px 16px; text-align:right;
+    font-size:0.83rem; font-weight:500;
+    color:#3a6080; white-space:nowrap;
+}
+table.pt td.left  { text-align:left; }
+table.pt td.center{ text-align:center; }
+table.pt td.sym {
+    color:#c8e4ff; font-weight:700; font-size:0.86rem;
+    letter-spacing:0.4px; background:#060d18 !important;
+}
+table.pt td.base  { color:#2a5070; font-weight:600; }
+table.pt td.close { color:#2a5070; }
+table.pt td.num   { color:#1e3a50; font-size:0.72rem; }
+table.pt td.ret   { font-weight:800; font-size:0.85rem; }
+
+/* ── Skip chips ──────────────────────────────────────────────── */
 .skip-chip {
-    display: inline-block;
-    background: #1f0e0e;
-    border: 1px solid #5c2020;
-    border-radius: 5px;
-    padding: 3px 9px;
-    font-size: 0.73rem;
-    color: #f87171;
-    margin: 2px 4px 2px 0;
-    font-family: 'Courier New', monospace;
+    display:inline-block; background:#1a0808;
+    border:1px solid #4a1010; border-radius:5px;
+    padding:3px 10px; font-size:0.72rem; color:#f87171;
+    margin:2px 4px 2px 0; font-family:monospace;
 }
 
-/* ── Sidebar section label ─────────────────────────────── */
-.sidebar-section {
-    font-size: 0.62rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1.8px;
-    color: #3b82f6;
-    margin: 18px 0 7px 0;
-}
-
-hr { border-color: #1e2a38 !important; margin: 18px 0 !important; }
+hr { border-color:#0c1e30 !important; margin:16px 0 !important; }
 </style>
 """, unsafe_allow_html=True)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# File helpers
-# ─────────────────────────────────────────────────────────────────────────────
+# ── File helpers ──────────────────────────────────────────────────────────────
 _DATE_PAT  = re.compile(r"institutional_picks_(\d{2})([a-zA-Z]{3})(\d{4})\.txt$", re.I)
-_MONTH_MAP = {m: i+1 for i, m in enumerate(
+_MONTH_MAP = {m:i+1 for i,m in enumerate(
     ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"])}
 
-
 def discover_picks_files() -> Dict[date, Path]:
-    if not REPORTS_DIR.exists():
-        return {}
+    if not REPORTS_DIR.exists(): return {}
     result: Dict[date, Path] = {}
     for f in REPORTS_DIR.glob("institutional_picks_*.txt"):
         m = _DATE_PAT.match(f.name)
-        if not m:
-            continue
+        if not m: continue
         dd, mon, yyyy = int(m.group(1)), m.group(2).lower(), int(m.group(3))
         mon_n = _MONTH_MAP.get(mon)
         if mon_n:
-            try:
-                result[date(yyyy, mon_n, dd)] = f
-            except ValueError:
-                pass
+            try: result[date(yyyy, mon_n, dd)] = f
+            except ValueError: pass
     return dict(sorted(result.items(), reverse=True))
 
-
 def parse_picks_file(path: Path) -> List[str]:
-    """Return plain symbols (no exchange prefix)."""
     out, seen = [], set()
     for raw in path.read_text(encoding="utf-8", errors="ignore").splitlines():
         line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        sym = line.split(":", 1)[-1].strip().upper()
+        if not line or line.startswith("#"): continue
+        sym = line.split(":",1)[-1].strip().upper()
         if sym and sym not in seen:
-            out.append(sym)
-            seen.add(sym)
+            out.append(sym); seen.add(sym)
     return out
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Kite helpers
-# ─────────────────────────────────────────────────────────────────────────────
-def read_token_file(path: Path) -> Dict[str, str]:
-    data: Dict[str, str] = {}
-    if not path.exists():
-        return data
+# ── Kite helpers ──────────────────────────────────────────────────────────────
+def read_token_file(path: Path) -> Dict[str,str]:
+    data: Dict[str,str] = {}
+    if not path.exists(): return data
     for raw in path.read_text(encoding="utf-8", errors="ignore").splitlines():
         line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, v = line.split("=", 1)
-        data[k.strip().upper()] = v.strip()
+        if not line or line.startswith("#") or "=" not in line: continue
+        k,v = line.split("=",1); data[k.strip().upper()] = v.strip()
     return data
 
-
 @st.cache_resource(show_spinner=False)
-def get_kite(api_key: str, access_token: str):
+def get_kite(api_key:str, access_token:str):
     from kiteconnect import KiteConnect
     kite = KiteConnect(api_key=api_key)
     kite.set_access_token(access_token)
     return kite
 
-
-def _norm(s: str) -> str:
-    return re.sub(r"[^A-Z0-9]", "", s.upper().replace("&", "AND"))
-
+def _norm(s:str)->str:
+    return re.sub(r"[^A-Z0-9]","",s.upper().replace("&","AND"))
 
 @st.cache_data(show_spinner=False, ttl=3600)
-def load_nse_instruments(api_key: str, access_token: str) -> Tuple[Dict, Dict]:
+def load_nse_instruments(api_key:str, access_token:str)->Tuple[Dict,Dict]:
     kite = get_kite(api_key, access_token)
     rows = kite.instruments("NSE")
-    exact: Dict[str, int] = {}
-    normd: Dict[str, int] = {}
+    exact:Dict[str,int]={}; normd:Dict[str,int]={}
     for r in rows:
-        ts    = str(r.get("tradingsymbol", "")).strip().upper()
-        tok   = int(r.get("instrument_token", 0))
-        itype = str(r.get("instrument_type", "")).upper()
-        seg   = str(r.get("segment", "")).upper()
-        if not ts or not tok:
-            continue
-        if itype in ("INDEX",) or "INDICES" in seg:
-            continue
-        exact.setdefault(ts, tok)
-        normd.setdefault(_norm(ts), tok)
-    return exact, normd
+        ts=str(r.get("tradingsymbol","")).strip().upper()
+        tok=int(r.get("instrument_token",0))
+        if not ts or not tok: continue
+        itype=str(r.get("instrument_type","")).upper()
+        seg=str(r.get("segment","")).upper()
+        if itype=="INDEX" or "INDICES" in seg: continue
+        exact.setdefault(ts,tok); normd.setdefault(_norm(ts),tok)
+    return exact,normd
 
-
-def resolve_token(exact: Dict, normd: Dict, sym: str) -> Optional[int]:
-    su = sym.upper().strip()
+def resolve_token(exact:Dict,normd:Dict,sym:str)->Optional[int]:
+    su=sym.upper().strip()
     return exact.get(su) or normd.get(_norm(su))
 
-
 @st.cache_data(show_spinner=False, ttl=3600)
-def fetch_kite_history(api_key: str, access_token: str,
-                       token: int, from_d: date, to_d: date) -> pd.DataFrame:
-    kite = get_kite(api_key, access_token)
-    rows = kite.historical_data(
-        instrument_token=token,
-        from_date=datetime.combine(from_d, datetime.min.time()),
-        to_date=datetime.combine(to_d, datetime.min.time()),
-        interval="day", continuous=False, oi=False,
-    )
-    if not rows:
-        return pd.DataFrame()
-    df = pd.DataFrame(rows)
-    df["date"]  = pd.to_datetime(df["date"]).dt.date
-    df["close"] = pd.to_numeric(df["close"], errors="coerce")
+def fetch_kite_history(api_key:str,access_token:str,token:int,from_d:date,to_d:date)->pd.DataFrame:
+    kite=get_kite(api_key,access_token)
+    rows=kite.historical_data(instrument_token=token,
+        from_date=datetime.combine(from_d,datetime.min.time()),
+        to_date=datetime.combine(to_d,datetime.min.time()),
+        interval="day",continuous=False,oi=False)
+    if not rows: return pd.DataFrame()
+    df=pd.DataFrame(rows)
+    df["date"]=pd.to_datetime(df["date"]).dt.date
+    df["close"]=pd.to_numeric(df["close"],errors="coerce")
     return df.sort_values("date").reset_index(drop=True)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# MySQL / indexbhav helpers
-# ─────────────────────────────────────────────────────────────────────────────
+# ── MySQL / indexbhav ─────────────────────────────────────────────────────────
 @st.cache_resource(show_spinner=False)
 def get_db_conn():
     return mysql.connector.connect(
-        host=DB_HOST, port=DB_PORT,
-        user=DB_USER, password=DB_PASS,
-        database=DB_NAME,
-        autocommit=True,
-    )
-
+        host=DB_HOST,port=DB_PORT,user=DB_USER,password=DB_PASS,
+        database=DB_NAME,autocommit=True)
 
 @st.cache_data(show_spinner=False, ttl=3600)
-def fetch_smallcap250(from_d: date, to_d: date) -> pd.DataFrame:
-    """Pull Nifty Smallcap 250 close prices from bhav.indexbhav."""
-    sql_exact = """
-        SELECT mktdate, close
-        FROM   indexbhav
-        WHERE  UPPER(symbol) = 'NIFTY SMALLCAP 250'
-          AND  mktdate BETWEEN %s AND %s
-        ORDER  BY mktdate
-    """
-    sql_like = """
-        SELECT mktdate, close
-        FROM   indexbhav
-        WHERE  UPPER(symbol) LIKE %s
-          AND  mktdate BETWEEN %s AND %s
-        ORDER  BY mktdate
-    """
+def fetch_smallcap250(from_d:date,to_d:date)->pd.DataFrame:
+    sql_e="SELECT mktdate,close FROM indexbhav WHERE UPPER(symbol)='NIFTY SMALLCAP 250' AND mktdate BETWEEN %s AND %s ORDER BY mktdate"
+    sql_l="SELECT mktdate,close FROM indexbhav WHERE UPPER(symbol) LIKE %s AND mktdate BETWEEN %s AND %s ORDER BY mktdate"
     try:
-        conn = get_db_conn()
-        df = pd.read_sql(sql_exact, conn, params=[from_d, to_d])
+        conn=get_db_conn()
+        df=pd.read_sql(sql_e,conn,params=[from_d,to_d])
         if df.empty:
-            for pat in ("%SMALLCAP%250%", "%NIFTY%SMALLCAP%"):
-                df = pd.read_sql(sql_like, conn, params=[pat, from_d, to_d])
-                if not df.empty:
-                    break
-        if df.empty:
-            return pd.DataFrame(columns=["mktdate", "close"])
-        df["mktdate"] = pd.to_datetime(df["mktdate"]).dt.date
-        df["close"]   = pd.to_numeric(df["close"], errors="coerce")
+            for pat in ("%SMALLCAP%250%","%NIFTY%SMALLCAP%"):
+                df=pd.read_sql(sql_l,conn,params=[pat,from_d,to_d])
+                if not df.empty: break
+        if df.empty: return pd.DataFrame(columns=["mktdate","close"])
+        df["mktdate"]=pd.to_datetime(df["mktdate"]).dt.date
+        df["close"]=pd.to_numeric(df["close"],errors="coerce")
         return df.drop_duplicates("mktdate").sort_values("mktdate").reset_index(drop=True)
     except Exception as e:
-        st.warning(f"Could not read indexbhav: {e}")
-        return pd.DataFrame(columns=["mktdate", "close"])
+        st.warning(f"indexbhav: {e}"); return pd.DataFrame(columns=["mktdate","close"])
 
+# ── Price helpers ─────────────────────────────────────────────────────────────
+def close_on_or_before(df:pd.DataFrame,d:date,dc="date",cc="close")->Optional[float]:
+    sub=df[df[dc]<=d]; return float(sub.iloc[-1][cc]) if not sub.empty else None
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Price lookup helpers
-# ─────────────────────────────────────────────────────────────────────────────
-def close_on_or_before(df: pd.DataFrame, d: date,
-                        date_col: str = "date",
-                        close_col: str = "close") -> Optional[float]:
-    sub = df[df[date_col] <= d]
-    return float(sub.iloc[-1][close_col]) if not sub.empty else None
+def close_on_or_after(df:pd.DataFrame,d:date,dc="date",cc="close")->Optional[Tuple[float,date]]:
+    sub=df[df[dc]>=d]
+    if sub.empty: return None
+    row=sub.iloc[0]; return float(row[cc]),row[dc]
 
+def pct(base:float,end:float)->float:
+    return (end-base)/base*100.0 if base else float("nan")
 
-def close_on_or_after(df: pd.DataFrame, d: date,
-                       date_col: str = "date",
-                       close_col: str = "close") -> Optional[Tuple[float, date]]:
-    sub = df[df[date_col] >= d]
-    if sub.empty:
-        return None
-    row = sub.iloc[0]
-    return float(row[close_col]), row[date_col]
+def _sign(v)->str:
+    if v is None or (isinstance(v,float) and pd.isna(v)): return "—"
+    return f"+{v:.2f}%" if v>=0 else f"{v:.2f}%"
 
+# ── Core analyser ─────────────────────────────────────────────────────────────
+def run_analysis(api_key,access_token,symbols,cutoff,progress):
+    fetch_from=cutoff-timedelta(days=5)
+    fetch_to=min(TODAY,cutoff+timedelta(days=40))
 
-def pct(base: float, end: float) -> float:
-    return (end - base) / base * 100.0 if base else float("nan")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Core analyser
-# ─────────────────────────────────────────────────────────────────────────────
-def run_analysis(
-    api_key: str, access_token: str,
-    symbols: List[str], cutoff: date,
-    progress,
-) -> Tuple[pd.DataFrame, Dict, Dict, List[str]]:
-    """
-    Returns
-    -------
-    df        : one row per symbol with base + period close/return columns
-    bm_ret    : {period_label: return_pct}
-    bm_asof   : {period_label: actual_date}  — may be < target if period not over
-    skipped   : list of symbols that had no data
-    """
-    fetch_from = cutoff - timedelta(days=5)
-    fetch_to   = min(TODAY, cutoff + timedelta(days=40))
-
-    # ── Benchmark from MySQL ─────────────────────────────────────────────────
-    bm_df   = fetch_smallcap250(fetch_from, fetch_to)
-    bm_ret  : Dict[str, Optional[float]] = {}
-    bm_asof : Dict[str, Optional[date]]  = {}
-    bm_base : Optional[float] = None
-
+    bm_df=fetch_smallcap250(fetch_from,fetch_to)
+    bm_ret:Dict[str,Optional[float]]={};  bm_asof:Dict[str,Optional[date]]={}
+    bm_base=None
     if not bm_df.empty:
-        bm_base = close_on_or_before(bm_df, cutoff, "mktdate", "close")
-        for label, days in PERIODS.items():
-            target = cutoff + timedelta(days=days)
-            # If target is in future, use the latest available date
-            if target > TODAY:
-                result = close_on_or_after(bm_df, cutoff + timedelta(days=1),
-                                           "mktdate", "close")
-                # actually get the most recent available
-                sub = bm_df[bm_df["mktdate"] > cutoff]
+        bm_base=close_on_or_before(bm_df,cutoff,"mktdate","close")
+        for label,days in PERIODS.items():
+            target=cutoff+timedelta(days=days)
+            if target>TODAY:
+                sub=bm_df[bm_df["mktdate"]>cutoff]
                 if not sub.empty:
-                    row = sub.iloc[-1]
-                    bm_ret[label]  = pct(bm_base, float(row["close"])) if bm_base else None
-                    bm_asof[label] = row["mktdate"]
-                else:
-                    bm_ret[label] = bm_asof[label] = None
+                    row=sub.iloc[-1]
+                    bm_ret[label]=pct(bm_base,float(row["close"])) if bm_base else None
+                    bm_asof[label]=row["mktdate"]
+                else: bm_ret[label]=bm_asof[label]=None
             else:
-                result = close_on_or_after(bm_df, target, "mktdate", "close")
+                result=close_on_or_after(bm_df,target,"mktdate","close")
                 if result and bm_base:
-                    bm_ret[label]  = pct(bm_base, result[0])
-                    bm_asof[label] = result[1]
-                else:
-                    bm_ret[label] = bm_asof[label] = None
+                    bm_ret[label]=pct(bm_base,result[0]); bm_asof[label]=result[1]
+                else: bm_ret[label]=bm_asof[label]=None
     else:
-        for label in PERIODS:
-            bm_ret[label] = bm_asof[label] = None
+        for label in PERIODS: bm_ret[label]=bm_asof[label]=None
 
-    # ── Instruments ─────────────────────────────────────────────────────────
-    exact, normd = load_nse_instruments(api_key, access_token)
+    exact,normd=load_nse_instruments(api_key,access_token)
+    rows:List[dict]=[]; skipped:List[str]=[]; n=len(symbols)
 
-    # ── Stocks ───────────────────────────────────────────────────────────────
-    rows: List[dict] = []
-    skipped: List[str] = []
-    n = len(symbols)
-
-    for i, sym in enumerate(symbols):
-        progress.progress((i + 1) / n, text=f"Fetching {sym}  ({i+1}/{n})")
-
-        token = resolve_token(exact, normd, sym)
-        if token is None:
-            skipped.append(f"{sym}  — not found in NSE instruments")
-            continue
-
-        df_h = fetch_kite_history(api_key, access_token, token, fetch_from, fetch_to)
+    for i,sym in enumerate(symbols):
+        progress.progress((i+1)/n, text=f"Fetching {sym}  ({i+1}/{n})")
+        token=resolve_token(exact,normd,sym)
+        if token is None: skipped.append(f"{sym} — not in NSE instruments"); continue
+        df_h=fetch_kite_history(api_key,access_token,token,fetch_from,fetch_to)
         time.sleep(SLEEP_S)
-
-        if df_h.empty:
-            skipped.append(f"{sym}  — no OHLC data")
-            continue
-
-        base = close_on_or_before(df_h, cutoff)
-        if base is None:
-            skipped.append(f"{sym}  — no data on or before cutoff")
-            continue
-
-        row: dict = {"Symbol": sym, "Base Close": base}
-
-        for label, days in PERIODS.items():
-            target = cutoff + timedelta(days=days)
-            if target > TODAY:
-                # Partial: use latest available date
-                sub = df_h[df_h["date"] > cutoff]
+        if df_h.empty: skipped.append(f"{sym} — no OHLC"); continue
+        base=close_on_or_before(df_h,cutoff)
+        if base is None: skipped.append(f"{sym} — no data on cutoff"); continue
+        row:dict={"Symbol":sym,"Base Close":base}
+        for label,days in PERIODS.items():
+            target=cutoff+timedelta(days=days)
+            if target>TODAY:
+                sub=df_h[df_h["date"]>cutoff]
                 if not sub.empty:
-                    last_row    = sub.iloc[-1]
-                    end_close   = float(last_row["close"])
-                    end_date    = last_row["date"]
-                    row[f"{label}|close"] = end_close
-                    row[f"{label}|date"]  = end_date
-                    row[f"{label}|ret"]   = pct(base, end_close)
-                    row[f"{label}|note"]  = f"till {end_date.strftime('%d %b')}"
+                    lr=sub.iloc[-1]
+                    row[f"{label}|close"]=float(lr["close"]); row[f"{label}|date"]=lr["date"]
+                    row[f"{label}|ret"]=pct(base,float(lr["close"]))
+                    row[f"{label}|note"]=f"till {lr['date'].strftime('%d %b')}"
                 else:
-                    row[f"{label}|close"] = row[f"{label}|date"] = row[f"{label}|ret"] = row[f"{label}|note"] = None
+                    row[f"{label}|close"]=row[f"{label}|date"]=row[f"{label}|ret"]=row[f"{label}|note"]=None
             else:
-                result = close_on_or_after(df_h, target)
+                result=close_on_or_after(df_h,target)
                 if result:
-                    end_close, end_date = result
-                    row[f"{label}|close"] = end_close
-                    row[f"{label}|date"]  = end_date
-                    row[f"{label}|ret"]   = pct(base, end_close)
-                    row[f"{label}|note"]  = None
+                    row[f"{label}|close"]=result[0]; row[f"{label}|date"]=result[1]
+                    row[f"{label}|ret"]=pct(base,result[0]); row[f"{label}|note"]=None
                 else:
-                    row[f"{label}|close"] = row[f"{label}|date"] = row[f"{label}|ret"] = row[f"{label}|note"] = None
-
+                    row[f"{label}|close"]=row[f"{label}|date"]=row[f"{label}|ret"]=row[f"{label}|note"]=None
         rows.append(row)
+    return pd.DataFrame(rows), bm_ret, bm_asof, skipped
 
-    df = pd.DataFrame(rows)
-    return df, bm_ret, bm_asof, skipped
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Colour helpers
-# ─────────────────────────────────────────────────────────────────────────────
-def _ret_colour(val, bm_val):
-    """
-    Solid background, always white text — maximum contrast.
-    Intensity of background scales with how far above/below benchmark.
-    """
-    if val is None or (isinstance(val, float) and pd.isna(val)):
-        return "background-color:#141a22; color:#3d4f61; font-weight:500"
-
-    diff = abs(val - bm_val) if (bm_val is not None and not pd.isna(bm_val)) else abs(val)
-    mag  = diff
-
-    # Green palette  (dark → vivid as magnitude grows)
-    G = ["#0d2218", "#0f2d1e", "#114225", "#17572e", "#1a6b35", "#238636"]
-    # Red palette
-    R = ["#220d0d", "#2d1010", "#3f1414", "#561a1a", "#6e2020", "#8b2525"]
-
-    if mag < 2:   tier = 0
-    elif mag < 4: tier = 1
-    elif mag < 7: tier = 2
-    elif mag < 10: tier = 3
-    elif mag < 15: tier = 4
-    else:          tier = 5
-
-    is_positive = val >= (bm_val if bm_val is not None else 0)
-    bg = G[tier] if is_positive else R[tier]
-
-    # Text: white for darker tiers, very bright for lightest tiers
-    fg = "#ffffff" if tier >= 2 else ("#a7f3c0" if is_positive else "#fca5a5")
-
-    return f"background-color:{bg}; color:{fg}; font-weight:700; font-size:0.88rem"
-
-
-def _sign(v):
-    if v is None or (isinstance(v, float) and pd.isna(v)):
-        return "—"
-    return f"+{v:.2f}%" if v >= 0 else f"{v:.2f}%"
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# HTML table builder  (no iframe, no white borders, full CSS control)
-# ─────────────────────────────────────────────────────────────────────────────
-def _ret_cell_style(val, bm_val) -> str:
-    """Return inline style string for a return cell."""
-    if val is None or (isinstance(val, float) and pd.isna(val)):
-        return "background:#0c1118; color:#2a3d52;"
-    diff = abs(val - bm_val) if (bm_val is not None and not pd.isna(bm_val)) else abs(val)
-    G = ["#0d2218","#0f2d1e","#114225","#17572e","#1a6b35","#238636"]
-    R = ["#220d0d","#2d1010","#3f1414","#561a1a","#6e2020","#8b2525"]
-    tier = 0 if diff<2 else 1 if diff<4 else 2 if diff<7 else 3 if diff<10 else 4 if diff<15 else 5
+# ── Return cell colour ────────────────────────────────────────────────────────
+def _ret_bg(val, bm_val) -> Tuple[str,str]:
+    """Returns (bg_color, fg_color) for a return value."""
+    if val is None or (isinstance(val,float) and pd.isna(val)):
+        return "#060d18","#1a3050"
+    diff = abs(val-bm_val) if (bm_val is not None and not pd.isna(bm_val)) else abs(val)
     is_pos = val >= (bm_val if bm_val is not None else 0)
-    bg  = G[tier] if is_pos else R[tier]
-    fg  = "#ffffff" if tier >= 2 else ("#a7f3c0" if is_pos else "#fca5a5")
-    return f"background:{bg}; color:{fg};"
+    # 6-tier scale
+    G_bg = ["#071a0f","#0a2416","#0f3620","#164d2d","#1a6b35","#22543d"]
+    G_fg = ["#22c55e","#22c55e","#4ade80","#ffffff","#ffffff","#ffffff"]
+    R_bg = ["#1a0707","#290a0a","#3f1010","#5c1616","#7f1d1d","#991b1b"]
+    R_fg = ["#f87171","#f87171","#fca5a5","#ffffff","#ffffff","#ffffff"]
+    tier = 0 if diff<2 else 1 if diff<4 else 2 if diff<7 else 3 if diff<10 else 4 if diff<15 else 5
+    if is_pos: return G_bg[tier], G_fg[tier]
+    return R_bg[tier], R_fg[tier]
 
+# ── HTML table ────────────────────────────────────────────────────────────────
+def build_table(df:pd.DataFrame, bm_ret:Dict, cutoff:date) -> str:
+    # Header
+    def th(txt, cls=""):
+        return f'<th class="{cls}">{txt}</th>'
 
-def build_html_table(df: pd.DataFrame, bm_ret: Dict, cutoff: date, sort_col: str) -> str:
-    """Render a fully themed HTML table — no iframe, no white border."""
-    period_headers = []
+    hdr = "<thead><tr>"
+    hdr += th("#","center")
+    hdr += th("Stock","left")
+    hdr += th(f"Base Close<br><small>{cutoff.strftime('%d %b')}</small>","")
     for label in PERIOD_KEYS:
         target = cutoff + timedelta(days=PERIODS[label])
         partial = target > TODAY
-        suffix  = f"<br><span style='font-size:0.6rem;color:#2e4a62;font-weight:500'>" \
-                  f"{'⏳ partial' if partial else target.strftime('%d %b')}</span>"
-        period_headers.append((label, suffix))
-
-    # ── Header ───────────────────────────────────────────────────────────────
-    th = lambda txt, extra="": f'<th style="padding:10px 14px;background:#080e18;color:#3d6080;font-size:0.66rem;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;border-bottom:2px solid #162030;white-space:nowrap;text-align:right{extra}">{txt}</th>'
-
-    header  = '<thead><tr>'
-    header += th("#", ";text-align:center;width:36px;color:#1e3040")
-    header += th("Stock", ";text-align:left;color:#5080a0")
-    header += th(f"Base Close<br><span style='font-size:0.6rem;color:#2e4a62'>{cutoff.strftime('%d %b')}</span>")
-    for label, suffix in period_headers:
-        header += th(f"{label} Close{suffix}")
-        lbl_clean = label.upper()
+        tag = f"{'⏳ ' if partial else ''}{target.strftime('%d %b')}"
         bm_val = bm_ret.get(label)
-        bm_str = f"<br><span style='font-size:0.58rem;color:#1e5038'>BM {_sign(bm_val)}</span>" if bm_val is not None else ""
-        header += th(f"{lbl_clean} RET%{bm_str}")
-    header += '</tr></thead>'
+        bm_str = f"<small style='color:#0e4028'> BM {_sign(bm_val)}</small>" if bm_val is not None else ""
+        hdr += th(f"{label}<br><small>{tag}</small>","")
+        hdr += th(f"Ret%{bm_str}","")
+    hdr += "</tr></thead>"
 
-    # ── Rows ─────────────────────────────────────────────────────────────────
-    td_base = "padding:8px 14px; border-bottom:1px solid #0e1620; text-align:right; font-size:0.84rem; font-weight:500; color:#6a90b0; white-space:nowrap;"
-    rows_html = "<tbody>"
-    for i, (_, r) in enumerate(df.iterrows()):
-        row_bg = "#0a1018" if i % 2 == 0 else "#0c1320"
-        rows_html += f'<tr style="background:{row_bg}">'
-
-        # Row number
-        rows_html += f'<td style="{td_base}text-align:center;color:#1e3040;font-size:0.72rem">{i+1}</td>'
-
-        # Stock name
-        rows_html += f'<td style="{td_base}text-align:left;color:#ddeeff;font-weight:700;font-size:0.87rem;letter-spacing:0.3px;background:#080f1a">{r["Symbol"]}</td>'
-
-        # Base close
+    # Body
+    body = "<tbody>"
+    for i,(_, r) in enumerate(df.iterrows()):
+        body += "<tr>"
+        body += f'<td class="num center">{i+1}</td>'
+        body += f'<td class="sym left">{r["Symbol"]}</td>'
         base = r.get("Base Close")
-        base_str = f"{base:,.2f}" if base is not None else "—"
-        rows_html += f'<td style="{td_base}">{base_str}</td>'
-
-        # Period columns
+        body += f'<td class="base">{f"{base:,.2f}" if base else "—"}</td>'
         for label in PERIOD_KEYS:
             c   = r.get(f"{label}|close")
             ret = r.get(f"{label}|ret")
             bm_val = bm_ret.get(label)
-            c_str   = f"{c:,.2f}" if c is not None else "—"
-            ret_str = _sign(ret)
-            rows_html += f'<td style="{td_base}">{c_str}</td>'
-            cell_style = _ret_cell_style(ret, bm_val)
-            rows_html += f'<td class="ret-cell" style="{td_base}font-weight:700;font-size:0.86rem;{cell_style}">{ret_str}</td>'
+            body += f'<td class="close">{f"{c:,.2f}" if c is not None else "—"}</td>'
+            bg, fg = _ret_bg(ret, bm_val)
+            body += (f'<td class="ret" style="background:{bg};color:{fg};'
+                     f'border-left:2px solid {bg}">{_sign(ret)}</td>')
+        body += "</tr>"
+    body += "</tbody>"
+    return f'<div class="pt-wrap"><table class="pt">{hdr}{body}</table></div>'
 
-        rows_html += "</tr>"
-    rows_html += "</tbody>"
-
+# ── Custom metric card ────────────────────────────────────────────────────────
+def metric_card(label:str, value:str, sub:str, bm_str:str="", is_pos:Optional[bool]=None) -> str:
+    cls = "pos" if is_pos is True else ("neg" if is_pos is False else "neu")
     return (
-        f'<div class="perf-table-wrap">'
-        f'<table class="perf-table">{header}{rows_html}</table>'
+        f'<div class="mc">'
+        f'<div class="mc-label">{label}</div>'
+        f'<div class="mc-value {cls}">{value}</div>'
+        f'<div class="mc-sub">{sub}</div>'
+        f'{"<div class=mc-bm>"+bm_str+"</div>" if bm_str else ""}'
         f'</div>'
     )
 
+# ── Custom stat card ──────────────────────────────────────────────────────────
+def stat_card(label:str, value:str, delta:str="", pos:Optional[bool]=None) -> str:
+    dcls = "pos" if pos is True else ("neg" if pos is False else ""  )
+    return (
+        f'<div class="stat">'
+        f'<div class="stat-label">{label}</div>'
+        f'<div class="stat-value">{value}</div>'
+        f'{"<div class=stat-delta "+dcls+">"+delta+"</div>" if delta else ""}'
+        f'</div>'
+    )
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Sidebar
-# ─────────────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# SIDEBAR
+# ══════════════════════════════════════════════════════════════════════════════
 with st.sidebar:
-    # ── Token — silent, no UI clutter ───────────────────────────────────────
-    creds        = read_token_file(TOKEN_FILE)
-    api_key      = creds.get("API_KEY", "")
-    access_token = creds.get("ACCESS_TOKEN", "")
+    creds = read_token_file(TOKEN_FILE)
+    api_key      = creds.get("API_KEY","")
+    access_token = creds.get("ACCESS_TOKEN","")
     if not (api_key and access_token):
         st.error("kite_token.txt missing — run kite_get_access_token.py")
         st.stop()
 
-    # ── Title inside sidebar ─────────────────────────────────────────────────
     st.markdown("""
-    <div style="padding:4px 0 14px 0; border-bottom:1px solid #1a2a3a; margin-bottom:12px;">
-      <div style="font-size:1.05rem;font-weight:800;color:#ddeeff;letter-spacing:-0.2px;">
-        📈 Institutional Picks
+    <div style="margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid #0c1e30;">
+      <div style="font-size:1rem;font-weight:900;color:#4a9adf;letter-spacing:0.5px;">
+        PICKS PERFORMANCE
       </div>
-      <div style="font-size:0.68rem;color:#3a5570;font-weight:600;
-                  text-transform:uppercase;letter-spacing:1.2px;margin-top:3px;">
-        Performance Tracker
+      <div style="font-size:0.65rem;color:#1a4060;font-weight:600;
+           text-transform:uppercase;letter-spacing:2px;margin-top:4px;">
+        Institutional · Nifty SC 250
       </div>
     </div>
     """, unsafe_allow_html=True)
 
-    st.markdown('<div class="sidebar-section">Cutoff Date</div>', unsafe_allow_html=True)
-
     files_map = discover_picks_files()
     if not files_map:
-        st.error(f"No institutional_picks_*.txt in:\n`{REPORTS_DIR}`")
-        st.stop()
+        st.error(f"No institutional_picks_*.txt in {REPORTS_DIR}"); st.stop()
 
-    dates      = list(files_map.keys())
-    date_lbls  = [d.strftime("%d %b %Y") for d in dates]
-    sel_idx    = st.selectbox("Picks date", range(len(dates)),
-                               format_func=lambda i: date_lbls[i])
-    cutoff     = dates[sel_idx]
-    picks_path = files_map[cutoff]
+    dates     = list(files_map.keys())
+    date_lbls = [d.strftime("%d %b %Y") for d in dates]
 
-    st.markdown('<div class="sidebar-section" style="margin-top:14px;">Analysis Windows</div>', unsafe_allow_html=True)
+    st.markdown('<div style="font-size:0.6rem;font-weight:700;text-transform:uppercase;'
+                'letter-spacing:1.8px;color:#1a4060;margin-bottom:6px;">Cutoff Date</div>',
+                unsafe_allow_html=True)
+
+    sel_idx   = st.selectbox("Picks date", range(len(dates)),
+                              format_func=lambda i: date_lbls[i],
+                              label_visibility="collapsed")
+    cutoff    = dates[sel_idx]
+    picks_path= files_map[cutoff]
+
+    # Analysis windows
+    st.markdown('<div style="font-size:0.6rem;font-weight:700;text-transform:uppercase;'
+                'letter-spacing:1.8px;color:#1a4060;margin:16px 0 8px 0;">Windows</div>',
+                unsafe_allow_html=True)
     for label, days in PERIODS.items():
         target = cutoff + timedelta(days=days)
-        if target <= TODAY:
-            st.markdown(
-                f'<div style="font-size:0.78rem;color:#3a6a4a;padding:2px 0;">'
-                f'<span style="color:#2a5a3a">●</span> '
-                f'<span style="color:#6ab880;font-weight:600">{label}</span>'
-                f'<span style="color:#2a4a3a"> → {target.strftime("%d %b %Y")} ✓</span></div>',
-                unsafe_allow_html=True)
-        else:
-            lag = (TODAY - cutoff).days
-            st.markdown(
-                f'<div style="font-size:0.78rem;padding:2px 0;">'
-                f'<span style="color:#4a6a8a">●</span> '
-                f'<span style="color:#6090b0;font-weight:600">{label}</span>'
-                f'<span style="color:#2e4a62"> → {target.strftime("%d %b %Y")}'
-                f' <em>({lag}d so far)</em></span></div>',
-                unsafe_allow_html=True)
+        done   = target <= TODAY
+        lag    = (TODAY - cutoff).days
+        dot_c  = "#22c55e" if done else "#3b82f6"
+        val_c  = "#4ab870" if done else "#5a90c0"
+        sub    = target.strftime("%d %b %Y") + (" ✓" if done else f" ({lag}d)")
+        st.markdown(
+            f'<div style="display:flex;align-items:center;gap:8px;padding:4px 0;">'
+            f'<span style="width:6px;height:6px;border-radius:50%;background:{dot_c};'
+            f'flex-shrink:0;margin-top:1px;display:inline-block;"></span>'
+            f'<div><div style="font-size:0.78rem;font-weight:700;color:{val_c};">{label}</div>'
+            f'<div style="font-size:0.67rem;color:#1a3a56;">{sub}</div></div>'
+            f'</div>', unsafe_allow_html=True)
 
-    st.markdown('<div style="margin-top:16px;"></div>', unsafe_allow_html=True)
-    run_btn = st.button("🚀  Run Analysis", type="primary", use_container_width=True)
+    st.markdown('<div style="margin-top:20px;"></div>', unsafe_allow_html=True)
+    run_btn = st.button("▶  Run Analysis", type="primary", use_container_width=True)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Main area — starts directly with content (no banner)
-# ─────────────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# MAIN AREA
+# ══════════════════════════════════════════════════════════════════════════════
 symbols = parse_picks_file(picks_path)
+
+# Top bar (always visible, compact)
+st.markdown(
+    f'<div class="topbar">'
+    f'<span class="topbar-title">Institutional Picks</span>'
+    f'<span class="topbar-pill">Cutoff <b>{cutoff.strftime("%d %b %Y")}</b></span>'
+    f'<span class="topbar-pill"><b>{len(symbols)}</b> stocks</span>'
+    f'<span class="topbar-pill">vs <b>Nifty SC 250</b></span>'
+    f'</div>',
+    unsafe_allow_html=True)
 
 if not run_btn:
     st.markdown(
-        f'<p style="color:#2e4a62;font-size:0.82rem;margin:4px 0 12px 0;">'
-        f'Cutoff <b style="color:#4a7090">{cutoff.strftime("%d %b %Y")}</b>'
-        f' · {len(symbols)} stocks · Nifty Smallcap 250 benchmark</p>',
-        unsafe_allow_html=True)
-    st.info("👈 Select a date in the sidebar and click **Run Analysis**.")
-    with st.expander("📋 Symbols in this file"):
+        '<div style="color:#1a3a58;font-size:0.85rem;padding:40px 0;text-align:center;">'
+        '← Select a cutoff date and click <strong style="color:#3b82f6">▶ Run Analysis</strong>'
+        '</div>', unsafe_allow_html=True)
+    with st.expander(f"📋 {len(symbols)} stocks in this file"):
         cols = st.columns(5)
-        for i, sym in enumerate(symbols):
-            cols[i % 5].markdown(f"`{sym}`")
+        for i,sym in enumerate(symbols): cols[i%5].markdown(f"`{sym}`")
     st.stop()
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Run
-# ─────────────────────────────────────────────────────────────────────────────
-prog    = st.progress(0, text="Initialising…")
-df, bm_ret, bm_asof, skipped = run_analysis(
-    api_key, access_token, symbols, cutoff, prog
-)
+# ── Run ───────────────────────────────────────────────────────────────────────
+prog = st.progress(0, text="Initialising…")
+df, bm_ret, bm_asof, skipped = run_analysis(api_key, access_token, symbols, cutoff, prog)
 prog.empty()
 
 if df.empty:
-    st.error("No data returned. Check token validity.")
-    st.stop()
+    st.error("No data returned. Check Kite token validity."); st.stop()
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Benchmark cards
-# ─────────────────────────────────────────────────────────────────────────────
-st.markdown(
-    f'<div style="display:flex;align-items:baseline;gap:10px;margin-bottom:10px;">'
-    f'<span style="font-size:0.95rem;font-weight:800;color:#c8dff0;">Cutoff '
-    f'<span style="color:#4a9eff">{cutoff.strftime("%d %b %Y")}</span></span>'
-    f'<span style="color:#1e3040;font-size:0.75rem;">·</span>'
-    f'<span style="font-size:0.75rem;color:#2e4a60;font-weight:600;">'
-    f'{len(symbols)} stocks · Nifty Smallcap 250 benchmark</span>'
-    f'</div>',
-    unsafe_allow_html=True)
-st.markdown('<p class="section-label">Nifty Smallcap 250 Benchmark Returns</p>', unsafe_allow_html=True)
-bm_cols = st.columns(len(PERIODS))
-for col_ui, label in zip(bm_cols, PERIOD_KEYS):
-    val   = bm_ret.get(label)
-    asof  = bm_asof.get(label)
-    asof_str = asof.strftime("%d %b") if asof else "N/A"
-    target   = cutoff + timedelta(days=PERIODS[label])
-    partial  = target > TODAY
-    col_ui.metric(
-        label=f"{label}{'  ⏳' if partial else ''}",
-        value=_sign(val) if val is not None else "N/A",
-        delta=f"as of {asof_str}" + (" (partial)" if partial else ""),
-        delta_color="off",
-    )
+# ── Benchmark cards ───────────────────────────────────────────────────────────
+st.markdown('<div class="sec-label">Nifty Smallcap 250 Benchmark</div>', unsafe_allow_html=True)
+bm_html = '<div class="metric-row">'
+for label in PERIOD_KEYS:
+    val  = bm_ret.get(label)
+    asof = bm_asof.get(label)
+    target = cutoff + timedelta(days=PERIODS[label])
+    partial = target > TODAY
+    asof_str = f"{'⏳ ' if partial else ''}as of {asof.strftime('%d %b')}" if asof else "N/A"
+    is_pos = (val > 0) if val is not None else None
+    bm_html += metric_card(label, _sign(val), asof_str, "", is_pos)
+bm_html += "</div>"
+st.markdown(bm_html, unsafe_allow_html=True)
 
-st.markdown("---")
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Summary statistics
-# ─────────────────────────────────────────────────────────────────────────────
-st.markdown('<p class="section-label">Portfolio Snapshot</p>', unsafe_allow_html=True)
-sum_cols = st.columns(len(PERIODS) * 2)
-ci = 0
+# ── Portfolio snapshot ────────────────────────────────────────────────────────
+st.markdown('<div class="sec-label">Portfolio Snapshot</div>', unsafe_allow_html=True)
+stat_html = '<div class="stat-row">'
 for label in PERIOD_KEYS:
     ret_col = f"{label}|ret"
-    if ret_col not in df.columns:
-        ci += 2
-        continue
+    if ret_col not in df.columns: continue
     series  = df[ret_col].dropna()
     bm_val  = bm_ret.get(label)
-    n_total = len(series)
-    avg_ret = series.mean() if n_total else None
-    excess  = (avg_ret - bm_val) if avg_ret is not None and bm_val is not None else None
-    n_beat  = int((series > bm_val).sum()) if bm_val is not None and n_total else 0
-    pct_beat = n_beat / n_total * 100 if n_total else 0
+    n       = len(series)
+    avg     = series.mean() if n else None
+    excess  = (avg - bm_val) if avg is not None and bm_val is not None else None
+    n_beat  = int((series > bm_val).sum()) if bm_val is not None and n else 0
+    pct_b   = n_beat/n*100 if n else 0
 
-    sum_cols[ci].metric(
-        label=f"{label} Avg Return",
-        value=_sign(avg_ret) if avg_ret is not None else "N/A",
-        delta=f"{excess:+.2f}% vs benchmark" if excess is not None else "",
-    )
-    ci += 1
-    sum_cols[ci].metric(
-        label=f"Beat BM ({label})",
-        value=f"{n_beat} / {n_total}",
-        delta=f"{pct_beat:.0f}% of picks",
-        delta_color="normal" if pct_beat >= 50 else "inverse",
-    )
-    ci += 1
+    stat_html += stat_card(
+        f"{label} Avg",
+        _sign(avg) if avg is not None else "—",
+        (f"{excess:+.2f}% vs BM" if excess is not None else ""),
+        pos=(excess>=0) if excess is not None else None)
+    stat_html += stat_card(
+        f"Beat BM ({label})",
+        f"{n_beat} / {n}",
+        f"{pct_b:.0f}% of picks",
+        pos=(pct_b>=50))
+stat_html += "</div>"
+st.markdown(stat_html, unsafe_allow_html=True)
 
-st.markdown("---")
+# ── Stock table ───────────────────────────────────────────────────────────────
+st.markdown('<div class="sec-label">Stock Returns</div>', unsafe_allow_html=True)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Table
-# ─────────────────────────────────────────────────────────────────────────────
-st.markdown('<p class="section-label">Stock-level Returns</p>', unsafe_allow_html=True)
+sort_opts = {"1 Month Ret%":"1 Month|ret","15 Days Ret%":"15 Days|ret",
+             "1 Week Ret%":"1 Week|ret","Symbol (A→Z)":"Symbol"}
 
-sort_options = {
-    "1 Month Ret%":  "1 Month|ret",
-    "15 Days Ret%":  "15 Days|ret",
-    "1 Week Ret%":   "1 Week|ret",
-    "Symbol (A→Z)":  "Symbol",
-}
-sort_choice = st.selectbox(
-    "Sort by",
-    options=list(sort_options.keys()),
-    index=0,
-    label_visibility="collapsed",
-)
-sort_col = sort_options[sort_choice]
-asc      = sort_choice == "Symbol (A→Z)"
+c1, c2 = st.columns([1, 5])
+with c1:
+    sort_choice = st.selectbox("Sort", list(sort_opts.keys()), index=0,
+                                label_visibility="collapsed")
+sort_col = sort_opts[sort_choice]
+asc = sort_choice == "Symbol (A→Z)"
+df_sorted = df.sort_values(sort_col, ascending=asc, na_position="last").reset_index(drop=True)
+st.markdown(build_table(df_sorted, bm_ret, cutoff), unsafe_allow_html=True)
 
-df_sorted = df.sort_values(sort_col, ascending=asc, na_position="last") \
-              .reset_index(drop=True)
+# ── Charts ────────────────────────────────────────────────────────────────────
+st.markdown('<div class="sec-label" style="margin-top:24px;">Charts</div>', unsafe_allow_html=True)
+tab1, tab2 = st.tabs(["📊 Return Bars", "🔵 1W vs 1M"])
 
-html_table = build_html_table(df_sorted, bm_ret, cutoff, sort_col)
-st.markdown(html_table, unsafe_allow_html=True)
+PLOT_BG = "#060c18"
+GRID_C  = "#0c1e30"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Charts
-# ─────────────────────────────────────────────────────────────────────────────
-st.markdown("---")
-st.markdown('<p class="section-label">Visual Analysis</p>', unsafe_allow_html=True)
-
-chart_tab1, chart_tab2 = st.tabs(["📊 Return Bars", "🔵 1W vs 1M Scatter"])
-
-# ── Tab 1: bar chart ─────────────────────────────────────────────────────────
-with chart_tab1:
+with tab1:
     for label in PERIOD_KEYS:
         ret_col = f"{label}|ret"
-        if ret_col not in df.columns:
-            continue
-        bm_val = bm_ret.get(label)
+        if ret_col not in df.columns: continue
+        bm_val  = bm_ret.get(label)
         partial = cutoff + timedelta(days=PERIODS[label]) > TODAY
-
-        chart_df = df[["Symbol", ret_col]].dropna().copy()
-        chart_df.columns = ["Symbol", "Return%"]
-        chart_df = chart_df.sort_values("Return%", ascending=False)
-        chart_df["colour"] = chart_df["Return%"].apply(
-            lambda v: "#3fb950" if (bm_val is None or v >= bm_val) else "#f85149"
-        )
-
-        fig = go.Figure()
-        fig.add_trace(go.Bar(
-            x=chart_df["Symbol"],
-            y=chart_df["Return%"],
-            marker_color=chart_df["colour"],
-            marker_line_width=0,
-            hovertemplate="<b>%{x}</b><br>Return: %{y:.2f}%<extra></extra>",
-        ))
+        cdf = df[["Symbol", ret_col]].dropna().copy()
+        cdf.columns = ["Symbol","Return%"]
+        cdf = cdf.sort_values("Return%", ascending=False)
+        cdf["col"] = cdf["Return%"].apply(
+            lambda v: "#22c55e" if (bm_val is None or v>=bm_val) else "#ef4444")
+        fig = go.Figure(go.Bar(
+            x=cdf["Symbol"], y=cdf["Return%"],
+            marker_color=cdf["col"], marker_line_width=0,
+            hovertemplate="<b>%{x}</b><br>%{y:.2f}%<extra></extra>"))
         if bm_val is not None:
-            asof_lbl = bm_asof.get(label)
-            asof_str = asof_lbl.strftime("%d %b") if asof_lbl else ""
-            fig.add_hline(
-                y=bm_val, line_dash="dash", line_color="#f0883e", line_width=1.5,
-                annotation_text=f"  Nifty SC 250: {bm_val:+.2f}%{' ('+asof_str+')' if asof_str else ''}",
-                annotation_font_color="#f0883e",
-                annotation_position="top left",
-            )
-        title_suffix = " ⏳ (partial)" if partial else ""
+            asof_l = bm_asof.get(label)
+            fig.add_hline(y=bm_val, line_dash="dot", line_color="#f59e0b", line_width=1.5,
+                annotation_text=f"  SC250 {bm_val:+.2f}%{' '+asof_l.strftime('%d %b') if asof_l else ''}",
+                annotation_font_color="#f59e0b", annotation_position="top left")
         fig.update_layout(
-            title=dict(text=f"{label} Returns{title_suffix}", font_size=14,
-                       font_color="#8b949e", x=0),
-            plot_bgcolor="#0d1117", paper_bgcolor="#0d1117",
-            font_color="#e6edf3",
-            xaxis=dict(tickangle=-45, gridcolor="#21262d", tickfont_size=11),
-            yaxis=dict(gridcolor="#21262d", zeroline=True,
-                       zerolinecolor="#30363d", ticksuffix="%"),
-            margin=dict(t=50, b=100, l=50, r=20),
-            height=360,
-            showlegend=False,
-        )
+            title=dict(text=f"{label} Returns{'  ⏳' if partial else ''}", font_size=13,
+                       font_color="#2a5070", x=0),
+            plot_bgcolor=PLOT_BG, paper_bgcolor=PLOT_BG, font_color="#4a7090",
+            xaxis=dict(tickangle=-45, gridcolor=GRID_C, tickfont_size=11, tickfont_color="#2a5070"),
+            yaxis=dict(gridcolor=GRID_C, zeroline=True, zerolinecolor="#102030",
+                       ticksuffix="%", tickfont_color="#2a5070"),
+            margin=dict(t=40,b=100,l=50,r=20), height=340, showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
 
-# ── Tab 2: scatter ────────────────────────────────────────────────────────────
-with chart_tab2:
+with tab2:
     if "1 Week|ret" in df.columns and "1 Month|ret" in df.columns:
-        sc = df[["Symbol", "1 Week|ret", "1 Month|ret"]].dropna().copy()
-        sc.columns = ["Symbol", "1W", "1M"]
-        bm_1w = bm_ret.get("1 Week")
-        bm_1m = bm_ret.get("1 Month")
-
+        sc = df[["Symbol","1 Week|ret","1 Month|ret"]].dropna().copy()
+        sc.columns = ["Symbol","1W","1M"]
+        bm_1w = bm_ret.get("1 Week"); bm_1m = bm_ret.get("1 Month")
         colours = []
-        for _, row in sc.iterrows():
-            above_1w = bm_1w is None or row["1W"] >= bm_1w
-            above_1m = bm_1m is None or row["1M"] >= bm_1m
-            if above_1w and above_1m:
-                colours.append("#3fb950")   # green — beat both
-            elif not above_1w and not above_1m:
-                colours.append("#f85149")   # red — lagged both
-            else:
-                colours.append("#d29922")   # amber — mixed
-
-        fig2 = go.Figure()
-        fig2.add_trace(go.Scatter(
-            x=sc["1W"], y=sc["1M"],
-            mode="markers+text",
-            text=sc["Symbol"],
-            textposition="top center",
-            textfont=dict(size=9, color="#8b949e"),
-            marker=dict(color=colours, size=11, line=dict(width=1, color="#21262d")),
-            hovertemplate="<b>%{text}</b><br>1W: %{x:.2f}%<br>1M: %{y:.2f}%<extra></extra>",
-        ))
+        for _,row in sc.iterrows():
+            aw = bm_1w is None or row["1W"]>=bm_1w
+            am = bm_1m is None or row["1M"]>=bm_1m
+            colours.append("#22c55e" if aw and am else ("#ef4444" if not aw and not am else "#f59e0b"))
+        fig2 = go.Figure(go.Scatter(
+            x=sc["1W"], y=sc["1M"], mode="markers+text", text=sc["Symbol"],
+            textposition="top center", textfont=dict(size=9, color="#2a5070"),
+            marker=dict(color=colours, size=10, line=dict(width=1, color="#0c1e30")),
+            hovertemplate="<b>%{text}</b><br>1W %{x:.2f}%  1M %{y:.2f}%<extra></extra>"))
         if bm_1w is not None:
-            fig2.add_vline(x=bm_1w, line_dash="dash", line_color="#f0883e", line_width=1.2,
-                           annotation_text=" BM 1W", annotation_font_color="#f0883e")
+            fig2.add_vline(x=bm_1w, line_dash="dot", line_color="#f59e0b", line_width=1.2,
+                annotation_text=" BM 1W", annotation_font_color="#f59e0b")
         if bm_1m is not None:
-            fig2.add_hline(y=bm_1m, line_dash="dash", line_color="#f0883e", line_width=1.2,
-                           annotation_text=" BM 1M", annotation_font_color="#f0883e")
-
+            fig2.add_hline(y=bm_1m, line_dash="dot", line_color="#f59e0b", line_width=1.2,
+                annotation_text=" BM 1M", annotation_font_color="#f59e0b")
         fig2.update_layout(
-            plot_bgcolor="#0d1117", paper_bgcolor="#0d1117",
-            font_color="#e6edf3",
-            xaxis=dict(title="1 Week Return (%)", gridcolor="#21262d",
-                       zeroline=True, zerolinecolor="#30363d"),
-            yaxis=dict(title="1 Month Return (%)", gridcolor="#21262d",
-                       zeroline=True, zerolinecolor="#30363d"),
-            height=500,
-            margin=dict(t=20, b=60, l=60, r=20),
-        )
+            plot_bgcolor=PLOT_BG, paper_bgcolor=PLOT_BG, font_color="#4a7090",
+            xaxis=dict(title="1 Week %", gridcolor=GRID_C, zeroline=True,
+                       zerolinecolor="#102030", tickfont_color="#2a5070"),
+            yaxis=dict(title="1 Month %", gridcolor=GRID_C, zeroline=True,
+                       zerolinecolor="#102030", tickfont_color="#2a5070"),
+            height=480, margin=dict(t=20,b=60,l=60,r=20))
         st.plotly_chart(fig2, use_container_width=True)
-        st.caption("🟢 Beat both periods  🟡 Mixed  🔴 Lagged both  |  Orange dashed = benchmark")
+        st.markdown('<div style="font-size:0.7rem;color:#1a3a56;text-align:center;">'
+                    '🟢 Beat both · 🟡 Mixed · 🔴 Lagged both · '
+                    '<span style="color:#f59e0b">dotted</span> = benchmark</div>',
+                    unsafe_allow_html=True)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Skipped
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Skipped ───────────────────────────────────────────────────────────────────
 if skipped:
-    st.markdown("---")
-    with st.expander(f"⚠️  {len(skipped)} stocks skipped"):
-        html = " ".join(f'<span class="skip-chip">{s}</span>' for s in skipped)
-        st.markdown(html, unsafe_allow_html=True)
+    with st.expander(f"⚠️ {len(skipped)} stocks skipped"):
+        st.markdown(" ".join(f'<span class="skip-chip">{s}</span>' for s in skipped),
+                    unsafe_allow_html=True)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Export
-# ─────────────────────────────────────────────────────────────────────────────
-st.markdown("---")
-export_df = df.copy()
-export_df = export_df.rename(columns={"Symbol": "Stock"})
+# ── Export ────────────────────────────────────────────────────────────────────
+st.markdown('<div style="margin-top:20px;"></div>', unsafe_allow_html=True)
+exp = df.copy().rename(columns={"Symbol":"Stock"})
 for label in PERIOD_KEYS:
-    bm_val = bm_ret.get(label)
-    ret_col = f"{label}|ret"
-    if ret_col in export_df.columns and bm_val is not None:
-        export_df[f"{label}|vs_bm"] = export_df[ret_col] - bm_val
-
-csv = export_df.to_csv(index=False).encode("utf-8")
-st.download_button(
-    "📥  Download CSV",
-    csv,
-    file_name=f"perf_{cutoff.strftime('%d%b%Y').lower()}.csv",
-    mime="text/csv",
-)
+    bm_val=bm_ret.get(label); rc=f"{label}|ret"
+    if rc in exp.columns and bm_val is not None:
+        exp[f"{label}|vs_bm"]=exp[rc]-bm_val
+st.download_button("📥 Download CSV", exp.to_csv(index=False).encode(),
+    file_name=f"perf_{cutoff.strftime('%d%b%Y').lower()}.csv", mime="text/csv")
