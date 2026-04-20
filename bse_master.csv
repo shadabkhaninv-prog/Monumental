@@ -62,7 +62,7 @@ AEGISCHEM,Logistics
 AEGISLOG,Logistics
 AEGISVOPAK,Port
 AEQUS,Defense
-AEROFLEX,Steel
+AEROFLEX,Steel Pipes
 AETHER,Chemicals
 AFCONS,Construction
 AFFLE,It
@@ -136,7 +136,7 @@ AONENIFTY,It
 AONESILVER,It
 AONETMMQ50,It
 AONETOTAL,It
-APARINDS,Electronics
+APARINDS,Power Equipment
 APCL,Cement
 APCOTEXIND,Chemicals
 APEX,Aquaculture
@@ -389,7 +389,7 @@ CAPTRUST,Finserv
 CARBORUNIV,Abrasives
 CAREERP,It
 CARERATING,Rating
-CARTRADE,Ecommerce
+CARTRADE,Auto
 CASHIETF,Etf
 CASTROLIND,Lubricants
 CCCL,Real Estate
@@ -1094,7 +1094,7 @@ JISLDVREQS,Irrigation
 JISLJALEQS,Irrigation
 JITFINFRA,Power
 JKCEMENT,Cement
-JKIL,Construction
+JKIL,Epc
 JKIPL,Epc
 JKLAKSHMI,Cement
 JKPAPER,Paper
@@ -1633,7 +1633,7 @@ PGHH,Fmcg
 PGHL,Pharma
 PGIL,Clothing
 PHARMABEES,Etf
-PHOENIXLTD,Construction
+PHOENIXLTD,Real Estate
 PICCADIL,Fmcg
 PIDILITIND,Fmcg
 PIIND,Agrochem

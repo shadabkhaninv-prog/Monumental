@@ -2,7 +2,7 @@
 """
 Liquid Momentum Screener v2.0
 Scans NSE universe, scores stocks on composite momentum + relative-strength,
-identifies top 5 sectors, and produces an Excel report of the top 30 stocks.
+identifies top 5 sectors, and produces an Excel report of the top 20 stocks.
 
 Usage:
     python liquid_momentum_scanner.py <as_of_date> <reset_date> [options]
@@ -46,7 +46,7 @@ log = logging.getLogger(__name__)
 KITE_RATE_LIMIT = 3          # requests per second
 KITE_BATCH_PAUSE = 0.34      # seconds between calls
 TOP_N = 125
-TOP_N_REPORT = 30
+TOP_N_REPORT = 20
 MIN_CLOSE = 50.0             # ₹
 MIN_EXTENDED_TURNOVER_CR = 20.0   # ₹ Crore
 ATR_PERIOD = 14
@@ -1192,10 +1192,10 @@ def write_excel_report(
         return round(float(clean.quantile(q)), 2)
 
     # ================================================================
-    # Sheet 1: Top 30 Stocks
+    # Sheet 1: Top 20 Stocks
     # ================================================================
     ws1 = wb.active
-    ws1.title = "Top 30 Stocks"
+    ws1.title = "Top 20 Stocks"
 
     top30_cols = [
         ("Rank", "rank"), ("Symbol", "symbol"), ("Source", "source"), ("Sector", "sector"),
@@ -1320,9 +1320,9 @@ def write_excel_report(
         ("Extended universe candidates", pipeline_summary.get("extended_candidates", "")),
         ("Scored Extended stocks", pipeline_summary.get("scored_extended", "")),
         ("Total scored (merged)", pipeline_summary.get("total_scored", "")),
-        ("Initial Top 30 shortlist", pipeline_summary.get("top30_initial_count", "")),
-        (f"Top 30 excluded: ATR% < {TOP30_MIN_ATR_PCT}", pipeline_summary.get("top30_atr_excluded_count", "")),
-        ("Top 30 final report", pipeline_summary.get("top30_count", "")),
+        ("Initial Top 20 shortlist", pipeline_summary.get("top30_initial_count", "")),
+        (f"Top 20 excluded: ATR% < {TOP30_MIN_ATR_PCT}", pipeline_summary.get("top30_atr_excluded_count", "")),
+        ("Top 20 final report", pipeline_summary.get("top30_count", "")),
         ("Failed API calls", len(failed_symbols)),
     ]
     for r_idx, (label, val) in enumerate(summary_rows, start=2):
@@ -1412,7 +1412,7 @@ def write_excel_report(
         ("Scoring", "Green candles", "Top 80 / 90 percentile", "+2 / +4", f"Current cutoffs ≈ {green_top80} / {green_top90}"),
         ("Universe Filter", "ATR% pre-filter", f"ATR% must be >= {TOP30_MIN_ATR_PCT:.1f}", "Required", "Applied before 52W / 12M gates and scoring"),
         ("Sector", "Top 5 sectors", "Composite = 40% avg score + 25% breadth + 20% RS + 15% count", "Reference", "Sector ranking logic"),
-        ("Output", "ATR guard", f"No additional Top 30 ATR exclusion beyond ATR% >= {TOP30_MIN_ATR_PCT:.1f}", "Reference", "Top 30 exclusion sheet should normally be empty"),
+        ("Output", "ATR guard", f"No additional Top 20 ATR exclusion beyond ATR% >= {TOP30_MIN_ATR_PCT:.1f}", "Reference", "Top 20 exclusion sheet should normally be empty"),
     ]
 
     for row in rr_rows:
@@ -1447,9 +1447,9 @@ def write_excel_report(
     ws5.freeze_panes = "A2"
 
     # ================================================================
-    # Sheet 7: ATR Excluded Top 30
+    # Sheet 7: ATR Excluded Top 20
     # ================================================================
-    ws6 = wb.create_sheet("ATR Excluded Top30")
+    ws6 = wb.create_sheet("ATR Excluded Top20")
     ws6.append(headers)
     style_header_row(ws6, 1, len(headers))
     ws6.row_dimensions[1].height = 30
@@ -1567,7 +1567,7 @@ def build_liquid_leader_bonus_payload(liquid_leaders: pd.DataFrame) -> dict[str,
         symbol = str(raw_symbol).strip().upper().replace("NSE:", "").replace("-", "_")
         if not symbol or symbol == "NAN":
             continue
-        payload[symbol] = 6 if index <= 10 else 3
+        payload[symbol] = 8 if index <= 10 else 6
     return payload
 
 
@@ -1925,7 +1925,7 @@ def main():
         extended_scored_df = scored_extended.copy()
 
     # ------------------------------------------------------------------
-    # 11. Merge and select Top 30
+    # 11. Merge and select Top 20
     # ------------------------------------------------------------------
     scored_frames = [df for df in [scored_topn, scored_extended] if not df.empty]
     if scored_frames:

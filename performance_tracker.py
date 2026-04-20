@@ -100,7 +100,7 @@ section[data-testid="stMain"],
     color:#ffffff !important;
 }
 [data-testid="stSidebar"] label {
-    color:#1e4060 !important;
+    color:#4070a0 !important;
     font-size:0.62rem !important;
     font-weight:700 !important;
     text-transform:uppercase;
@@ -159,7 +159,7 @@ section[data-testid="stMain"],
 .mc:hover { border-color:#1e3a58; }
 .mc-label {
     font-size:0.62rem; font-weight:700; text-transform:uppercase;
-    letter-spacing:1.8px; color:#2a5070; margin-bottom:8px;
+    letter-spacing:1.8px; color:#4a80a0; margin-bottom:8px;
 }
 .mc-value {
     font-size:1.8rem; font-weight:900; letter-spacing:-1px;
@@ -168,8 +168,8 @@ section[data-testid="stMain"],
 .mc-value.pos { color:#22c55e; }
 .mc-value.neg { color:#f43f5e; }
 .mc-value.neu { color:#7abcf0; }
-.mc-sub { font-size:0.7rem; color:#1e4060; font-weight:600; }
-.mc-bm  { font-size:0.7rem; color:#1a5038; margin-top:3px; font-weight:600; }
+.mc-sub { font-size:0.7rem; color:#3a6a88; font-weight:600; }
+.mc-bm  { font-size:0.7rem; color:#2d7050; margin-top:3px; font-weight:600; }
 
 /* ── Stat row (portfolio snapshot) ──────────────────────────── */
 .stat-row { display:flex; gap:10px; margin:0 0 20px 0; flex-wrap:wrap; }
@@ -179,7 +179,7 @@ section[data-testid="stMain"],
     border-radius:10px; padding:12px 16px;
 }
 .stat-label { font-size:0.6rem; font-weight:700; text-transform:uppercase;
-              letter-spacing:1.5px; color:#1e4060; margin-bottom:5px; }
+              letter-spacing:1.5px; color:#4070a0; margin-bottom:5px; }
 .stat-value { font-size:1.1rem; font-weight:800; color:#c8e4ff; }
 .stat-delta { font-size:0.7rem; font-weight:600; margin-top:3px; }
 .stat-delta.pos { color:#22c55e; }
@@ -188,7 +188,7 @@ section[data-testid="stMain"],
 /* ── Section divider ─────────────────────────────────────────── */
 .sec-label {
     font-size:0.6rem; font-weight:700; text-transform:uppercase;
-    letter-spacing:2px; color:#1a3a56;
+    letter-spacing:2px; color:#3d6d8f;
     border-bottom:1px solid #0c1e30;
     padding-bottom:6px; margin:20px 0 12px 0;
 }
@@ -201,15 +201,15 @@ section[data-testid="stMain"],
     margin-bottom:18px;
 }
 .topbar-title {
-    font-size:0.88rem; font-weight:800; color:#5a9adf;
+    font-size:0.88rem; font-weight:800; color:#7ab8f0;
     text-transform:uppercase; letter-spacing:1px;
 }
 .topbar-pill {
     background:#0c1829; border:1px solid #162438;
     border-radius:20px; padding:3px 12px;
-    font-size:0.7rem; font-weight:600; color:#2a6090;
+    font-size:0.7rem; font-weight:600; color:#4a80b8;
 }
-.topbar-pill b { color:#4a90c8; }
+.topbar-pill b { color:#6aaae0; }
 
 /* ── Performance table ───────────────────────────────────────── */
 .pt-wrap {
@@ -226,7 +226,7 @@ table.pt thead th {
     background:#060c18; padding:11px 16px;
     font-size:0.62rem; font-weight:700;
     text-transform:uppercase; letter-spacing:1.4px;
-    color:#1e4060; border-bottom:2px solid #0c1e30;
+    color:#4070a0; border-bottom:2px solid #0c1e30;
     white-space:nowrap; text-align:right;
     position:sticky; top:0;
 }

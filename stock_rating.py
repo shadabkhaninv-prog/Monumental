@@ -1922,10 +1922,9 @@ def export_workbook(
         # ── 52W
         ("current_close",           "Close",           "52w",   9,  "#,##0.##"),
         ("high_52w_close",          "52W High",        "52w",   9,  "#,##0.##"),
+        ("days_since_52w_high",     "Days Since\nHigh","52w",   9,  "0"),
         ("high_52w_date",           "52W High\nDate",  "52w",  11,  None),
         ("pct_from_52w_high",       "% from\n52W Hi",  "52w",   8,  "0.0%"),
-        ("days_since_52w_high",     "Days Since\nHigh", "52w",   9,  "0"),
-        ("runup_to_52w_high_7d",    "7D Runup\ninto High", "52w",  9,  "0.0%"),
         ("score_52w_price",         "Sc\nDist",        "52w",   5,  "0"),
         ("score_52w_recency",       "Sc\nRec",         "52w",   5,  "0"),
         ("score_52w_bonus",         "Sc\nAdj",         "52w",   5,  "0"),
@@ -2007,12 +2006,12 @@ def export_workbook(
         ("sector_strength_ratio",   "Sec\nStr%",       "sector",9,  "0.0%"),
         ("sector_leadership_score", "Sec\nScore",      "sector",8,  "0.0"),
         ("score_sector",            "Sc\nSect",        "sector",7,  "0"),
+        ("runup_to_52w_high_7d",    "7D Runup\ninto High", "52w",  9,  "0.0%"),
     ]
 
     # Keep the full dataset in the sheet, but open with a cleaner default view.
     HIDDEN_KEYS = {
         "high_52w_date",
-        "days_since_52w_high",
         "score_52w_price",
         "score_52w_recency",
         "score_52w_bonus",
@@ -2267,26 +2266,51 @@ def export_workbook(
     # ══════════════════════════════════════════════════════════════════
     #  SHEET 4 ── 🏦 INSTITUTIONAL PICKS
     #  Top 50 by composite score → weighted institutional score:
-    #    40% sector strength (count × avg score in top 50)
+    #    40% sector strength (tier-weighted: T1 rank 1-10 ×3, T2 rank 11-20 ×2,
+    #                         T3 rank 21-50 ×1; strength = Σ tier_w × score per sector)
     #    30% liquidity      (median_turnover_42d)
     #    30% stock rating   (composite_score)
     #  → Top 20 by institutional score
     # ══════════════════════════════════════════════════════════════════
     ip_ws = wb.create_sheet("🏦 Institutional Picks")
 
-    top50 = scored.head(50).copy()
+    top50 = scored.head(50).copy().reset_index(drop=True)
 
-    # Sector strength from the top-50 pool
+    # Tier weights: top-10 stocks (rank 1-10) count 3×, next 10 (rank 11-20) count 2×,
+    # the remaining 30 (rank 21-50) count 1×.  This rewards sectors whose representatives
+    # sit higher in the pool; overall 40% sector weight is unchanged.
+    top50_count = len(top50)
+    _tier_w = (
+        [3.0] * min(10, top50_count)
+        + [2.0] * max(0, min(10, top50_count - 10))
+        + [1.0] * max(0, top50_count - 20)
+    )
+    top50["_ip_tier_w"]    = _tier_w
+    top50["_ip_wgt_score"] = top50["_ip_tier_w"] * top50["composite_score"]
+
+    # Sector strength from the top-50 pool (tier-weighted sum of composite scores)
     ip_sec_agg = (
         top50.groupby("sector", dropna=False)
-        .agg(_ip_sec_count=("composite_score", "count"),
-             _ip_sec_avg   =("composite_score", "mean"))
+        .agg(_ip_sec_count   =("composite_score", "count"),
+             _ip_sec_avg     =("composite_score", "mean"),
+             _ip_sec_strength=("_ip_wgt_score",   "sum"))
         .reset_index()
     )
-    ip_sec_agg["_ip_sec_strength"] = ip_sec_agg["_ip_sec_count"] * ip_sec_agg["_ip_sec_avg"]
+    # (_ip_sec_count and _ip_sec_avg are kept for display; _ip_sec_strength drives the percentile)
     top50 = top50.merge(
         ip_sec_agg[["sector", "_ip_sec_count", "_ip_sec_avg", "_ip_sec_strength"]],
         on="sector", how="left"
+    )
+
+    # Single-stock sectors: replace tier-amplified strength with the stock's raw
+    # composite_score × 1.  A lone stock cannot claim sector momentum, so the T1/T2
+    # multiplier is removed — but the stock's own merit still contributes to the
+    # sector dimension.  Strong outliers (PFOCUS, STLTECH) therefore compete fairly;
+    # weak solo stocks get no phantom boost.  Sectors with ≥ 2 stocks retain full
+    # tier-weighted strength.
+    solo_mask = top50["_ip_sec_count"] < 2
+    top50.loc[solo_mask, "_ip_sec_strength"] = (
+        top50.loc[solo_mask, "composite_score"].astype(float)
     )
 
     # Percentile-rank each dimension within the top-50 pool
@@ -2377,6 +2401,7 @@ def export_workbook(
     ip_ws.merge_cells(f"A2:{get_column_letter(ncols_ip)}2")
     ip_ws["A2"] = (
         "Institutional Score = 40% Sector Strength + 30% Liquidity (Median Turnover) + 30% Stock Rating — "
+        "Sector strength = Σ(tier_weight × score) per sector in top-50 pool: rank 1-10 ×3, rank 11-20 ×2, rank 21-50 ×1; sectors with only 1 stock use raw score ×1 (no tier amplification — merit without phantom sector boost); "
         f"all components percentile-ranked within top 50; excludes >=30% off 52W high, <=-30% in 15 trading days, >=25% off high with high older than 30 days, "
         f"and parabolic rollovers where 12M >= {PARABOLIC_TOP_12M_RETURN_MIN*100:.0f}%, >{PARABOLIC_TOP_DAYS_SINCE_HIGH_MIN} days since high, "
         f">= {PARABOLIC_TOP_PCT_FROM_HIGH_MIN*100:.0f}% off high, 15D <= {PARABOLIC_TOP_15D_RETURN_MAX*100:.0f}%, below 8EMA & 21EMA, "
@@ -3526,7 +3551,6 @@ def main() -> None:
             warnings,
         )
         if result is None:
-            skipped.append(symbol)
             print("metrics=None — skipped")
             continue
 

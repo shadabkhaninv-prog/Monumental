@@ -3,11 +3,11 @@
 Fetch quarterly sales, net profit, and YoY growth for symbols in a rated-list file.
 
 Default source:
-    Screener.in company pages, preferring consolidated statements when available.
+    BSE quarterly-results XBRL filings, using consolidated filings when available.
 
 Example:
     python quarterly_fundamentals_report.py rated_list_05aug2024.txt
-    python quarterly_fundamentals_report.py reports\\rated_list_05aug2024.txt --statement standalone
+    python quarterly_fundamentals_report.py reports\\rated_list_05aug2024.txt
 
 Outputs:
     reports\\quarterly_fundamentals_<ddmmmyyyy>.xlsx
@@ -21,10 +21,15 @@ from __future__ import annotations
 
 import argparse
 import calendar
+import csv
+import html
+import json
 import math
 import re
 import sys
 import time
+import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 from datetime import date, datetime
 from io import StringIO
 from pathlib import Path
@@ -32,6 +37,8 @@ from typing import Iterable
 
 import pandas as pd
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 
 REPORTS_DIR = Path(__file__).resolve().parent / "reports"
@@ -42,8 +49,39 @@ DEFAULT_HEADERS = {
     ),
     "Accept-Language": "en-US,en;q=0.9",
 }
+LOCAL_BSE_CODE_CACHE = Path(__file__).resolve().parent / "bse_code_cache.json"
 ROW_SALES = "sales"
 ROW_NET_PROFIT = "net profit"
+BSE_REFERER = "https://www.bseindia.com/corporates/List_Scrips.html"
+BSE_SEARCH_URL = "https://api.bseindia.com/BseIndiaAPI/api/ListScripSmartSearch/w"
+BSE_RESULTS_URL = "https://www.bseindia.com/corporates/comp_results.aspx"
+REVENUE_TAGS = [
+    "RevenueFromOperations",
+    "RevenueFromOperationsExciseDuty",
+    "RevenueFromOperationsNetOfExciseDuty",
+    "RevenueFromOperationsGross",
+    "TotalRevenueFromOperations",
+    "RevenueFromSaleOfProducts",
+]
+PROFIT_TAGS = [
+    "ProfitOrLossAttributableToOwnersOfParent",
+    "ProfitLossAttributableToOwnersOfParent",
+    "ProfitLossForPeriodAttributableToOwnersOfParent",
+    "ProfitLossForPeriod",
+]
+EXCISE_DESCRIPTION_PATTERNS = [
+    "excise duty",
+    "less: excise duty",
+]
+_BSE_EQUITY_CODE_MAP: dict[str, tuple[str, str]] | None = None
+
+
+@dataclass
+class BseCandidate:
+    security_code: str
+    company_name: str
+    security_id: str
+    isin: str
 
 
 def parse_args() -> argparse.Namespace:
@@ -74,7 +112,7 @@ def parse_args() -> argparse.Namespace:
         "--statement",
         choices=["auto", "consolidated", "standalone"],
         default="auto",
-        help="Statement preference. 'auto' tries consolidated first, then standalone.",
+        help="Ignored for BSE XBRL mode. Kept for CLI compatibility.",
     )
     parser.add_argument(
         "--reports-dir",
@@ -89,14 +127,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--delay",
         type=float,
-        default=0.5,
-        help="Delay in seconds between HTTP requests (default: 0.5).",
+        default=0.75,
+        help="Delay in seconds between HTTP requests (default: 0.75).",
     )
     parser.add_argument(
         "--timeout",
         type=float,
-        default=25.0,
-        help="HTTP timeout in seconds (default: 25).",
+        default=60.0,
+        help="HTTP timeout in seconds (default: 60).",
+    )
+    parser.add_argument(
+        "--retries",
+        type=int,
+        default=3,
+        help="HTTP retry attempts for BSE requests (default: 3).",
     )
     parser.add_argument(
         "--limit",
@@ -210,10 +254,360 @@ def parse_number(value: object) -> float | None:
         return None
 
 
+def safe_to_float(raw: str | None) -> float | None:
+    if raw is None:
+        return None
+    text = str(raw).strip().replace(",", "")
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
 def pct_growth(current: float | None, previous: float | None) -> float | None:
     if current is None or previous in (None, 0):
         return None
     return round(((current / previous) - 1.0) * 100.0, 2)
+
+
+def quarter_token_to_date(token: str) -> date:
+    return datetime.strptime(token, "%b-%y").date().replace(day=1)
+
+
+def quarter_label_from_date(value: date) -> str:
+    return value.strftime("%b %Y")
+
+
+def extract_bse_candidates(html_text: str) -> list[BseCandidate]:
+    if not html_text:
+        return []
+
+    if html_text.startswith('"') and html_text.endswith('"'):
+        html_text = json.loads(html_text)
+
+    pattern = re.compile(
+        r"liclick\('(?P<code>\d+)','(?P<company>[^']+)'\).*?"
+        r"<span>(?P<span>.*?)</span>",
+        re.IGNORECASE | re.DOTALL,
+    )
+    results: list[BseCandidate] = []
+    for match in pattern.finditer(html_text):
+        span = html.unescape(re.sub(r"<.*?>", "", match.group("span")))
+        span = re.sub(r"\s+", " ", span.replace("\xa0", " ")).strip()
+        parts = [part.strip() for part in span.split(" ") if part.strip()]
+        security_id = parts[0].rstrip("#") if parts else ""
+        isin = next((part for part in parts if part.startswith("INE") or part.startswith("INF")), "")
+        results.append(
+            BseCandidate(
+                security_code=match.group("code"),
+                company_name=match.group("company"),
+                security_id=security_id,
+                isin=isin,
+            )
+        )
+    return results
+
+
+def load_bse_equity_code_map(session: requests.Session, timeout: float) -> dict[str, tuple[str, str]]:
+    global _BSE_EQUITY_CODE_MAP
+    if _BSE_EQUITY_CODE_MAP is not None:
+        return _BSE_EQUITY_CODE_MAP
+
+    local_mapping: dict[str, tuple[str, str]] = {}
+    if LOCAL_BSE_CODE_CACHE.exists():
+        try:
+            cache_data = json.loads(LOCAL_BSE_CODE_CACHE.read_text(encoding="utf-8"))
+            for key, value in cache_data.items():
+                symbol = str(key).strip().upper()
+                security_code = str(value).strip()
+                if symbol and security_code:
+                    local_mapping[symbol] = (security_code, symbol)
+        except Exception:
+            local_mapping = {}
+
+    response = session.get(
+        "https://api.bseindia.com/BseIndiaAPI/api/LitsOfScripCSVDownload/w",
+        params={"segment": "Equity", "status": "Active", "Group": "", "Scripcode": ""},
+        headers={"Referer": BSE_REFERER},
+        timeout=max(timeout, 120.0),
+    )
+    response.raise_for_status()
+
+    mapping: dict[str, tuple[str, str]] = dict(local_mapping)
+    reader = csv.DictReader(StringIO(response.text))
+    for row in reader:
+        security_id = str(row.get("Security Id", "")).strip().upper()
+        security_code = str(row.get("Security Code", "")).strip()
+        company_name = str(row.get("Issuer Name", "")).strip()
+        if security_id and security_code:
+            mapping[security_id] = (security_code, company_name)
+
+    _BSE_EQUITY_CODE_MAP = mapping
+    return mapping
+
+
+def resolve_bse_code(session: requests.Session, symbol: str, timeout: float) -> tuple[str | None, str]:
+    equity_map = load_bse_equity_code_map(session, timeout)
+    if symbol.upper() in equity_map:
+        security_code, company_name = equity_map[symbol.upper()]
+        return security_code, f"{company_name} ({symbol.upper()})"
+
+    response = session.get(
+        BSE_SEARCH_URL,
+        params={"text": symbol, "Flag": "liclick"},
+        headers={"Referer": BSE_REFERER},
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    candidates = extract_bse_candidates(response.text)
+
+    exact = [candidate for candidate in candidates if candidate.security_id.upper() == symbol.upper()]
+    if exact:
+        exact.sort(key=lambda item: (not item.security_code.startswith("5"), len(item.security_code)))
+        chosen = exact[0]
+        return chosen.security_code, f"{chosen.company_name} ({chosen.security_id})"
+
+    if symbol.upper() in equity_map:
+        security_code, company_name = equity_map[symbol.upper()]
+        return security_code, f"{company_name} ({symbol.upper()})"
+
+    if candidates:
+        sample = ", ".join(f"{item.security_id}:{item.security_code}" for item in candidates[:5])
+        return None, f"No exact BSE symbol match for {symbol}. Search returned: {sample}"
+    return None, f"No BSE search match found for {symbol}"
+
+
+def parse_results_page(html_text: str) -> list[dict[str, str]]:
+    row_pattern = re.compile(
+        r"<tr><td class='TTRow'>(?P<fy>[^<]+)</td>"
+        r"<td class='TTRow'><a class='tablebluelink' href='(?P<details>[^']+)'>"
+        r"(?P<statement>Consolidated|Standalone)-(?P<quarter>[^<]+)</a></td>"
+        r"<td class='TTRow'>(?P<type>[^<]+)</td>"
+        r"<td class='TTRow'>(?P<status>[^<]+)</td>"
+        r"<td class='TTRow'>(?P<filed>[^<]*)</td>"
+        r"<td class='TTRow'>(?P<revised>[^<]*)</td>"
+        r"<td class='TTRow'>(?P<reason>[^<]*)</td>"
+        r"<td class='TTRow'>(?P<standalone>.*?)</td>"
+        r"<td class='TTRow'>(?P<consolidated>.*?)</td>"
+        r"<td class='TTRow'>(?P<trend>.*?)</td></tr>",
+        re.IGNORECASE | re.DOTALL,
+    )
+    return [{key: match.group(key) for key in row_pattern.groupindex} for match in row_pattern.finditer(html_text)]
+
+
+def get_xbrl_url(row: dict[str, str]) -> str | None:
+    cell = row["consolidated"] if row["statement"].lower() == "consolidated" else row["standalone"]
+    link_match = re.search(r"href='([^']+\.xml)'", cell, re.IGNORECASE)
+    if not link_match:
+        return None
+    href = link_match.group(1).replace("//XBRLFILES", "/XBRLFILES")
+    if href.startswith("http"):
+        return href
+    return f"https://www.bseindia.com{href}"
+
+
+def first_day_to_quarter_end(value: date) -> date:
+    month_end_day = {
+        3: 31,
+        6: 30,
+        9: 30,
+        12: 31,
+    }[value.month]
+    return value.replace(day=month_end_day)
+
+
+def parse_bse_datetime(value: str) -> pd.Timestamp:
+    text = (value or "").strip()
+    if not text:
+        return pd.NaT
+    for fmt in ("%d-%m-%Y %H:%M:%S", "%m/%d/%Y %I:%M:%S %p"):
+        try:
+            return pd.Timestamp(datetime.strptime(text, fmt))
+        except ValueError:
+            continue
+    return pd.NaT
+
+
+def fetch_bse_quarter_rows(
+    session: requests.Session,
+    security_code: str,
+    cutoff: date,
+    delay: float,
+    timeout: float,
+    max_pid: int = 6,
+) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+
+    for pid in range(1, max_pid + 1):
+        if pid > 1 and delay > 0:
+            time.sleep(delay)
+
+        response = None
+        for page_attempt in range(3):
+            response = session.get(
+                BSE_RESULTS_URL,
+                params={"Code": security_code, "PID": pid},
+                headers={"Referer": "https://www.bseindia.com/"},
+                timeout=timeout,
+            )
+            if response.status_code != 404:
+                break
+            if page_attempt < 2:
+                time.sleep(max(delay * 4 * (page_attempt + 1), 2.5 * (page_attempt + 1)))
+        if response is None or response.status_code == 404:
+            break
+        response.raise_for_status()
+
+        parsed = parse_results_page(response.text)
+        if not parsed:
+            continue
+
+        for row in parsed:
+            if row["type"].strip().lower() != "quarter":
+                continue
+            if row["statement"].strip().lower() != "consolidated":
+                continue
+
+            quarter_start = quarter_token_to_date(row["quarter"].strip())
+            quarter_end = first_day_to_quarter_end(quarter_start)
+            if quarter_end > cutoff:
+                continue
+
+            xbrl_url = get_xbrl_url(row)
+            if not xbrl_url:
+                continue
+
+            rows.append(
+                {
+                    "quarter_end": quarter_end,
+                    "quarter_label": quarter_label_from_date(quarter_end),
+                    "filed_at": row["filed"].strip(),
+                    "revised_at": row["revised"].strip(),
+                    "effective_dt": parse_bse_datetime(row["revised"]) if row["revised"].strip() else parse_bse_datetime(row["filed"]),
+                    "xbrl_url": xbrl_url,
+                }
+            )
+
+    if not rows:
+        return pd.DataFrame(columns=["quarter_end", "quarter_label", "filed_at", "revised_at", "effective_dt", "xbrl_url"])
+
+    df = pd.DataFrame(rows)
+    df = df.sort_values(["quarter_end", "effective_dt"], na_position="last").drop_duplicates(["quarter_end"], keep="last")
+    return df.sort_values("quarter_end").reset_index(drop=True)
+
+
+def find_first_tag_value(root: ET.Element, tag_names: Iterable[str]) -> float | None:
+    for tag_name in tag_names:
+        for elem in root.iter():
+            if elem.tag.split("}")[-1] != tag_name:
+                continue
+            if elem.text is None:
+                continue
+            value = safe_to_float(elem.text)
+            if value is not None:
+                return round(value / 1e7, 2)
+    return None
+
+
+def find_named_other_expense(root: ET.Element, wanted_names: Iterable[str]) -> float | None:
+    descriptions: dict[str, str] = {}
+    amounts: dict[str, float] = {}
+
+    for elem in root.iter():
+        tag = elem.tag.split("}")[-1]
+        context = elem.attrib.get("contextRef")
+        if not context:
+            continue
+        if tag == "DescriptionOfOtherExpenses" and elem.text:
+            descriptions[context] = elem.text.strip().lower()
+        elif tag == "OtherExpenses" and elem.text:
+            value = safe_to_float(elem.text)
+            if value is not None:
+                amounts[context] = round(value / 1e7, 2)
+
+    for context, description in descriptions.items():
+        if any(pattern in description for pattern in wanted_names) and context in amounts:
+            return amounts[context]
+    return None
+
+
+def parse_xbrl_metrics(xml_text: str) -> tuple[float | None, float | None]:
+    root = ET.fromstring(xml_text)
+    sales = find_first_tag_value(root, REVENUE_TAGS)
+    profit = find_first_tag_value(root, PROFIT_TAGS)
+    excise_duty = find_named_other_expense(root, EXCISE_DESCRIPTION_PATTERNS)
+    if sales is not None and excise_duty is not None:
+        sales = round(sales - excise_duty, 2)
+    return sales, profit
+
+
+def fetch_bse_quarterly_long(
+    session: requests.Session,
+    symbol: str,
+    cutoff: date,
+    quarter_count: int,
+    delay: float,
+    timeout: float,
+) -> tuple[pd.DataFrame, str]:
+    bse_code, note = resolve_bse_code(session, symbol, timeout)
+    if not bse_code:
+        raise ValueError(note)
+
+    rows_df = pd.DataFrame()
+    for attempt in range(3):
+        rows_df = fetch_bse_quarter_rows(
+            session=session,
+            security_code=bse_code,
+            cutoff=cutoff,
+            delay=delay,
+            timeout=timeout,
+        )
+        if not rows_df.empty:
+            break
+        if attempt < 2:
+            time.sleep(max(delay * 4 * (attempt + 1), 3.0 * (attempt + 1)))
+    if rows_df.empty:
+        raise ValueError(f"No consolidated quarterly XBRL rows found on or before cutoff for BSE code {bse_code}.")
+
+    extracted: list[dict[str, object]] = []
+    for index, row in rows_df.iterrows():
+        if index > 0 and delay > 0:
+            time.sleep(delay)
+        xml_response = session.get(
+            row["xbrl_url"],
+            headers={"Referer": "https://www.bseindia.com/"},
+            timeout=timeout,
+        )
+        xml_response.raise_for_status()
+        sales, profit = parse_xbrl_metrics(xml_response.text)
+        extracted.append(
+            {
+                "symbol": symbol,
+                "quarter_label": row["quarter_label"],
+                "quarter_end": row["quarter_end"],
+                "sales": sales,
+                "net_profit": profit,
+                "statement_used": "bse_xbrl_consolidated",
+                "source_url": row["xbrl_url"],
+                "bse_code": bse_code,
+            }
+        )
+
+    result = pd.DataFrame(extracted).sort_values("quarter_end").reset_index(drop=True)
+    result["sales_yoy_pct"] = [
+        pct_growth(current, previous)
+        for current, previous in zip(result["sales"], result["sales"].shift(4))
+    ]
+    result["profit_yoy_pct"] = [
+        pct_growth(current, previous)
+        for current, previous in zip(result["net_profit"], result["net_profit"].shift(4))
+    ]
+
+    if len(result) > quarter_count:
+        result = result.tail(quarter_count).reset_index(drop=True)
+    return result, note
 
 
 def build_statement_urls(symbol: str, mode: str) -> list[tuple[str, str]]:
@@ -421,7 +815,7 @@ def print_run_header(path: Path, cutoff: date, symbols: Iterable[str], args: arg
     print(f"Cutoff date    : {cutoff}")
     print(f"Symbols        : {len(symbol_list)}")
     print(f"Quarter count  : {args.quarters}")
-    print(f"Statement mode : {args.statement}")
+    print("Source         : BSE XBRL (consolidated quarterly filings)")
     print(f"Output dir     : {args.output_dir}")
     print("=" * 72)
 
@@ -436,6 +830,18 @@ def main() -> int:
 
     session = requests.Session()
     session.headers.update(DEFAULT_HEADERS)
+    retry = Retry(
+        total=args.retries,
+        connect=args.retries,
+        read=args.retries,
+        status=args.retries,
+        backoff_factor=0.7,
+        status_forcelist=[403, 429, 500, 502, 503, 504],
+        allowed_methods=["GET"],
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
 
     output_frames: list[pd.DataFrame] = []
     summary_rows: list[dict[str, object]] = []
@@ -448,40 +854,52 @@ def main() -> int:
         sys.stdout.flush()
 
         try:
-            table, source_url, statement_used = fetch_quarterly_table(
-                session=session,
-                symbol=symbol,
-                statement_mode=args.statement,
-                timeout=args.timeout,
-            )
-            result = quarterly_table_to_long(
-                symbol=symbol,
-                table=table,
-                cutoff=cutoff,
-                quarter_count=args.quarters,
-                source_url=source_url,
-                statement_used=statement_used,
-            )
+            last_error: Exception | None = None
+            result = None
+            note = ""
+            for attempt in range(2):
+                try:
+                    result, note = fetch_bse_quarterly_long(
+                        session=session,
+                        symbol=symbol,
+                        cutoff=cutoff,
+                        quarter_count=args.quarters,
+                        delay=args.delay,
+                        timeout=args.timeout,
+                    )
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    last_error = exc
+                    if attempt == 0:
+                        time.sleep(max(args.delay * 6, 5.0))
+                        continue
+                    raise
+            if result is None:
+                raise last_error or RuntimeError("Unknown BSE XBRL fetch failure.")
             output_frames.append(result)
             summary_rows.append(
                 {
                     "symbol": symbol,
                     "status": "OK",
-                    "statement_used": statement_used,
+                    "bse_code": result["bse_code"].iloc[0],
+                    "statement_used": result["statement_used"].iloc[0],
                     "quarters_exported": len(result),
-                    "source_url": source_url,
+                    "source_url": result["source_url"].iloc[-1],
+                    "note": note,
                     "error": "",
                 }
             )
-            print(f" OK ({len(result)} quarters, {statement_used})")
+            print(f" OK ({len(result)} quarters, BSE {result['bse_code'].iloc[0]})")
         except Exception as exc:  # noqa: BLE001
             summary_rows.append(
                 {
                     "symbol": symbol,
                     "status": "ERROR",
+                    "bse_code": "",
                     "statement_used": "",
                     "quarters_exported": 0,
                     "source_url": "",
+                    "note": "",
                     "error": str(exc),
                 }
             )
@@ -499,6 +917,7 @@ def main() -> int:
                 "net_profit",
                 "statement_used",
                 "source_url",
+                "bse_code",
                 "sales_yoy_pct",
                 "profit_yoy_pct",
             ]
