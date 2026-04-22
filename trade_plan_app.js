@@ -1,0 +1,1793 @@
+const API_BASE = "http://127.0.0.1:8765/api";
+let positions = [];
+let planDate = todayStr();
+let saveTimer = null;
+let savePath = "";
+let storageOnline = false;
+let saveSeq = 0;
+let dirty = false;
+let currentView = "dashboard";
+let selectedPositionId = null;
+let dashboardItems = [];
+let latestDashboardDate = todayStr();
+let dayMeta = { open_positions_count: 0, exited_today_count: 0, planning_count: 0, exposure: 0, exposure_pct: null };
+let settings = {
+  available_capital: null,
+  daily_risk: null,
+  per_position_risk: null,
+  checklist_groups: []
+};
+let goalTracker = { exposure_items: [], r_progress_items: [], plan_stats_items: [], latest_date: todayStr() };
+let goalTrackerTab = "exposure";
+const QUIET = new Set(["symbol", "merits", "trailNote", "mgmt.fe", "mgmt.fsl", "mgmt.ft", "mgmt.fbe", "mgmt.note"]);
+
+function todayStr() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+function pkey(d) { return "tp_v3_" + d; }
+function normalizeSymbol(v) { return (v || "").toUpperCase().replace(/[^A-Z0-9]/g, ""); }
+function fi(v) { return Math.abs(Number(v || 0)).toLocaleString("en-IN", { maximumFractionDigits: 0 }); }
+function money(v) { return v == null ? "-" : "Rs " + fi(v); }
+function price2(v) { return v == null ? "-" : "Rs " + Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function pct(v) { return v == null ? "-" : Number(v).toFixed(1) + "%"; }
+function sgn(v) { return v >= 0 ? "+" : "-"; }
+function wait(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+function e(id) { return document.getElementById(id); }
+function fmtDateLabel(value) {
+  if (!value) return "";
+  const [y, m, d] = value.split("-");
+  if (!y || !m || !d) return value;
+  return `${d}-${m}-${y}`;
+}
+
+function escHtml(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function fmtThoughtStamp(value) {
+  const ts = value ? new Date(value) : new Date();
+  if (Number.isNaN(ts.getTime())) return "";
+  return ts.toLocaleString([], { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+function normalizeThoughtLog(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.map(item => {
+    const text = String(item && item.text != null ? item.text : "").trim();
+    if (!text) return null;
+    return {
+      ts: item && item.ts ? item.ts : new Date().toISOString(),
+      tag: String(item && item.tag ? item.tag : "NOTE").toUpperCase(),
+      text
+    };
+  }).filter(Boolean).slice(-100);
+}
+
+function getThoughtLog(p) {
+  return normalizeThoughtLog(p && p.thoughtLog);
+}
+
+function defaultChecklistGroups() {
+  return [
+    {
+      title: "Entry",
+      count: 2,
+      items: [
+        "Did not chase - entered at plan",
+        "Sized to risk, not conviction",
+        ""
+      ]
+    },
+    {
+      title: "Holding",
+      count: 2,
+      items: [
+        "Held winners according to plan",
+        "Did not interfere with structure",
+        ""
+      ]
+    },
+    {
+      title: "Exit",
+      count: 2,
+      items: [
+        "Moved or honored SL on plan",
+        "Moved SL to breakeven when earned",
+        ""
+      ]
+    }
+  ];
+}
+
+function normalizeChecklistGroups(raw) {
+  const defaults = defaultChecklistGroups();
+  if (!Array.isArray(raw)) {
+    return defaults;
+  }
+  return defaults.map((fallback, idx) => {
+    const source = raw[idx] && typeof raw[idx] === "object" ? raw[idx] : {};
+    const title = String(source.title || fallback.title || "").trim() || fallback.title;
+    const items = Array.from({ length: 3 }, (_v, itemIdx) => {
+      return String(Array.isArray(source.items) ? (source.items[itemIdx] || "") : "").trim();
+    });
+    let count = Number.parseInt(source.count, 10);
+    if (!Number.isFinite(count)) {
+      count = items.filter(Boolean).length;
+    }
+    count = Math.max(0, Math.min(3, count));
+    return { title, count, items };
+  });
+}
+
+function getChecklistGroups() {
+  return normalizeChecklistGroups(settings.checklist_groups);
+}
+
+function defaultChecklistStateMatrix() {
+  return defaultChecklistGroups().map(() => [false, false, false]);
+}
+
+function normalizeChecklistStateMatrix(raw) {
+  const defaults = defaultChecklistStateMatrix();
+  if (!Array.isArray(raw)) return defaults;
+  return defaults.map((row, gi) => {
+    const source = Array.isArray(raw[gi]) ? raw[gi] : [];
+    return [0, 1, 2].map(ii => Boolean(source[ii]));
+  });
+}
+
+function legacyChecklistStateMatrix(rawMgmt) {
+  const matrix = defaultChecklistStateMatrix();
+  if (!rawMgmt || typeof rawMgmt !== "object") return matrix;
+  matrix[0][0] = Boolean(rawMgmt.fe);
+  matrix[0][1] = Boolean(rawMgmt.ft);
+  matrix[1][0] = Boolean(rawMgmt.fsl);
+  matrix[2][0] = Boolean(rawMgmt.fbe);
+  return matrix;
+}
+
+function legacyChecklistFieldsFromGroups(groups) {
+  const safeGroups = normalizeChecklistGroups(groups);
+  const entry = safeGroups[0]?.items || ["", "", ""];
+  const holding = safeGroups[1]?.items || ["", "", ""];
+  const exit = safeGroups[2]?.items || ["", "", ""];
+  return {
+    checklist_entry_1: String(entry[0] || ""),
+    checklist_entry_2: String(entry[1] || ""),
+    checklist_risk_1: String(holding[0] || ""),
+    checklist_risk_2: String(exit[0] || "")
+  };
+}
+
+function newPos() {
+  return {
+    id: "p" + Date.now() + Math.random().toString(36).slice(2, 6),
+    symbol: "",
+    merits: "",
+    conviction: 3,
+    cmp: null,
+    planEntry: null,
+    planSL: null,
+    intraSL: null,
+    intraRiskPct: 30,
+    riskAmount: settings.per_position_risk != null ? Number(settings.per_position_risk) : null,
+    actualEntry: null,
+    overnightEntry: null,
+    overnightQty: null,
+    actualQty: null,
+    intraQty: null,
+    entryDate: "",
+    posHigh: null,
+    trailOverride: null,
+    trailNote: "",
+    thoughtTag: "NOTE",
+    thoughtLog: [],
+    movedBE: false,
+    trims: [
+      { pct: 3, type: "fixed", ap: null, sq: null, done: false },
+      { pct: 10, type: "trail", ap: null, sq: null, done: false },
+      { pct: 15, type: "fixed", ap: null, sq: null, done: false },
+      { pct: 25, type: "fixed", ap: null, sq: null, done: false }
+    ],
+    mgmt: { checklist: defaultChecklistStateMatrix(), note: "" },
+    collapsed: false
+  };
+}
+
+function hydratePos(raw) {
+  const base = newPos();
+  const pos = Object.assign({}, base, raw || {});
+  pos.mgmt = Object.assign({}, base.mgmt, (raw && raw.mgmt) || {});
+  pos.mgmt.checklist = normalizeChecklistStateMatrix(pos.mgmt.checklist || legacyChecklistStateMatrix(pos.mgmt));
+  pos.trims = base.trims.map((t, i) => Object.assign({}, t, ((raw && raw.trims) || [])[i] || {}));
+  pos.thoughtTag = String(pos.thoughtTag || "NOTE").toUpperCase();
+  pos.thoughtLog = normalizeThoughtLog(pos.thoughtLog);
+  pos.symbol = normalizeSymbol(pos.symbol);
+  return pos;
+}
+
+async function api(path, options) {
+  const response = await fetch(API_BASE + path, Object.assign({
+    headers: { "Content-Type": "application/json" },
+    cache: "no-store"
+  }, options || {}));
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.message || ("HTTP " + response.status));
+  return payload;
+}
+
+function setSaveState(text, kind, title) {
+  const el = e("save-st");
+  if (!el) return;
+  el.textContent = text;
+  el.className = "save-st" + (kind === "saved" ? " saved" : "");
+  el.title = title || text;
+}
+
+function setNav(view) {
+  [["nav-dashboard", "dashboard"], ["nav-day", "day"], ["nav-exposure", "exposure"], ["nav-settings", "settings"]].forEach(([id, key]) => {
+    const node = e(id);
+    if (node) node.className = "nav-btn" + (view === key ? " on" : "");
+  });
+}
+
+function syncChrome() {
+  const showDay = currentView === "day";
+  if (e("date-row")) e("date-row").style.display = showDay ? "" : "none";
+  if (e("btn-add")) e("btn-add").style.display = showDay ? "" : "none";
+  if (e("btn-collapse-all")) e("btn-collapse-all").style.display = "none";
+  if (e("btn-add")) e("btn-add").disabled = showDay ? positions.length >= 5 : true;
+  if (document.querySelector(".sumbar")) document.querySelector(".sumbar").style.display = showDay ? "flex" : "none";
+  if (document.querySelector(".savebar")) document.querySelector(".savebar").style.display = showDay ? "flex" : "none";
+  setNav(currentView);
+}
+
+async function loadStorageInfo() {
+  try {
+    const info = await api("/storage-info");
+    storageOnline = true;
+    savePath = info.save_dir || "";
+    if (currentView === "day") setSaveState("Ready", "saved", "Autosave active");
+  } catch (err) {
+    storageOnline = false;
+    if (currentView === "day") setSaveState("Server offline", "", String(err.message || err));
+  }
+}
+
+async function loadSettings() {
+  if (!storageOnline) await loadStorageInfo();
+  if (!storageOnline) return settings;
+  try {
+    const payload = await api("/settings");
+    settings = {
+      available_capital: payload.available_capital,
+      daily_risk: payload.daily_risk,
+      per_position_risk: payload.per_position_risk,
+      checklist_groups: normalizeChecklistGroups(payload.checklist_groups || [
+        {
+          title: payload.checklist_group_1_title || "Entry",
+          count: 2,
+          items: [payload.checklist_entry_1 || "", payload.checklist_entry_2 || "", ""]
+        },
+        {
+          title: payload.checklist_group_2_title || "Holding",
+          count: 1,
+          items: [payload.checklist_risk_1 || "", "", ""]
+        },
+        {
+          title: payload.checklist_group_3_title || "Exit",
+          count: 1,
+          items: [payload.checklist_risk_2 || "", "", ""]
+        }
+      ])
+    };
+  } catch (_err) {}
+  return settings;
+}
+
+async function saveSettings() {
+  const checklistGroups = readChecklistGroupsFromDOM();
+  const legacy = legacyChecklistFieldsFromGroups(checklistGroups);
+  const payload = {
+    available_capital: parseFloat(e("set-capital")?.value || "") || null,
+    daily_risk: parseFloat(e("set-daily-risk")?.value || "") || null,
+    per_position_risk: parseFloat(e("set-position-risk")?.value || "") || null,
+    checklist_groups: checklistGroups,
+    ...legacy
+  };
+  if (!storageOnline) await loadStorageInfo();
+  if (!storageOnline) {
+    alert("Server is offline. Start trade_plan_server.py first.");
+    return;
+  }
+  const result = await api("/settings", { method: "POST", body: JSON.stringify(payload) });
+  settings = {
+    available_capital: result.available_capital,
+    daily_risk: result.daily_risk,
+    per_position_risk: result.per_position_risk,
+    checklist_groups: normalizeChecklistGroups(result.checklist_groups || checklistGroups)
+  };
+  setSaveState("Settings saved", "saved", "Autosave active");
+  await loadDashboard();
+  renderApp();
+}
+
+async function save(opts) {
+  const options = Object.assign({ silent: false }, opts || {});
+  const seq = ++saveSeq;
+  localStorage.setItem(pkey(planDate), JSON.stringify(positions));
+  if (!storageOnline) await loadStorageInfo();
+  if (!storageOnline) {
+    if (!options.silent) setSaveState("Save failed. API server is offline.", "", "Run trade_plan_server.py");
+    return false;
+  }
+  if (!options.silent) setSaveState("Saving...", "", "Autosave active");
+  try {
+    const payload = await api("/plan?date=" + encodeURIComponent(planDate), {
+      method: "POST",
+      body: JSON.stringify({ positions })
+    });
+    if (seq !== saveSeq) return true;
+    savePath = payload.path || savePath;
+    const stamp = new Date().toLocaleTimeString();
+    dirty = false;
+    if (!options.silent) setSaveState("Saved " + stamp, "saved", "Autosave active");
+    await loadDashboard();
+    return true;
+  } catch (err) {
+    if (!options.silent) setSaveState("Save failed", "", String(err.message || err));
+    return false;
+  }
+}
+
+function autoSave() {
+  if (currentView !== "day") return;
+  dirty = true;
+  setSaveState("Saving...", "", "Autosave active");
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => { save(); }, 900);
+}
+
+async function flushPendingSave() {
+  if (currentView !== "day") return;
+  if (!dirty) return;
+  clearTimeout(saveTimer);
+  await save({ silent: true });
+}
+
+async function loadDashboard() {
+  if (!storageOnline) await loadStorageInfo();
+  await loadSettings();
+  if (!storageOnline) {
+    dashboardItems = [];
+    latestDashboardDate = todayStr();
+    setSaveState("Server offline", "", "Run trade_plan_server.py");
+    return;
+  }
+  try {
+    const payload = await api("/dashboard");
+    dashboardItems = Array.isArray(payload.items) ? payload.items : [];
+    latestDashboardDate = payload.latest_date || todayStr();
+    if (payload.settings) settings = payload.settings;
+    if (!planDate) planDate = latestDashboardDate;
+    setSaveState("Ready", "saved", "Autosave active");
+  } catch (_err) {
+    dashboardItems = [];
+    latestDashboardDate = todayStr();
+    setSaveState("Dashboard load failed", "", "API unavailable");
+  }
+}
+
+async function loadGoalTracker() {
+  if (!storageOnline) await loadStorageInfo();
+  await loadSettings();
+  if (!storageOnline) {
+    goalTracker = { exposure_items: [], r_progress_items: [], plan_stats_items: [], latest_date: todayStr() };
+    return;
+  }
+  try {
+    const payload = await api("/goal-tracker");
+    goalTracker = {
+      exposure_items: Array.isArray(payload.exposure_items) ? payload.exposure_items : [],
+      r_progress_items: Array.isArray(payload.r_progress_items) ? payload.r_progress_items : [],
+      plan_stats_items: Array.isArray(payload.plan_stats_items) ? payload.plan_stats_items : [],
+      latest_date: payload.latest_date || todayStr()
+    };
+    if (payload.settings) settings = payload.settings;
+    dashboardItems = goalTracker.exposure_items.slice();
+    latestDashboardDate = goalTracker.latest_date || latestDashboardDate;
+  } catch (_err) {
+    goalTracker = { exposure_items: [], r_progress_items: [], plan_stats_items: [], latest_date: todayStr() };
+  }
+}
+
+async function loadDayView(date) {
+  await flushPendingSave();
+  planDate = date;
+  clearTimeout(saveTimer);
+  if (e("plan-date")) e("plan-date").value = date;
+  let loaded = null;
+  if (!storageOnline) await loadStorageInfo();
+  if (storageOnline) {
+    try {
+      loaded = await api("/day-view?date=" + encodeURIComponent(date));
+      savePath = loaded.raw_path || savePath;
+    } catch (err) {
+      setSaveState("Load failed. " + err.message, "", String(err.message || err));
+    }
+  }
+  if (!loaded) {
+    const raw = localStorage.getItem(pkey(date));
+    loaded = {
+      positions: raw ? JSON.parse(raw) : [],
+      raw_path: savePath,
+      open_positions_count: 0,
+      exited_today_count: 0,
+      planning_count: 0,
+      exposure: 0,
+      exposure_pct: null
+    };
+  }
+  positions = Array.isArray(loaded.positions) ? loaded.positions.map(hydratePos) : [];
+  selectedPositionId = null;
+  dayMeta = {
+    open_positions_count: loaded.open_positions_count || 0,
+    exited_today_count: loaded.exited_today_count || 0,
+    planning_count: loaded.planning_count || 0,
+    exposure: loaded.exposure || 0,
+    exposure_pct: loaded.exposure_pct
+  };
+  renderApp();
+  await refreshAllSymbols({ silent: true, persist: positions.length > 0 });
+  setSaveState("Loaded " + positions.length + " position(s) for " + fmtDateLabel(date), "saved", loaded.raw_path || savePath);
+}
+
+async function changeDate(v) {
+  if (v) await openDay(v);
+}
+
+async function shiftDate(delta) {
+  const dt = new Date(planDate + "T12:00:00");
+  dt.setDate(dt.getDate() + delta);
+  const next = dt.toISOString().split("T")[0];
+  await openDay(next);
+}
+
+function compute(p) {
+  const totalRisk = Number(p.riskAmount || 0);
+  const coreRps = (p.planEntry && p.planSL) ? (p.planEntry - p.planSL) : null;
+  const intraRps = (p.planEntry && p.intraSL) ? (p.planEntry - p.intraSL) : coreRps;
+  const blendRps = (coreRps && intraRps) ? (coreRps * 0.70 + intraRps * 0.30) : coreRps;
+  const entry = getEffectiveEntry(p);
+  p._coreRps = coreRps;
+  p._intraRps = intraRps;
+  p._blendRps = blendRps;
+  p._rps = blendRps && coreRps && intraRps
+    ? `Core Rs ${coreRps.toFixed(2)} | Intra Rs ${intraRps.toFixed(2)} | Blend Rs ${blendRps.toFixed(2)}`
+    : (coreRps ? "Rs " + coreRps.toFixed(2) : null);
+  const coreQty = coreRps && coreRps > 0 && totalRisk > 0 ? Math.floor(totalRisk / coreRps) : 0;
+  p._suggestedIntraQty = coreQty > 0 ? Math.max(1, Math.round(coreQty * 0.30)) : null;
+  if (p.intraQty == null && p._suggestedIntraQty != null) p.intraQty = p._suggestedIntraQty;
+  const manualIntraQty = p.intraQty != null ? Math.max(0, parseInt(p.intraQty, 10) || 0) : null;
+  const effectiveIntraQty = manualIntraQty != null ? manualIntraQty : 0;
+  const totalQty = coreQty + effectiveIntraQty;
+  p._qty = totalQty;
+  p._intraQty = effectiveIntraQty;
+  p._predQty = coreQty;
+  p._predRisk = p._predQty > 0 && coreRps ? +(p._predQty * coreRps).toFixed(2) : 0;
+  p._intraRisk = p._intraQty > 0 && intraRps ? +(p._intraQty * intraRps).toFixed(2) : 0;
+  p._planRisk = +(p._predRisk + p._intraRisk).toFixed(2);
+  const ae = entry || p.planEntry;
+  p.trims[0]._sug = ae ? +(ae * 1.03).toFixed(2) : null;
+  p.trims[1]._sug = p.posHigh ? +(p.posHigh * 0.90).toFixed(2) : null;
+  p.trims[2]._sug = ae ? +(ae * 1.15).toFixed(2) : null;
+  p.trims[3]._sug = ae ? +(ae * 1.25).toFixed(2) : null;
+  const carriedQty = getTotalQty(p);
+  p._suggestedQty = carriedQty != null ? Math.max(1, Math.round(carriedQty * 0.30)) : null;
+  const totalSold = p.trims.reduce((sum, t) => sum + (t.done && t.sq ? t.sq : 0), 0);
+  p._rem = carriedQty != null ? Math.max(0, carriedQty - totalSold) : null;
+  p._realPnl = 0;
+  p.trims.forEach(t => {
+    t._pnl = (t.done && t.sq && t.ap && p.actualEntry) ? +((t.ap - p.actualEntry) * t.sq).toFixed(0) : null;
+    if (t._pnl != null) p._realPnl += t._pnl;
+  });
+  p._openPnl = (p.cmp && entry && p._rem > 0) ? +((p.cmp - entry) * p._rem).toFixed(0) : null;
+  p._currentSL = p.trailOverride || p.planSL || null;
+  p._days = null;
+  p._beSug = false;
+  if (p.entryDate && entry) {
+    const diff = Math.floor((Date.now() - new Date(p.entryDate + "T00:00:00")) / 86400000);
+    p._days = diff;
+    if (diff >= 2 && !p.movedBE) p._beSug = true;
+  }
+  const allSold = p._rem === 0;
+  const anyTrim = p.trims.some(t => t.done);
+  p._status = !entry ? "planning" : allSold ? "closed" : anyTrim ? "partial" : "active";
+}
+
+function getTotalQty(p) {
+  const overnightQty = p.overnightQty != null ? Number(p.overnightQty) : null;
+  const actualQty = p.actualQty != null ? Number(p.actualQty) : null;
+  if (overnightQty == null && actualQty == null) return null;
+  return (overnightQty || 0) + (actualQty || 0);
+}
+
+function getExecutionRisk(p) {
+  const planSL = p.planSL != null ? Number(p.planSL) : null;
+  const intraSL = p.intraSL != null ? Number(p.intraSL) : null;
+  const totalQty = getTotalQty(p);
+  const entry = getEffectiveEntry(p);
+  if (!(totalQty > 0 && entry > 0 && planSL > 0)) return null;
+  const intraQty = Math.max(0, Math.round(totalQty * 0.30));
+  const coreQty = Math.max(0, totalQty - intraQty);
+  const coreRisk = Math.max(0, (entry - planSL) * coreQty);
+  const intraRisk = Math.max(0, (entry - (intraSL > 0 ? intraSL : planSL)) * intraQty);
+  return +(coreRisk + intraRisk).toFixed(2);
+}
+
+function getPlannedRisk(p) {
+  const planned = p._planRisk != null ? Number(p._planRisk) : null;
+  return planned != null && planned > 0 ? +planned.toFixed(2) : null;
+}
+
+function getLiveRisk(p) {
+  const entry = getEffectiveEntry(p);
+  const sl = p._currentSL != null ? Number(p._currentSL) : (p.planSL != null ? Number(p.planSL) : null);
+  const remainingQty = p._rem != null ? Number(p._rem) : getTotalQty(p);
+  if (!(entry > 0 && sl > 0 && remainingQty > 0)) return null;
+  return +Math.max(0, (entry - sl) * remainingQty).toFixed(2);
+}
+
+function hasExecutionDetails(p) {
+  return getTotalQty(p) != null && getEffectiveEntry(p) != null;
+}
+
+function getDisplayedRisk(p) {
+  if (hasExecutionDetails(p)) return getLiveRisk(p);
+  return getPlannedRisk(p);
+}
+
+function getDisplayedRiskLabel(p) {
+  return hasExecutionDetails(p) ? "Live risk" : "Planned risk";
+}
+
+function getEffectiveEntry(p) {
+  const legs = [];
+  const overnightQty = p.overnightQty != null ? Number(p.overnightQty) : null;
+  const overnightEntry = p.overnightEntry != null ? Number(p.overnightEntry) : null;
+  const actualQty = p.actualQty != null ? Number(p.actualQty) : null;
+  const actualEntry = p.actualEntry != null ? Number(p.actualEntry) : null;
+  if (overnightQty != null && overnightQty > 0 && overnightEntry != null && overnightEntry > 0) {
+    legs.push({ qty: overnightQty, price: overnightEntry });
+  }
+  if (actualQty != null && actualQty > 0 && actualEntry != null && actualEntry > 0) {
+    legs.push({ qty: actualQty, price: actualEntry });
+  }
+  if (legs.length === 2) {
+    const totalQty = legs[0].qty + legs[1].qty;
+    if (totalQty > 0) {
+      const weighted = ((legs[0].qty * legs[0].price) + (legs[1].qty * legs[1].price)) / totalQty;
+      return +weighted.toFixed(2);
+    }
+  }
+  if (legs.length === 1) {
+    return +legs[0].price.toFixed(2);
+  }
+  return actualEntry != null ? actualEntry : (overnightEntry != null ? overnightEntry : null);
+}
+function isPositioned(p) { return !!getEffectiveEntry(p); }
+function isOpenPosition(p) { return p._status === "active" || p._status === "partial"; }
+function getBucketKey(p) {
+  if (!isPositioned(p)) return "planning";
+  if (p._status === "closed") return "exited";
+  if (p.entryDate && p.entryDate < planDate) return "overnight";
+  return "current";
+}
+function getPrimaryBadge(p) { return isPositioned(p) ? "positioned" : "planning"; }
+function getSecondaryBadge(p) {
+  if (!isPositioned(p)) return "";
+  if (p._status === "partial") return "partial";
+  if (p._status === "closed") return "closed";
+  return getBucketKey(p);
+}
+function getHeaderMeta(p, bucketKey) {
+  const entry = getEffectiveEntry(p);
+  const sl = p._currentSL != null ? p._currentSL : p.planSL;
+  const slHtml = sl != null ? `<strong>SL Rs ${fi(sl)}</strong>` : `<strong>SL</strong>`;
+  if (isPositioned(p)) {
+    const openQty = p._rem != null ? p._rem : (p.actualQty != null ? p.actualQty : (p.overnightQty || 0));
+    const entryTxt = entry ? `Entry Rs ${entry}` : "";
+    if (bucketKey === "overnight") return `${entryTxt} | ${slHtml} | Open qty ${openQty}`;
+    if (p._status === "closed") return `${entryTxt} | ${slHtml} | Flat by close`;
+    return `${entryTxt} | ${slHtml} | Open qty ${openQty}`;
+  }
+  const priceTxt = p.planEntry ? `Buy near Rs ${p.planEntry}` : "Buy price pending";
+  const qtyTxt = p._qty > 0 ? `Qty ${p._qty}` : "Qty pending";
+  return `${priceTxt} | ${qtyTxt}`;
+}
+function getSectionTitle(key) {
+  if (key === "overnight") return "Overnight Positions";
+  if (key === "current") return "Current Positions";
+  if (key === "exited") return "Exited Today";
+  return "Planning Queue";
+}
+function getSectionNote(key, count) {
+  if (key === "overnight") return `${count} carried position${count === 1 ? "" : "s"}`;
+  if (key === "current") return `${count} live for ${planDate}`;
+  if (key === "exited") return `${count} trade${count === 1 ? "" : "s"} completed today and not carried overnight`;
+  return `${count} planned setup${count === 1 ? "" : "s"} not executed yet`;
+}
+
+function getDisplayBuckets() {
+  return ["planning", "current", "exited", "overnight"];
+}
+
+function ensureSelectedPosition() {
+  if (!positions.length) {
+    selectedPositionId = null;
+    return null;
+  }
+  if (!positions.some(p => p.id === selectedPositionId)) {
+    const byBucket = {};
+    positions.forEach(p => {
+      compute(p);
+      const bucket = getBucketKey(p);
+      if (!byBucket[bucket]) byBucket[bucket] = p.id;
+    });
+    selectedPositionId = byBucket.planning || byBucket.current || byBucket.exited || byBucket.overnight || positions[0].id;
+  }
+  return positions.find(p => p.id === selectedPositionId) || positions[0];
+}
+
+function selectPos(id) {
+  if (!positions.some(p => p.id === id)) return;
+  selectedPositionId = id;
+  renderDayView();
+}
+
+function upd(id, field, value) {
+  const p = positions.find(x => x.id === id);
+  if (!p) return;
+  if (field.startsWith("mgmt.")) p.mgmt[field.slice(5)] = value;
+  else p[field] = value;
+  autoSave();
+  if (field.startsWith("mgmt.") || field === "thoughtTag") {
+    paint(id, p);
+    return;
+  }
+  if (!QUIET.has(field)) {
+    compute(p);
+    paint(id, p);
+  }
+}
+
+function updTrim(id, ti, field, value) {
+  const p = positions.find(x => x.id === id);
+  if (!p) return;
+  p.trims[ti][field] = value;
+  const row = e("tr-" + ti + "-" + id);
+  if (row && field === "done") row.className = value ? "t-done" : "";
+  compute(p);
+  paint(id, p);
+  autoSave();
+}
+
+function setConv(id, value) {
+  const p = positions.find(x => x.id === id);
+  if (!p) return;
+  p.conviction = value;
+  const c = e("conv-" + id);
+  if (c) c.innerHTML = [1, 2, 3, 4, 5].map(i => `<span class="cdot ${i <= value ? "on" : ""}" onclick="setConv('${id}',${i})"></span>`).join("");
+  autoSave();
+}
+
+function moveBE(id) {
+  const p = positions.find(x => x.id === id);
+  const entry = getEffectiveEntry(p);
+  if (!p || !entry) return;
+  p.movedBE = true;
+  p.trailOverride = entry;
+  if (!p.trailNote) p.trailNote = "SL moved to breakeven (Rs " + entry + ")";
+  const note = e("tni-" + id);
+  const over = e("toi-" + id);
+  if (note) note.value = p.trailNote;
+  if (over) over.value = entry;
+  compute(p);
+  paint(id, p);
+  autoSave();
+}
+
+function readChecklistGroupsFromDOM() {
+  const groups = [];
+  for (let gi = 0; gi < 3; gi += 1) {
+    const title = String(e(`cg-title-${gi}`)?.value || "").trim();
+    const countRaw = parseInt(e(`cg-count-${gi}`)?.value || "0", 10);
+    const count = Number.isFinite(countRaw) ? Math.max(0, Math.min(3, countRaw)) : 0;
+    const items = [];
+    for (let ii = 0; ii < 3; ii += 1) {
+      const value = String(e(`cg-item-${gi}-${ii}`)?.value || "").trim();
+      items.push(value);
+    }
+    groups.push({
+      title: title || defaultChecklistGroups()[gi].title,
+      count,
+      items,
+    });
+  }
+  return normalizeChecklistGroups(groups);
+}
+
+function renderChecklistGroupCards() {
+  const groups = getChecklistGroups();
+  return groups.map((group, gi) => {
+    const countOptions = [0, 1, 2, 3].map(n => `<option value="${n}" ${group.count === n ? "selected" : ""}>${n}</option>`).join("");
+    const rows = [0, 1, 2].map(ii => {
+      const visible = ii < group.count;
+      const item = group.items[ii] || "";
+      return `
+        <div class="check-item-row" style="${visible ? "" : "display:none;"}">
+          <input type="text" class="fin" id="cg-item-${gi}-${ii}" placeholder="Item ${ii + 1}" value="${escHtml(item)}">
+          <button class="btn-sec" type="button" onclick="removeChecklistItem(${gi}, ${ii})">Delete</button>
+        </div>
+      `;
+    }).join("");
+    return `
+      <section class="check-group">
+        <div class="check-group-head">
+          <div class="field">
+            <div class="flabel">Group heading</div>
+            <input type="text" class="fin" id="cg-title-${gi}" value="${escHtml(group.title || "")}" placeholder="Group title">
+          </div>
+          <div class="field">
+            <div class="flabel">Entries</div>
+            <select class="fin" id="cg-count-${gi}" onchange="updateChecklistGroupCount(${gi}, this.value)">
+              ${countOptions}
+            </select>
+          </div>
+        </div>
+        <div class="check-items">
+          ${rows}
+        </div>
+        <button class="btn-sec check-item-add" type="button" onclick="addChecklistItem(${gi})" ${group.count >= 3 ? "disabled" : ""}>+ Add entry</button>
+      </section>
+    `;
+  }).join("");
+}
+
+function updateChecklistGroupCount(groupIdx, value) {
+  const groups = readChecklistGroupsFromDOM();
+  const idx = Number(groupIdx);
+  if (!groups[idx]) return;
+  const count = Math.max(0, Math.min(3, parseInt(value, 10) || 0));
+  groups[idx].count = count;
+  for (let i = count; i < 3; i += 1) {
+    groups[idx].items[i] = "";
+  }
+  settings.checklist_groups = groups;
+  renderSettingsView();
+}
+
+function addChecklistItem(groupIdx) {
+  const groups = readChecklistGroupsFromDOM();
+  const idx = Number(groupIdx);
+  if (!groups[idx]) return;
+  if (groups[idx].count >= 3) return;
+  groups[idx].count = Math.min(3, groups[idx].count + 1);
+  settings.checklist_groups = groups;
+  renderSettingsView();
+}
+
+function removeChecklistItem(groupIdx, itemIdx) {
+  const groups = readChecklistGroupsFromDOM();
+  const idx = Number(groupIdx);
+  const row = Number(itemIdx);
+  if (!groups[idx]) return;
+  groups[idx].items.splice(row, 1);
+  while (groups[idx].items.length < 3) groups[idx].items.push("");
+  groups[idx].count = Math.min(3, groups[idx].items.filter(Boolean).length);
+  settings.checklist_groups = groups;
+  renderSettingsView();
+}
+
+function toggleChecklistItem(id, groupIdx, itemIdx, checked) {
+  const p = positions.find(x => x.id === id);
+  if (!p) return;
+  const matrix = normalizeChecklistStateMatrix(p.mgmt && p.mgmt.checklist ? p.mgmt.checklist : legacyChecklistStateMatrix(p.mgmt));
+  const gi = Number(groupIdx);
+  const ii = Number(itemIdx);
+  if (!matrix[gi] || matrix[gi][ii] == null) return;
+  matrix[gi][ii] = Boolean(checked);
+  p.mgmt.checklist = matrix;
+  const rail = e("live-rail");
+  if (rail) rail.outerHTML = renderRightRail(p);
+  autoSave();
+}
+
+function updateTrailSL(id) {
+  const p = positions.find(x => x.id === id);
+  if (!p) return;
+  const over = e("toi-" + id);
+  if (!over) return;
+  const value = parseFloat(over.value);
+  if (!Number.isFinite(value) || value <= 0) return;
+  p.trailOverride = value;
+  if (!p.trailNote) p.trailNote = "Trail SL updated to Rs " + value;
+  const note = e("tni-" + id);
+  if (note && !note.value) note.value = p.trailNote;
+  compute(p);
+  paint(id, p);
+  autoSave();
+}
+
+async function fetchSuggestions(term) {
+  const list = e("symbol-suggestions");
+  if (!list) return;
+  list.innerHTML = "";
+  const clean = normalizeSymbol(term);
+  if (!clean || !storageOnline) return;
+  try {
+    const payload = await api("/symbols?term=" + encodeURIComponent(clean) + "&limit=8");
+    list.innerHTML = (payload.items || []).map(item => `<option value="${item.symbol}">${item.company_name || ""}</option>`).join("");
+  } catch (_err) {}
+}
+
+function handleSymbolInput(id, input) {
+  const clean = normalizeSymbol(input.value);
+  input.value = clean;
+  upd(id, "symbol", clean);
+  fetchSuggestions(clean);
+}
+
+async function resolveSymbolAndCmp(id, rawValue, opts) {
+  const options = Object.assign({ input: null, silent: false }, opts || {});
+  const p = positions.find(x => x.id === id);
+  if (!p) return false;
+  const symbol = normalizeSymbol(rawValue);
+  if (!symbol) {
+    p.symbol = "";
+    p.cmp = null;
+    compute(p);
+    paint(id, p);
+    autoSave();
+    return false;
+  }
+  if (!storageOnline) await loadStorageInfo();
+  if (!storageOnline) {
+    if (!options.silent) setSaveState("Server offline. Cannot resolve symbol/CMP.", "", "Run trade_plan_server.py");
+    return false;
+  }
+  try {
+    const result = await api("/resolve-symbol?symbol=" + encodeURIComponent(symbol) + "&date=" + encodeURIComponent(planDate));
+    if (!result.ok) {
+      p.symbol = symbol;
+      p.cmp = null;
+      compute(p);
+      paint(id, p);
+      const suffix = (result.suggestions || []).length ? " Suggestions: " + result.suggestions.join(", ") : "";
+      if (!options.silent) setSaveState(result.message + suffix, "", result.message + suffix);
+      autoSave();
+      return false;
+    }
+    p.symbol = result.canonical_symbol;
+    p.cmp = result.cmp;
+    if (options.input) options.input.value = result.canonical_symbol;
+    compute(p);
+    paint(id, p);
+    if (!options.silent) {
+      const via = result.matched_via && result.matched_via !== "exact" ? " [" + result.matched_via + "]" : "";
+      setSaveState("Symbol " + symbol + " -> " + result.canonical_symbol + via + ", CMP " + result.cmp + " from " + result.table + " (" + result.price_date + ")", "saved");
+    }
+    autoSave();
+    return true;
+  } catch (err) {
+    if (!options.silent) setSaveState("Symbol lookup failed. " + err.message, "", String(err.message || err));
+    return false;
+  }
+}
+
+async function commitSymbol(id, input) { await resolveSymbolAndCmp(id, input.value, { input }); }
+async function refreshAllSymbols(opts) {
+  const options = Object.assign({ silent: true, persist: false }, opts || {});
+  let changed = false;
+  for (const p of positions) {
+    if (!p.symbol) continue;
+    const beforeSymbol = p.symbol;
+    const beforeCmp = p.cmp;
+    await resolveSymbolAndCmp(p.id, p.symbol, { silent: options.silent });
+    if (p.symbol !== beforeSymbol || p.cmp !== beforeCmp) changed = true;
+    await wait(40);
+  }
+  if (changed && options.persist) await save({ silent: true });
+}
+
+function paint(id, p) {
+  const set = (nodeId, text, cls) => {
+    const node = e(nodeId);
+    if (!node) return;
+    if (text != null) node.textContent = text;
+    if (cls != null) node.className = cls;
+  };
+  const cmpInput = e("cmp-" + id);
+  const symInput = e("sym-" + id);
+  if (symInput && symInput.value !== p.symbol) symInput.value = p.symbol || "";
+  if (cmpInput) cmpInput.value = p.cmp != null ? p.cmp : "";
+  const card = e("card-" + id);
+  if (card) card.className = "pcard st-" + p._status;
+  const list = e("list-" + id);
+  if (list) list.className = "plist-item st-" + p._status + (selectedPositionId === id ? " on" : "");
+  set("list-sym-" + id, p.symbol || "SYMBOL");
+  const listMeta = e("list-meta-" + id);
+  if (listMeta) listMeta.innerHTML = getHeaderMeta(p, getBucketKey(p));
+  const listPnl = e("list-pnl-" + id);
+  if (listPnl) {
+    const total = (p._realPnl || 0) + (p._openPnl || 0);
+    listPnl.textContent = total !== 0 ? sgn(total) + "Rs " + fi(total) : "-";
+    listPnl.className = "plist-pnl " + (total >= 0 ? "pos" : "neg");
+  }
+  const lp = e("list-pbadge-" + id);
+  if (lp) lp.className = "badge badge-" + getPrimaryBadge(p);
+  set("list-pbadge-" + id, getPrimaryBadge(p).toUpperCase());
+  const ls = e("list-sbadge-" + id);
+  if (ls) {
+    const secondary = getSecondaryBadge(p);
+    ls.textContent = secondary.toUpperCase();
+    ls.className = "badge badge-" + (secondary || "ghost");
+    ls.style.display = secondary ? "" : "none";
+  }
+  set("pbadge-" + id, getPrimaryBadge(p).toUpperCase(), "badge badge-" + getPrimaryBadge(p));
+  const sb = e("sbadge-" + id);
+  if (sb) {
+    const secondary = getSecondaryBadge(p);
+    sb.textContent = secondary.toUpperCase();
+    sb.className = "badge badge-" + (secondary || "ghost");
+    sb.style.display = secondary ? "" : "none";
+  }
+  const hm = e("hmeta-" + id);
+  if (hm) hm.innerHTML = getHeaderMeta(p, getBucketKey(p));
+  const qtyEl = e("qty-" + id);
+  if (qtyEl) {
+    qtyEl.textContent = p._qty > 0 ? p._qty : "-";
+    qtyEl.style.color = p._qty > 0 ? "var(--green)" : "var(--t3)";
+    qtyEl.style.fontSize = p._qty > 0 ? "22px" : "16px";
+  }
+  set("rps-val-" + id, p._rps ? p._rps : "-");
+  set("prisk-" + id, p._planRisk != null && p._planRisk > 0 ? price2(p._planRisk) : "-");
+  const carriedQty = getTotalQty(p);
+  set("totq-" + id, carriedQty != null ? carriedQty : "-");
+  set("epx-" + id, getEffectiveEntry(p) != null ? price2(getEffectiveEntry(p)) : "-");
+  const execRisk = getExecutionRisk(p);
+  set("erisk-" + id, execRisk != null ? price2(execRisk) : "-");
+  set("rem-" + id, p._rem != null ? p._rem : (carriedQty != null ? carriedQty : "-"));
+  const qty = carriedQty || p._qty || 0;
+  const splits = [Math.ceil(qty * 0.33), Math.ceil(qty * 0.25), Math.floor(qty * 0.25), Math.floor(qty * 0.17)];
+  ["sp0", "sp1", "sp2", "sp3"].forEach((name, i) => set(name + "-" + id, qty > 0 ? splits[i] : "-"));
+  let running = carriedQty || 0;
+  p.trims.forEach((t, i) => {
+    const sugEl = e("ts" + i + "-" + id);
+    if (sugEl) {
+      sugEl.textContent = t._sug ? "Rs " + t._sug : (i === 1 ? "Enter pos high" : "-");
+      sugEl.style.color = t._sug ? "var(--amb)" : "var(--t3)";
+      sugEl.className = t._sug ? "t-target" : "t-na";
+    }
+    const pnlEl = e("tp" + i + "-" + id);
+    if (pnlEl) {
+      if (t._pnl != null) {
+        pnlEl.textContent = (t._pnl >= 0 ? "+" : "-") + "Rs " + fi(t._pnl);
+        pnlEl.className = "t-pl " + (t._pnl >= 0 ? "pos" : "neg");
+      } else {
+        pnlEl.textContent = "-";
+        pnlEl.className = "t-pl";
+      }
+    }
+    running -= (t.done && t.sq ? t.sq : 0);
+    set("tr" + i + "-" + id, carriedQty != null ? running + " rem" : "");
+  });
+  const sumEl = e("pnlsum-" + id);
+  if (sumEl) {
+    const hasTrim = p.trims.some(t => t.done);
+    sumEl.style.display = hasTrim ? "flex" : "none";
+    if (hasTrim) {
+      const net = (p._realPnl || 0) + (p._openPnl || 0);
+      const realEl = e("psr-" + id);
+      const netEl = e("psn-" + id);
+      if (realEl) {
+        realEl.textContent = sgn(p._realPnl) + "Rs " + fi(p._realPnl);
+        realEl.style.color = p._realPnl >= 0 ? "var(--green)" : "var(--red)";
+      }
+      if (netEl) {
+        netEl.textContent = sgn(net) + "Rs " + fi(net);
+        netEl.style.color = net >= 0 ? "var(--green)" : "var(--red)";
+      }
+    }
+  }
+  set("tsl-" + id, "Rs " + (p._currentSL || "-"));
+  set("days-" + id, p._days != null ? "Day " + p._days + " in trade" : "");
+  const beBanner = e("beb-" + id);
+  if (beBanner) beBanner.style.display = p._beSug ? "flex" : "none";
+  const beConf = e("bec-" + id);
+  if (beConf) {
+    beConf.style.display = p.movedBE ? "block" : "none";
+    beConf.textContent = p.movedBE ? "Rs " + p.actualEntry : "";
+  }
+  const headRisk = e("hrisk-" + id);
+  if (headRisk) {
+    const displayRisk = getDisplayedRisk(p);
+    const displayRiskLabel = getDisplayedRiskLabel(p);
+    headRisk.style.display = displayRisk != null ? "" : "none";
+    headRisk.textContent = displayRisk != null ? `${displayRiskLabel} ${price2(displayRisk)}` : "";
+    headRisk.className = "head-pnl neg";
+  }
+  const thoughtInputDraft = e("thought-input-" + id)?.value || "";
+  const mgmtNoteDraft = e("mgmt-note-" + id)?.value || "";
+  const liveRail = e("live-rail");
+  if (liveRail && selectedPositionId === id) {
+    liveRail.outerHTML = renderRightRail(p);
+    const thoughtInput = e("thought-input-" + id);
+    if (thoughtInput && thoughtInputDraft) thoughtInput.value = thoughtInputDraft;
+    const mgmtNote = e("mgmt-note-" + id);
+    if (mgmtNote && mgmtNoteDraft) mgmtNote.value = mgmtNoteDraft;
+  }
+  updateSummary();
+}
+
+function updateSummary() {
+  const openCount = positions.filter(p => {
+    compute(p);
+    return isOpenPosition(p);
+  }).length;
+  let risk = 0;
+  let real = 0;
+  let open = 0;
+  positions.forEach(p => {
+    compute(p);
+    const displayRisk = getDisplayedRisk(p);
+    if (displayRisk != null) risk += displayRisk;
+    real += (p._realPnl || 0);
+    if (isOpenPosition(p) && p._openPnl != null) open += p._openPnl;
+  });
+  const net = real + open;
+  const sign = v => v > 0 ? "+" : v < 0 ? "-" : "";
+  const set = (id, text, cls) => {
+    const node = e(id);
+    if (node) {
+      node.textContent = text;
+      node.className = "sv " + cls;
+    }
+  };
+  set("s-pos", String(openCount), "neu");
+  set("s-exp", dayMeta.exposure ? "Rs " + fi(dayMeta.exposure) : "-", "neu");
+  set("s-expct", dayMeta.exposure_pct != null ? pct(dayMeta.exposure_pct) : "-", "neu");
+  set("s-risk", risk > 0 ? "Rs " + fi(risk) : "-", "neu");
+  set("s-real", real !== 0 ? sign(real) + "Rs " + fi(real) : "-", real >= 0 ? "pos" : "neg");
+  set("s-open", open !== 0 ? sign(open) + "Rs " + fi(open) : "-", open >= 0 ? "pos" : "neg");
+  set("s-net", net !== 0 ? sign(net) + "Rs " + fi(net) : "-", net >= 0 ? "pos" : "neg");
+}
+
+function trackerBars(items, options) {
+  const cfg = Object.assign({
+    valueKey: "value",
+    pctKey: null,
+    label: item => money(item[cfg.valueKey]),
+    currentDate: planDate,
+    fillClass: "",
+    emptyText: "No data yet."
+  }, options || {});
+  if (!items.length) return `<div class="view-note">${cfg.emptyText}</div>`;
+  const maxValue = Math.max(...items.map(item => Number(item[cfg.valueKey] || 0)), 1);
+  return items.map(item => {
+    const rawValue = Number(item[cfg.valueKey] || 0);
+    const height = cfg.pctKey && item[cfg.pctKey] != null
+      ? Math.max(8, Math.min(100, Number(item[cfg.pctKey] || 0)))
+      : Math.max(8, Math.round((rawValue / maxValue) * 100));
+    return `<div class="exp-col ${item.date === cfg.currentDate ? "current" : ""}"><div class="exp-top">${cfg.label(item)}</div><div class="exp-bar"><div class="exp-fill ${cfg.fillClass}" style="height:${height}%"></div></div><div class="exp-date">${fmtDateLabel(item.date)}</div></div>`;
+  }).join("");
+}
+
+function renderWormChart(items, options) {
+  const cfg = Object.assign({
+    title: "Daily Worm Graph",
+    note: "A glossy directional line for deployment progress, so the goal reads like momentum instead of blocks.",
+    valueKey: "exposure_pct",
+    fallbackValueKey: "exposure",
+    latestLabel: "Latest",
+    peakLabel: "Peak",
+    formatter: value => pct(value),
+    emptyText: "Worm graph needs saved dates to show direction."
+  }, options || {});
+  if (!items.length) return `<div class="view-note">${cfg.emptyText}</div>`;
+  const series = items.slice(-10);
+  const width = 960;
+  const height = 220;
+  const padL = 26;
+  const padR = 18;
+  const padT = 18;
+  const padB = 28;
+  const values = series.map(item => item[cfg.valueKey] != null ? Number(item[cfg.valueKey]) : Number(item[cfg.fallbackValueKey] || 0));
+  const maxVal = Math.max(...values, 1);
+  const minValRaw = Math.min(...values, 0);
+  const minVal = minValRaw === maxVal ? Math.max(0, maxVal - 1) : minValRaw;
+  const usableW = width - padL - padR;
+  const usableH = height - padT - padB;
+  const stepX = series.length > 1 ? usableW / (series.length - 1) : 0;
+  const points = series.map((item, index) => {
+    const value = values[index];
+    const x = padL + (stepX * index);
+    const y = padT + usableH - (((value - minVal) / (maxVal - minVal || 1)) * usableH);
+    return { x, y, value, date: item.date };
+  });
+  let line = `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
+  for (let i = 1; i < points.length; i += 1) {
+    const prev = points[i - 1];
+    const curr = points[i];
+    const cx = ((prev.x + curr.x) / 2).toFixed(1);
+    line += ` C ${cx} ${prev.y.toFixed(1)}, ${cx} ${curr.y.toFixed(1)}, ${curr.x.toFixed(1)} ${curr.y.toFixed(1)}`;
+  }
+  const area = `${line} L ${points[points.length - 1].x.toFixed(1)} ${height - padB} L ${points[0].x.toFixed(1)} ${height - padB} Z`;
+  const grid = [0, 0.5, 1].map(ratio => {
+    const y = padT + (usableH * ratio);
+    return `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${width - padR}" y2="${y.toFixed(1)}" stroke="rgba(255,255,255,.06)" stroke-dasharray="4 6"/>`;
+  }).join("");
+  const dots = points.map((point, index) => {
+    const active = index === points.length - 1;
+    return `<circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="${active ? 5 : 3.5}" fill="${active ? "#9fe7ff" : "#c8d8ff"}" stroke="${active ? "#27d3ff" : "rgba(255,255,255,.45)"}" stroke-width="${active ? 2 : 1.2}"/>`;
+  }).join("");
+  const labels = points.map(point => `<text x="${point.x.toFixed(1)}" y="${height - 8}" text-anchor="middle" fill="rgba(183,184,209,.78)" font-size="10">${fmtDateLabel(point.date)}</text>`).join("");
+  const first = values[0] || 0;
+  const last = values[values.length - 1] || 0;
+  const delta = last - first;
+  const direction = delta > 0 ? "Uptrend" : delta < 0 ? "Downtrend" : "Flat";
+  const peak = Math.max(...values, 0);
+  const latest = series[series.length - 1];
+  return `
+    <div class="worm-card">
+      <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">${cfg.title}</div>
+      <div class="view-note">${cfg.note}</div>
+      <div class="worm-frame">
+        <svg class="worm-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-label="Daily worm graph for exposure trend">
+          <defs>
+            <linearGradient id="wormStroke" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#41d1ff"/>
+              <stop offset="55%" stop-color="#6e8cff"/>
+              <stop offset="100%" stop-color="#7cf0c7"/>
+            </linearGradient>
+            <linearGradient id="wormFill" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stop-color="rgba(94,167,255,.38)"/>
+              <stop offset="75%" stop-color="rgba(20,26,43,.08)"/>
+              <stop offset="100%" stop-color="rgba(20,26,43,0)"/>
+            </linearGradient>
+            <filter id="wormGlow" x="-20%" y="-20%" width="140%" height="140%">
+              <feGaussianBlur stdDeviation="4.5" result="blur"/>
+              <feMerge>
+                <feMergeNode in="blur"/>
+                <feMergeNode in="SourceGraphic"/>
+              </feMerge>
+            </filter>
+          </defs>
+          ${grid}
+          <path d="${area}" fill="url(#wormFill)"></path>
+          <path d="${line}" fill="none" stroke="rgba(65,209,255,.18)" stroke-width="10" stroke-linecap="round" filter="url(#wormGlow)"></path>
+          <path d="${line}" fill="none" stroke="url(#wormStroke)" stroke-width="4.5" stroke-linecap="round"></path>
+          ${dots}
+          ${labels}
+        </svg>
+      </div>
+      <div class="worm-meta">
+        <div class="worm-pill"><div class="dash-k">Direction</div><div class="dash-v small">${direction}</div></div>
+        <div class="worm-pill"><div class="dash-k">Change</div><div class="dash-v small">${delta > 0 ? "+" : delta < 0 ? "-" : ""}${cfg.formatter(Math.abs(delta))}</div></div>
+        <div class="worm-pill"><div class="dash-k">${cfg.latestLabel}</div><div class="dash-v small">${cfg.formatter(latest?.[cfg.valueKey] != null ? latest[cfg.valueKey] : latest?.[cfg.fallbackValueKey])}</div></div>
+        <div class="worm-pill"><div class="dash-k">${cfg.peakLabel}</div><div class="dash-v small">${cfg.formatter(peak)}</div></div>
+      </div>
+    </div>
+  `;
+}
+
+function setGoalTrackerTab(tab) {
+  goalTrackerTab = tab;
+  if (currentView === "exposure") renderExposureView();
+}
+
+function renderGoalTrackerTabs() {
+  const tabs = [
+    ["exposure", "Exposure"],
+    ["r-progress", "R Progress"],
+    ["plan-stats", "Sticking To Plan"]
+  ];
+  return `<div class="tracker-tabs">${tabs.map(([key, label]) => `<button class="tracker-tab ${goalTrackerTab === key ? "on" : ""}" onclick="setGoalTrackerTab('${key}')">${label}</button>`).join("")}</div>`;
+}
+
+function renderExposureTab() {
+  const items = goalTracker.exposure_items.length ? goalTracker.exposure_items : dashboardItems;
+  const capital = Number(settings.available_capital || 0);
+  const activeDate = planDate || goalTracker.latest_date || latestDashboardDate || todayStr();
+  const selectedItem = items.find(item => item.date === activeDate) || items[items.length - 1] || null;
+  const currentExposure = Number(selectedItem?.exposure || 0);
+  const currentPct = selectedItem?.exposure_pct != null ? Number(selectedItem.exposure_pct) : (capital > 0 ? (currentExposure / capital) * 100 : null);
+  const openPositionsCount = Number(selectedItem?.open_positions_count || 0);
+  const gap = capital > 0 ? Math.max(0, capital - currentExposure) : null;
+  const exposureBars = trackerBars(items.slice(-8), {
+    valueKey: "exposure",
+    pctKey: capital > 0 ? "exposure_pct" : null,
+    currentDate: activeDate,
+    label: item => capital > 0 ? pct(item.exposure_pct) : money(item.exposure),
+    emptyText: "Save a few trade dates and your deployment bars will appear here."
+  });
+  const wormGraph = renderWormChart(items, {
+    title: "Daily Worm Graph",
+    note: "A glossy directional line for deployment progress, so the goal reads like momentum instead of blocks.",
+    valueKey: "exposure_pct",
+    fallbackValueKey: "exposure",
+    latestLabel: "Latest",
+    peakLabel: "Peak",
+    formatter: value => pct(value)
+  });
+  const progress = currentPct != null ? Math.max(0, Math.min(100, currentPct)) : 0;
+  const goalText = capital > 0
+    ? `Capital left to deploy: ${money(gap)}. This is the screen to judge whether your market read is translating into real deployment.`
+    : "Set available capital in Settings to turn this into a true deployment tracker.";
+  return `
+    <section class="tracker-stack">
+      <section class="settings-card exp-graph">
+        <div>
+          <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">Exposure</div>
+          <div class="view-note">How much capital was actually in the market across your saved days.</div>
+          <div class="exp-bars">${exposureBars}</div>
+        </div>
+        <div class="goal-card">
+          <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">Goal Tracker</div>
+          <div class="goal-big">${currentPct != null ? pct(currentPct) : "-"}</div>
+          <div class="goal-copy">${goalText}</div>
+          <div class="prog-track"><div class="prog-fill" style="width:${progress}%"></div></div>
+          <div class="goal-meta">
+            <div><div class="dash-k">Current exposure</div><div class="dash-v small">${money(currentExposure)}</div></div>
+            <div><div class="dash-k">Available capital</div><div class="dash-v small">${money(settings.available_capital)}</div></div>
+            <div><div class="dash-k">Open positions</div><div class="dash-v small">${openPositionsCount}</div></div>
+            <div><div class="dash-k">Capital left</div><div class="dash-v small">${gap != null ? money(gap) : "Set in Settings"}</div></div>
+          </div>
+        </div>
+      </section>
+      ${wormGraph}
+      <section class="tracker-grid">
+        <div class="metric-card"><div class="dash-k">Planned setups on active date</div><div class="metric-big">${selectedItem ? (selectedItem.planning_count || 0) : 0}</div><div class="metric-copy">Keep this beside deployment so you can see if planning is actually converting into exposure.</div></div>
+        <div class="metric-card"><div class="dash-k">Open positions on active date</div><div class="metric-big">${openPositionsCount}</div><div class="metric-copy">This is your real deployed count, not just names on a watchlist.</div></div>
+        <div class="metric-card"><div class="dash-k">Goal pressure</div><div class="metric-big">${gap != null ? money(gap) : "-"}</div><div class="metric-copy">The remaining distance to full capital deployment when market conditions deserve aggression.</div></div>
+      </section>
+    </section>
+  `;
+}
+
+function renderRProgressTab() {
+  const items = goalTracker.r_progress_items || [];
+  const latest = items[items.length - 1] || null;
+  const budget = Number(settings.daily_risk || 0);
+  const perTrade = Number(settings.per_position_risk || 0);
+  const bars = trackerBars(items.slice(-8), {
+    valueKey: "actual_risk",
+    pctKey: budget > 0 ? "daily_actual_risk_pct" : null,
+    currentDate: latest?.date || "",
+    label: item => budget > 0 ? pct(item.daily_actual_risk_pct) : money(item.actual_risk),
+    fillClass: "warm",
+    emptyText: "As you execute real trades, actual deployed risk will show up here."
+  });
+  const wormGraph = renderWormChart(items, {
+    title: "R Deployment Worm Graph",
+    note: "This tracks how much of your allotted risk was actually deployed in the trade, so under-sized executions stand out immediately.",
+    valueKey: "actual_vs_allotted_pct",
+    fallbackValueKey: "daily_actual_risk_pct",
+    latestLabel: "Actual vs allotted",
+    peakLabel: "Best deployment",
+    formatter: value => pct(value),
+    emptyText: "Worm graph needs executed trades with both allotted and actual risk."
+  });
+  return `
+    <section class="tracker-stack">
+      <section class="settings-card exp-graph">
+        <div>
+          <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">R Progress</div>
+          <div class="view-note">How much real risk you actually put on, not just how much you allowed yourself on paper.</div>
+          <div class="exp-bars">${bars}</div>
+        </div>
+        <div class="goal-card">
+          <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">Capacity Snapshot</div>
+          <div class="goal-big">${latest?.actual_vs_allotted_pct != null ? pct(latest.actual_vs_allotted_pct) : "-"}</div>
+          <div class="goal-copy">This compares actual risk deployed against allotted risk. If this stays low, you are approving risk but not really putting it to work.</div>
+          <div class="prog-track"><div class="prog-fill" style="width:${Math.max(0, Math.min(100, Number(latest?.actual_vs_allotted_pct || 0)))}%"></div></div>
+          <div class="goal-meta">
+            <div><div class="dash-k">Actual risk deployed</div><div class="dash-v small">${money(latest?.actual_risk)}</div></div>
+            <div><div class="dash-k">Allotted risk</div><div class="dash-v small">${money(latest?.allotted_risk)}</div></div>
+            <div><div class="dash-k">Daily risk budget</div><div class="dash-v small">${budget > 0 ? money(budget) : "Set in Settings"}</div></div>
+            <div><div class="dash-k">Daily actual vs budget</div><div class="dash-v small">${latest?.daily_actual_risk_pct != null ? pct(latest.daily_actual_risk_pct) : "-"}</div></div>
+          </div>
+        </div>
+      </section>
+      ${wormGraph}
+      <section class="tracker-grid">
+        <div class="metric-card"><div class="dash-k">Executed trades on latest entry day</div><div class="metric-big">${latest?.executed_count ?? 0}</div><div class="metric-copy">This helps separate real risk-taking from simple watchlist expansion.</div></div>
+        <div class="metric-card"><div class="dash-k">Avg actual risk vs target</div><div class="metric-big">${latest?.avg_actual_risk_pct != null ? pct(latest.avg_actual_risk_pct) : "-"}</div><div class="metric-copy">Use this to judge whether you are still trading too small versus your intended per-trade size.</div></div>
+        <div class="metric-card"><div class="dash-k">Avg allotted risk</div><div class="metric-big">${money(latest?.avg_allotted_risk)}</div><div class="metric-copy">What you told yourself the average trade was allowed to use.</div></div>
+        <div class="metric-card"><div class="dash-k">Max actual single-trade risk</div><div class="metric-big">${money(latest?.max_single_actual_risk)}</div><div class="metric-copy">The biggest real bet you actually placed, after position size and stop distance.</div></div>
+        <div class="metric-card"><div class="dash-k">Per-trade target</div><div class="metric-big">${perTrade > 0 ? money(perTrade) : "-"}</div><div class="metric-copy">Your benchmark for whether actual position size is rising with confidence and execution quality.</div></div>
+      </section>
+    </section>
+  `;
+}
+
+function renderPlanStatsTab() {
+  const items = goalTracker.plan_stats_items || [];
+  const latest = items[items.length - 1] || null;
+  const bars = trackerBars(items.slice(-8), {
+    valueKey: "adherence_pct",
+    pctKey: "adherence_pct",
+    currentDate: latest?.date || "",
+    label: item => pct(item.adherence_pct),
+    fillClass: "",
+    emptyText: "Tick the management review checkboxes on executed trades and the plan-discipline graph will populate."
+  });
+  const scoreClass = Number(latest?.adherence_pct || 0) >= 70 ? "hot" : Number(latest?.adherence_pct || 0) >= 40 ? "warm" : "cold";
+  return `
+    <section class="tracker-stack">
+      <section class="settings-card exp-graph">
+        <div>
+          <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">Sticking To Plan</div>
+          <div class="view-note">Your discipline score comes from the execution checklist on real positioned trades.</div>
+          <div class="exp-bars">${bars}</div>
+        </div>
+        <div class="goal-card">
+          <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">Discipline Snapshot</div>
+          <div class="goal-big">${latest?.adherence_pct != null ? pct(latest.adherence_pct) : "-"}</div>
+          <div class="goal-copy">A high score means you are not only spotting setups, but also trading them with the behavior you intended.</div>
+          <div class="prog-track"><div class="prog-fill" style="width:${Math.max(0, Math.min(100, Number(latest?.adherence_pct || 0)))}%"></div></div>
+          <div class="goal-meta">
+            <div><div class="dash-k">Tracked trades</div><div class="dash-v small">${latest?.trade_count ?? 0}</div></div>
+            <div><div class="dash-k">Checks completed</div><div class="dash-v small">${latest ? `${latest.checks_done}/${latest.checks_total}` : "-"}</div></div>
+            <div><div class="dash-k">Followed entry</div><div class="dash-v small">${latest?.followed_entry_pct != null ? pct(latest.followed_entry_pct) : "-"}</div></div>
+            <div><div class="dash-k">Respected SL</div><div class="dash-v small">${latest?.respected_sl_pct != null ? pct(latest.respected_sl_pct) : "-"}</div></div>
+          </div>
+        </div>
+      </section>
+      <section class="warm-grid">
+        <div class="warm-card ${scoreClass}"><div class="warm-date">Followed Entry</div><div class="warm-score">${latest?.followed_entry_pct != null ? pct(latest.followed_entry_pct) : "-"}</div><div class="warm-meta">Did you enter as planned instead of chasing strength?</div></div>
+        <div class="warm-card ${scoreClass}"><div class="warm-date">Respected SL</div><div class="warm-score">${latest?.respected_sl_pct != null ? pct(latest.respected_sl_pct) : "-"}</div><div class="warm-meta">Did you honor the stop instead of negotiating with it?</div></div>
+        <div class="warm-card ${scoreClass}"><div class="warm-date">Executed Trims</div><div class="warm-score">${latest?.executed_trims_pct != null ? pct(latest.executed_trims_pct) : "-"}</div><div class="warm-meta">Were profits booked near the intended levels?</div></div>
+        <div class="warm-card ${scoreClass}"><div class="warm-date">Breakeven Discipline</div><div class="warm-score">${latest?.breakeven_pct != null ? pct(latest.breakeven_pct) : "-"}</div><div class="warm-meta">Did you protect capital once the trade had room to mature?</div></div>
+      </section>
+    </section>
+  `;
+}
+
+function renderExposureView() {
+  syncChrome();
+  const main = e("main");
+  if (!main) return;
+  let body = renderExposureTab();
+  if (goalTrackerTab === "r-progress") body = renderRProgressTab();
+  else if (goalTrackerTab === "plan-stats") body = renderPlanStatsTab();
+  main.innerHTML = `
+    <section class="hero">
+      <h2>Goal Tracker</h2>
+      <p>Track three things separately: deployment progress, your ability to scale R responsibly, and whether your real execution is staying faithful to the plan.</p>
+      ${renderGoalTrackerTabs()}
+    </section>
+    ${body}
+  `;
+}
+
+function addPos() {
+  if (currentView !== "day" || positions.length >= 5) return;
+  const fresh = newPos();
+  positions.push(fresh);
+  selectedPositionId = fresh.id;
+  renderDayView();
+  const card = e("detail-pane");
+  const input = e("sym-" + fresh.id);
+  if (card) card.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (input) setTimeout(() => input.focus(), 80);
+  autoSave();
+}
+
+function removePos(id) {
+  if (!confirm("Remove this position?")) return;
+  const currentIndex = positions.findIndex(p => p.id === id);
+  positions = positions.filter(p => p.id !== id);
+  if (selectedPositionId === id) {
+    const fallback = positions[Math.max(0, Math.min(currentIndex, positions.length - 1))];
+    selectedPositionId = fallback ? fallback.id : null;
+  }
+  renderDayView();
+  autoSave();
+}
+
+function clearPlanFields(id) {
+  const p = positions.find(x => x.id === id);
+  if (!p) return;
+  if (!confirm("Clear the plan-level fields for this position?")) return;
+  p.planEntry = null;
+  p.planSL = null;
+  p.intraSL = null;
+  p.riskAmount = null;
+  p.intraQty = null;
+  renderDayView();
+  autoSave();
+}
+
+function clearExecutionFields(id) {
+  const p = positions.find(x => x.id === id);
+  if (!p) return;
+  if (!confirm("Clear the execution fields for this position?")) return;
+  p.actualEntry = null;
+  p.overnightEntry = null;
+  p.overnightQty = null;
+  p.actualQty = null;
+  p.entryDate = "";
+  p.posHigh = null;
+  p.trailOverride = null;
+  p.trailNote = "";
+  p.movedBE = false;
+  p.trims = p.trims.map(t => ({ pct: t.pct, type: t.type, ap: null, sq: null, done: false }));
+  renderDayView();
+  autoSave();
+}
+
+function setThoughtTag(id, tag) {
+  const p = positions.find(x => x.id === id);
+  if (!p) return;
+  p.thoughtTag = String(tag || "NOTE").toUpperCase();
+  paint(id, p);
+  autoSave();
+}
+
+function addThoughtLog(id) {
+  const p = positions.find(x => x.id === id);
+  if (!p) return;
+  const input = e("thought-input-" + id);
+  if (!input) return;
+  const text = String(input.value || "").trim();
+  if (!text) return;
+  const log = normalizeThoughtLog(p.thoughtLog);
+  log.push({
+    ts: new Date().toISOString(),
+    tag: String(p.thoughtTag || "NOTE").toUpperCase(),
+    text
+  });
+  p.thoughtLog = log.slice(-100);
+  input.value = "";
+  paint(id, p);
+  autoSave();
+}
+
+function toggleCollapse(id) {
+  const p = positions.find(x => x.id === id);
+  if (!p) return;
+  p.collapsed = !p.collapsed;
+  const body = e("pb-" + id);
+  const chev = e("chv-" + id);
+  if (body) body.className = "pbody" + (p.collapsed ? " hide" : "");
+  if (chev) chev.className = "chev" + (!p.collapsed ? " open" : "");
+}
+
+function collapseAll() {
+  return;
+}
+
+function renderDashboardView() {
+  syncChrome();
+  const main = e("main");
+  if (!main) return;
+  const cards = dashboardItems.length ? dashboardItems.map(item => `
+    <div class="dash-card" onclick="openDay('${item.date}')">
+      <div class="dash-date">${fmtDateLabel(item.date)}</div>
+      <div class="dash-sub">Open positions carried to this date and plan saved for that day</div>
+      <div class="dash-stats">
+        <div><div class="dash-k">Open positions</div><div class="dash-v">${item.open_positions_count || 0}</div></div>
+        <div><div class="dash-k">Planned trades</div><div class="dash-v">${item.planning_count || 0}</div></div>
+        <div><div class="dash-k">Exposure</div><div class="dash-v small">${money(item.exposure)}</div></div>
+        <div><div class="dash-k">% Exposure</div><div class="dash-v small">${pct(item.exposure_pct)}</div></div>
+      </div>
+    </div>
+  `).join("") : `<div class="settings-card"><div class="view-note">No saved trade dates yet. Open the Day view and save your first plan, then the grid will appear here.</div></div>`;
+  main.innerHTML = `
+    <section class="hero">
+      <h2>Date Dashboard</h2>
+    </section>
+    <section class="settings-card">
+      <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">Global Snapshot</div>
+      <div class="dash-stats">
+        <div><div class="dash-k">Available capital</div><div class="dash-v small">${money(settings.available_capital)}</div></div>
+        <div><div class="dash-k">Daily risk</div><div class="dash-v small">${money(settings.daily_risk)}</div></div>
+        <div><div class="dash-k">Per-position risk</div><div class="dash-v small">${money(settings.per_position_risk)}</div></div>
+        <div><div class="dash-k">Quick open</div><div class="dash-v small">${fmtDateLabel(latestDashboardDate || todayStr())}</div></div>
+      </div>
+    </section>
+    <section class="dash-grid">${cards}</section>
+  `;
+}
+
+function renderSettingsView() {
+  syncChrome();
+  const main = e("main");
+  if (!main) return;
+  main.innerHTML = `
+    <section class="settings-card">
+      <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">Global Settings</div>
+      <div class="view-note">These defaults feed the dashboard exposure numbers, new trade cards, and checklist copy.</div>
+      <div class="settings-grid" style="margin-top:14px">
+        <div class="field">
+          <div class="flabel">Available capital</div>
+          <input type="number" class="fin num" id="set-capital" placeholder="Total trading capital" value="${settings.available_capital != null ? settings.available_capital : ""}">
+        </div>
+        <div class="field">
+          <div class="flabel">Daily risk</div>
+          <input type="number" class="fin num" id="set-daily-risk" placeholder="Max risk for the day" value="${settings.daily_risk != null ? settings.daily_risk : ""}">
+        </div>
+        <div class="field">
+          <div class="flabel">Per-position risk</div>
+          <input type="number" class="fin num" id="set-position-risk" placeholder="Default risk per trade" value="${settings.per_position_risk != null ? settings.per_position_risk : ""}">
+        </div>
+      </div>
+      <div class="settings-card" style="margin-top:14px">
+        <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">Checklist Copy</div>
+        <div class="view-note">Edit the three checklist groups shown in the Day view. Each group can hold up to three items.</div>
+        <div class="checklist-editor" style="margin-top:14px">
+          ${renderChecklistGroupCards()}
+        </div>
+      </div>
+      <div class="settings-actions">
+        <button class="btn-save" onclick="saveSettings()">Save settings</button>
+        <button class="btn-sec" onclick="goDashboard()">Back to dashboard</button>
+      </div>
+    </section>
+  `;
+}
+
+function renderDayView() {
+  syncChrome();
+  const main = e("main");
+  if (!main) return;
+  main.innerHTML = "";
+  const empty = document.createElement("div");
+  empty.className = "empty";
+  empty.id = "empty";
+  empty.style.display = positions.length === 0 ? "block" : "none";
+  empty.innerHTML = `<h3>No positions for ${fmtDateLabel(planDate)}</h3><p>Add a trade plan or let older open positions carry into this date.</p>`;
+  main.appendChild(empty);
+  if (e("btn-add")) e("btn-add").disabled = positions.length >= 5;
+  const buckets = { overnight: [], current: [], exited: [], planning: [] };
+  positions.forEach(p => {
+    compute(p);
+    buckets[getBucketKey(p)].push(p);
+  });
+  const selected = ensureSelectedPosition();
+  if (selected) selected.collapsed = false;
+  let num = 1;
+  let selectedNum = 1;
+  let listHtml = "";
+  getDisplayBuckets().forEach(key => {
+    if (!buckets[key].length) return;
+    listHtml += `<section class="list-group"><div class="group"><div class="group-h"><div><div class="group-t">${getSectionTitle(key)}</div><div class="group-n">${getSectionNote(key, buckets[key].length)}</div></div></div></div>`;
+    buckets[key].forEach(p => {
+      if (selected && p.id === selected.id) selectedNum = num;
+      const total = (p._realPnl || 0) + (p._openPnl || 0);
+      const primary = getPrimaryBadge(p);
+      const secondary = getSecondaryBadge(p);
+      listHtml += `<button class="plist-item st-${p._status}${selected && p.id === selected.id ? " on" : ""}" id="list-${p.id}" onclick="selectPos('${p.id}')"><div class="plist-top"><div class="plist-main"><div class="plist-title"><span class="plist-dot">${num}</span><span class="plist-sym" id="list-sym-${p.id}">${p.symbol || "SYMBOL"}</span></div><div class="plist-meta" id="list-meta-${p.id}">${getHeaderMeta(p, key)}</div><div class="plist-badges"><span class="badge badge-${primary}" id="list-pbadge-${p.id}">${primary.toUpperCase()}</span><span class="badge badge-${secondary || "ghost"}" id="list-sbadge-${p.id}" style="${secondary ? "" : "display:none"}">${secondary.toUpperCase()}</span></div></div><div class="plist-pnl ${total >= 0 ? "pos" : "neg"}" id="list-pnl-${p.id}">${total !== 0 ? sgn(total) + "Rs " + fi(total) : "-"}</div></div></button>`;
+      num += 1;
+    });
+    listHtml += `</section>`;
+  });
+  const layout = document.createElement("section");
+  layout.className = "day-layout";
+  const detailHtml = selected
+    ? buildCard(selected, selectedNum)
+    : `<div class="plist-empty">Select a position from the left to edit it here.</div>`;
+  layout.innerHTML = `<div class="day-list">${listHtml || `<div class="plist-empty">No positions saved for this date yet.</div>`}</div><div class="day-detail" id="detail-pane">${selected ? `<div class="detail-shell">${detailHtml}</div>` : detailHtml}</div>${renderRightRail(selected)}`;
+  main.appendChild(layout);
+  if (selected) {
+    const detailHead = layout.querySelector(".detail-shell .phead");
+    if (detailHead) detailHead.removeAttribute("onclick");
+  }
+  updateSummary();
+}
+
+function renderRightRail(p) {
+  if (!p) {
+    return `<aside class="day-rail" id="live-rail"><div class="rail-empty">Select a position from the left to manage it live.</div></aside>`;
+  }
+  const thoughtEntries = getThoughtLog(p).slice().reverse();
+  const checklistGroups = getChecklistGroups();
+  const checklistState = normalizeChecklistStateMatrix(p.mgmt && p.mgmt.checklist ? p.mgmt.checklist : legacyChecklistStateMatrix(p.mgmt));
+  const thoughtHtml = thoughtEntries.length ? thoughtEntries.map(item => {
+    const tag = String(item.tag || "NOTE").toUpperCase();
+    const tagClass = tag.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    return `<article class="thought-item"><div class="thought-head"><span class="thought-time">${escHtml(fmtThoughtStamp(item.ts))}</span><span class="thought-tag tag-${tagClass}">${escHtml(tag)}</span></div><div class="thought-text">${escHtml(item.text)}</div></article>`;
+  }).join("") : `<div class="rail-empty small">No thought log entries yet for this trade.</div>`;
+  const tags = ["ENTRY", "TRIM", "SL MOVED", "EXIT", "CAUTION", "LESSON"];
+  const tagHtml = tags.map(tag => {
+    const on = String(p.thoughtTag || "NOTE").toUpperCase() === tag;
+    const tagClass = tag.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    return `<button class="tag-chip ${on ? "on" : ""} tag-${tagClass}" type="button" onclick="setThoughtTag('${p.id}','${tag.replace(/'/g, "\\'")}')">${tag}</button>`;
+  }).join("");
+  return `
+    <aside class="day-rail" id="live-rail">
+      <section class="rail-card">
+        <div class="sec-title">Checklist <span class="sec-note">fill as you manage the trade</span></div>
+        <div class="rail-clusters">
+          ${checklistGroups.map((group, gi) => {
+            const count = Math.max(0, Math.min(3, Number(group.count) || 0));
+            const rows = (group.items || []).slice(0, count).map((text, ii) => {
+              if (!text) return "";
+              const checked = Boolean(checklistState[gi] && checklistState[gi][ii]);
+              return `<label class="chk-row"><input type="checkbox" id="ck-${p.id}-${gi}-${ii}" ${checked ? "checked" : ""} onchange="toggleChecklistItem('${p.id}', ${gi}, ${ii}, this.checked)"><span>${escHtml(text)}</span></label>`;
+            }).filter(Boolean).join("");
+            return `
+              <div class="rail-cluster">
+                <div class="rail-cluster-h">${escHtml(group.title || `Group ${gi + 1}`)}</div>
+                ${rows || `<div class="rail-empty small">No checklist items configured.</div>`}
+              </div>
+            `;
+          }).join("")}
+        </div>
+      </section>
+      <section class="rail-card rail-head">
+        <div class="sec-title">Thought Log <span class="sec-note">${thoughtEntries.length} entries</span></div>
+        <div class="tag-row">${tagHtml}</div>
+        <textarea class="dev-note" id="thought-input-${p.id}" placeholder="What are you seeing, doing, or waiting for in real time?"></textarea>
+        <div class="rail-log-wrap"><button class="btn-save rail-log-btn" type="button" onclick="addThoughtLog('${p.id}')">Log</button></div>
+        <div class="thought-list">${thoughtHtml}</div>
+      </section>
+    </aside>`;
+}
+
+function renderApp() {
+  if (currentView === "dashboard") renderDashboardView();
+  else if (currentView === "exposure") renderExposureView();
+  else if (currentView === "settings") renderSettingsView();
+  else renderDayView();
+}
+
+async function goDashboard() {
+  await flushPendingSave();
+  currentView = "dashboard";
+  await loadDashboard();
+  renderApp();
+}
+
+async function openDay(date) {
+  currentView = "day";
+  await loadDayView(date);
+}
+
+async function goDay() {
+  const target = planDate || latestDashboardDate || todayStr();
+  await openDay(target);
+}
+
+async function goSettings() {
+  await flushPendingSave();
+  currentView = "settings";
+  await loadSettings();
+  renderApp();
+}
+
+async function goExposure() {
+  await flushPendingSave();
+  currentView = "exposure";
+  await loadGoalTracker();
+  renderApp();
+}
+
+function buildCard(p, num) {
+  const convHtml = [1, 2, 3, 4, 5].map(i => `<span class="cdot ${i <= p.conviction ? "on" : ""}" onclick="setConv('${p.id}',${i})"></span>`).join("");
+  const primaryBadge = getPrimaryBadge(p);
+  const secondaryBadge = getSecondaryBadge(p);
+  const headerMeta = getHeaderMeta(p, getBucketKey(p));
+  const entry = getEffectiveEntry(p);
+  const closeNoteValue = p.mgmt && p.mgmt.note ? p.mgmt.note : "";
+  const carriedQty = getTotalQty(p);
+  const displayRisk = getDisplayedRisk(p);
+  const displayRiskLabel = getDisplayedRiskLabel(p);
+  const qty = carriedQty != null ? carriedQty : (p._qty || 0);
+  const splits = [Math.ceil(qty * 0.33), Math.ceil(qty * 0.25), Math.floor(qty * 0.25), Math.floor(qty * 0.17)];
+  const splitHtml = `<div class="qty-splits"><div class="qs-box"><div class="qs-lbl">T1 - lock</div><div class="qs-val" id="sp0-${p.id}">${qty > 0 ? splits[0] : "-"}</div><div class="qs-pct">33%</div></div><div class="qs-box"><div class="qs-lbl">T2 - trail</div><div class="qs-val" id="sp1-${p.id}">${qty > 0 ? splits[1] : "-"}</div><div class="qs-pct">25%</div></div><div class="qs-box"><div class="qs-lbl">T3 - run</div><div class="qs-val" id="sp2-${p.id}">${qty > 0 ? splits[2] : "-"}</div><div class="qs-pct">25%</div></div><div class="qs-box"><div class="qs-lbl">T4 - runner</div><div class="qs-val" id="sp3-${p.id}">${qty > 0 ? splits[3] : "-"}</div><div class="qs-pct">17%</div></div></div>`;
+  const trimLabels = ["+3% lock", "H-10% trail", "+15% run", "+25% runner"];
+  const trimColors = ["var(--amb)", "var(--blu)", "var(--green)", "var(--green)"];
+  let running = carriedQty != null ? carriedQty : 0;
+  let trimRows = "";
+  p.trims.forEach((t, i) => {
+    const sug = t._sug ? "Rs " + t._sug : (i === 1 ? "Enter pos high" : "-");
+    const pnlTxt = t._pnl != null ? (t._pnl >= 0 ? "+" : "-") + "Rs " + fi(t._pnl) : "-";
+    running -= (t.done && t.sq ? t.sq : 0);
+    const posHighRow = i === 1 ? `<div class="hw"><span class="hl">Pos high:</span><input type="number" class="t-in" style="width:70px" placeholder="Rs" value="${p.posHigh != null ? p.posHigh : ""}" oninput="upd('${p.id}','posHigh',parseFloat(this.value)||null)"></div>` : "";
+    trimRows += `<tr id="tr-${i}-${p.id}" class="${t.done ? "t-done" : ""}"><td><span class="t-label">T${i + 1}</span><span class="t-pct" style="color:${trimColors[i]}">${trimLabels[i]}</span></td><td><span id="ts${i}-${p.id}" class="${t._sug ? "t-target" : "t-na"}">${sug}</span>${posHighRow}</td><td><input type="number" class="t-in" placeholder="Rs sell" value="${t.ap != null ? t.ap : ""}" oninput="updTrim('${p.id}',${i},'ap',parseFloat(this.value)||null)"></td><td><input type="number" class="t-in" placeholder="qty" value="${t.sq != null ? t.sq : ""}" oninput="updTrim('${p.id}',${i},'sq',parseInt(this.value)||null)"><span class="t-rem" id="tr${i}-${p.id}">${carriedQty != null ? running + " rem" : ""}</span></td><td><span id="tp${i}-${p.id}" class="${t._pnl != null ? "t-pl " + (t._pnl >= 0 ? "pos" : "neg") : "t-pl"}">${pnlTxt}</span></td><td style="text-align:center"><input type="checkbox" class="t-chk" ${t.done ? "checked" : ""} onchange="updTrim('${p.id}',${i},'done',this.checked)"></td></tr>`;
+  });
+  const hasTrim = p.trims.some(t => t.done);
+  const net = (p._realPnl || 0) + (p._openPnl || 0);
+  const pnlSumHtml = `<div class="pnl-sum" id="pnlsum-${p.id}" style="display:${hasTrim ? "flex" : "none"}"><div class="ps-item"><span>Realized:</span><strong id="psr-${p.id}" style="color:${(p._realPnl || 0) >= 0 ? "var(--green)" : "var(--red)"}">${sgn(p._realPnl || 0)}Rs ${fi(p._realPnl || 0)}</strong></div><div class="ps-item"><span>Net:</span><strong id="psn-${p.id}" style="color:${net >= 0 ? "var(--green)" : "var(--red)"}">${sgn(net)}Rs ${fi(net)}</strong></div></div>`;
+  const beBanner = `<div class="be-banner" id="beb-${p.id}" style="display:${p._beSug ? "flex" : "none"}"><span class="be-text">Day ${p._days || 0} since entry - move SL to breakeven (Rs ${entry || "-"})?</span><button class="be-btn" onclick="moveBE('${p.id}')">Apply</button></div>`;
+  return `
+  <div class="pcard st-${p._status}" id="card-${p.id}">
+    <div class="phead" onclick="toggleCollapse('${p.id}')">
+      <div class="phead-l">
+        <div class="pos-num">${num}</div>
+        <div class="phead-core">
+          <input type="text" class="sym-in" id="sym-${p.id}" list="symbol-suggestions" placeholder="SYMBOL" value="${p.symbol}" oninput="handleSymbolInput('${p.id}',this)" onblur="commitSymbol('${p.id}',this)" onclick="event.stopPropagation()">
+          <div class="hmeta" id="hmeta-${p.id}">${headerMeta}</div>
+        </div>
+        <span class="badge badge-${primaryBadge}" id="pbadge-${p.id}">${primaryBadge.toUpperCase()}</span>
+        <span class="badge badge-${secondaryBadge || "ghost"}" id="sbadge-${p.id}" style="${secondaryBadge ? "" : "display:none"}">${secondaryBadge.toUpperCase()}</span>
+        <div class="conv"><span class="conv-label">conviction</span><div class="cdots" id="conv-${p.id}">${convHtml}</div></div>
+      </div>
+      <div class="phead-r">
+        ${displayRisk != null ? `<span class="head-pnl neg" id="hrisk-${p.id}">${displayRiskLabel} ${price2(displayRisk)}</span>` : `<span class="head-pnl" id="hrisk-${p.id}" style="display:none"></span>`}
+        <button class="btn-rm" onclick="event.stopPropagation();removePos('${p.id}')" title="Remove">x</button>
+        <span class="chev ${p.collapsed ? "" : "open"}" id="chv-${p.id}">v</span>
+      </div>
+    </div>
+    <div class="pbody ${p.collapsed ? "hide" : ""}" id="pb-${p.id}">
+      <div class="sec"><div class="sec-title">Merits &amp; thesis</div><textarea class="fin" rows="2" placeholder="Why this stock? RS rank, catalyst, setup pattern..." oninput="upd('${p.id}','merits',this.value)">${p.merits || ""}</textarea></div>
+      <div class="sec">
+        <div class="sec-title">Plan <span class="sec-note">core qty uses planned SL, tactical qty is set manually</span><button class="btn-sec" type="button" style="padding:3px 8px;font-size:10px" onclick="event.stopPropagation();clearPlanFields('${p.id}')">Clear plan</button></div>
+        <div class="g5">
+          <div class="field"><div class="flabel">CMP <span class="flabel-tag">bhav close</span></div><input type="number" class="fin num" id="cmp-${p.id}" placeholder="auto" value="${p.cmp != null ? p.cmp : ""}" readonly></div>
+          <div class="field"><div class="flabel">Plan entry <span style="color:var(--blu);font-size:9px">Rs</span></div><input type="number" class="fin num en-f" placeholder="0.00" value="${p.planEntry != null ? p.planEntry : ""}" oninput="upd('${p.id}','planEntry',parseFloat(this.value)||null)"></div>
+          <div class="field"><div class="flabel">Predetermined SL <span style="color:var(--red);font-size:9px">Rs</span></div><input type="number" class="fin num sl-f" placeholder="0.00" value="${p.planSL != null ? p.planSL : ""}" oninput="upd('${p.id}','planSL',parseFloat(this.value)||null)"></div>
+          <div class="field"><div class="flabel">Intraday SL <span style="color:var(--amb);font-size:9px">Rs</span></div><input type="number" class="fin num" placeholder="set on entry" value="${p.intraSL != null ? p.intraSL : ""}" oninput="upd('${p.id}','intraSL',parseFloat(this.value)||null)"></div>
+          <div class="field"><div class="flabel">Risk willing <span class="flabel-tag">Rs</span></div><input type="number" class="fin num" placeholder="5000" value="${p.riskAmount != null ? p.riskAmount : ""}" oninput="upd('${p.id}','riskAmount',parseFloat(this.value)||null)"></div>
+        </div>
+        <div class="g4" style="margin-top:10px">
+          <div class="field"><div class="flabel">Sizing math <span class="flabel-tag">computed</span></div><div class="fin num" id="rps-val-${p.id}" style="color:var(--t2);font-weight:600;cursor:default;">${p._rps ? p._rps : "-"}</div></div>
+          <div class="field"><div class="flabel">Planned qty <span class="flabel-tag">computed</span></div><div class="fcomp" id="qty-${p.id}" style="color:${p._qty > 0 ? "var(--green)" : "var(--t3)"};">${p._qty > 0 ? p._qty : "-"}</div></div>
+          <div class="field"><div class="flabel">Intraday qty <span class="flabel-tag">manual</span></div><input type="number" class="fin num" placeholder="qty" value="${p.intraQty != null ? p.intraQty : (p._suggestedIntraQty != null ? p._suggestedIntraQty : "")}" oninput="upd('${p.id}','intraQty',parseInt(this.value)||0)"></div>
+          <div class="field"><div class="flabel">Planned risk <span class="flabel-tag">computed</span></div><div class="fcomp" id="prisk-${p.id}" style="color:var(--amb)">${p._planRisk != null && p._planRisk > 0 ? price2(p._planRisk) : "-"}</div></div>
+        </div>
+      </div>
+      <div class="div"></div>
+        <div class="sec-title">Execution <span class="sec-note">actual filled qty is split 30% intraday SL and 70% original SL</span><button class="btn-sec" type="button" style="padding:3px 8px;font-size:10px" onclick="event.stopPropagation();clearExecutionFields('${p.id}')">Clear exec</button></div>
+        <div class="g4">
+          <div class="field"><div class="flabel">OV QTY</div><input type="number" class="fin num" placeholder="qty" value="${p.overnightQty != null ? p.overnightQty : ""}" oninput="upd('${p.id}','overnightQty',parseInt(this.value)||null)"></div>
+          <div class="field"><div class="flabel">OV PRICE</div><input type="number" class="fin num en-f" placeholder="overnight fill" value="${p.overnightEntry != null ? p.overnightEntry : ""}" oninput="upd('${p.id}','overnightEntry',parseFloat(this.value)||null)"></div>
+          <div class="field"><div class="flabel">QTY</div><input type="number" class="fin num" placeholder="qty" value="${p.actualQty != null ? p.actualQty : ""}" oninput="upd('${p.id}','actualQty',parseInt(this.value)||null)"></div>
+          <div class="field"><div class="flabel">PRICE</div><input type="number" class="fin num en-f" placeholder="same-day fill" value="${p.actualEntry != null ? p.actualEntry : ""}" oninput="upd('${p.id}','actualEntry',parseFloat(this.value)||null)"></div>
+        </div>
+        <div class="g4" style="margin-top:10px">
+          <div class="field"><div class="flabel">TOTAL QTY <span class="flabel-tag">computed</span></div><div class="fcomp" id="totq-${p.id}" style="font-size:20px;color:var(--t1);">${getTotalQty(p) != null ? getTotalQty(p) : "-"}</div></div>
+          <div class="field"><div class="flabel">ENTRY PRICE <span class="flabel-tag">weighted avg</span></div><div class="fcomp" id="epx-${p.id}" style="font-size:20px;color:var(--t1);">${entry != null ? price2(entry) : "-"}</div></div>
+          <div class="field"><div class="flabel">ENTRY DATE</div><input type="date" class="fin" value="${p.entryDate || ""}" onchange="upd('${p.id}','entryDate',this.value)"></div>
+          <div class="field"><div class="flabel">EXEC RISK <span class="flabel-tag">qty x sl gap</span></div><div class="fcomp" id="erisk-${p.id}" style="font-size:20px;color:${getExecutionRisk(p) > 0 ? "var(--red)" : "var(--t1)"};">${getExecutionRisk(p) != null ? price2(getExecutionRisk(p)) : "-"}</div></div>
+        </div>
+        <div style="margin-top:10px;"><div style="font-size:10px;color:var(--t3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">Suggested 4-part split</div>${splitHtml}</div>
+      </div>
+      <div class="div"></div>
+      <div class="sec"><div class="sec-title">Trim plan &amp; execution <span class="sec-note">enter actual sell Rs + qty after each trim</span></div><table class="ttbl"><thead><tr><th>Trim</th><th>Suggested Rs</th><th>Actual sell Rs</th><th>Qty sold</th><th>P&amp;L</th><th class="c">Done</th></tr></thead><tbody>${trimRows}</tbody></table>${pnlSumHtml}</div>
+      <div class="div"></div>
+      <div class="trail-box">
+        <div class="trail-hdr"><span class="trail-title">Trail stop loss</span><span class="trail-days" id="days-${p.id}">${p._days != null ? "Day " + p._days + " in trade" : ""}</span></div>
+        <div class="trail-grid">
+          <div><div class="tc-label">Initial SL</div><div class="tc-val sl-c"><strong>Rs ${p.planSL || "-"}</strong></div></div>
+          <div><div class="tc-label">Current SL</div><div class="tc-val sl-c" id="tsl-${p.id}"><strong>Rs ${p._currentSL || "-"}</strong></div></div>
+          <div><div class="tc-label">Breakeven</div><div class="tc-val ${p.movedBE ? "ok-c" : ""}" id="bec-${p.id}" style="display:${p.movedBE ? "block" : "none"}">${p.movedBE ? "Rs " + (entry || p.actualEntry || p.overnightEntry) : ""}</div><div class="tc-val" ${p.movedBE ? 'style="display:none"' : ""}>${(entry || p.actualEntry || p.overnightEntry) ? "Rs " + (entry || p.actualEntry || p.overnightEntry) : "-"}</div></div>
+          <div><div class="tc-label">Override SL</div><div style="display:flex;gap:6px;align-items:center;margin-top:4px"><input type="number" class="t-in" id="toi-${p.id}" style="width:90px" placeholder="manual" value="${p.trailOverride != null ? p.trailOverride : ""}" oninput="upd('${p.id}','trailOverride',parseFloat(this.value)||null)"><button class="be-btn" type="button" onclick="updateTrailSL('${p.id}')">Update SL</button></div></div>
+        </div>
+        ${beBanner}
+        <div class="trail-note-wrap"><div class="trail-note-lbl">SL adjustment note</div><input type="text" class="t-note" id="tni-${p.id}" placeholder="e.g. moved SL to EMA20 at Rs 182 - structure holding..." value="${p.trailNote || ""}" oninput="upd('${p.id}','trailNote',this.value)"></div>
+      </div>
+      <div class="sec"><div class="sec-title">Close note <span class="sec-note">capture the trade at close</span></div><textarea class="dev-note" id="mgmt-note-${p.id}" placeholder="Deviation, lesson, or what to remember at close..." oninput="upd('${p.id}','mgmt.note',this.value)">${escHtml(closeNoteValue)}</textarea></div>
+    </div>
+  </div>`;
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+  planDate = todayStr();
+  if (e("plan-date")) e("plan-date").value = planDate;
+  await loadStorageInfo();
+  await loadDashboard();
+  renderApp();
+});
+
