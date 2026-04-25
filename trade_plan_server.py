@@ -3,11 +3,14 @@ from __future__ import annotations
 import importlib
 import argparse
 import copy
+import csv
+import concurrent.futures
+import math
 import json
 import re
 import urllib.error
 import urllib.request
-from datetime import date, datetime, time as dt_time
+from datetime import date, datetime, time as dt_time, timedelta
 from difflib import get_close_matches
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -138,12 +141,25 @@ class BhavRepository:
         self._company_names: Dict[str, str] = {}
         self._load_reference_data()
 
+    def _get_conn(self):
+        conn = getattr(self, "conn", None)
+        try:
+            if conn is None or not conn.is_connected():
+                conn = mysql.connector.connect(**DB_CONFIG)
+                self.conn = conn
+            else:
+                conn.ping(reconnect=True, attempts=1, delay=0)
+        except Exception:
+            conn = mysql.connector.connect(**DB_CONFIG)
+            self.conn = conn
+        return conn
+
     def _load_reference_data(self) -> None:
         self._inactive_map = self._load_inactive_map()
         symbols = set(self._inactive_map.keys()) | {v for v in self._inactive_map.values() if v}
         self._company_names = {}
 
-        cursor = self.conn.cursor()
+        cursor = self._get_conn().cursor()
         try:
             cursor.execute("SELECT UPPER(SYMBOL), COMPANY_NAME FROM nse_symbols")
             for symbol, company_name in cursor.fetchall():
@@ -157,7 +173,7 @@ class BhavRepository:
             cursor.close()
 
         latest_years = self.available_year_tables()[:3]
-        cursor = self.conn.cursor()
+        cursor = self._get_conn().cursor()
         try:
             for year in latest_years:
                 cursor.execute(f"SELECT DISTINCT UPPER(SYMBOL) FROM bhav{year}")
@@ -172,7 +188,7 @@ class BhavRepository:
         self._symbol_set = set(self._symbol_catalog)
 
     def _load_inactive_map(self) -> Dict[str, str]:
-        cursor = self.conn.cursor()
+        cursor = self._get_conn().cursor()
         try:
             cursor.execute(
                 """
@@ -194,7 +210,7 @@ class BhavRepository:
 
     def available_year_tables(self) -> List[int]:
         if self._year_tables is None:
-            cursor = self.conn.cursor()
+            cursor = self._get_conn().cursor()
             try:
                 cursor.execute("SHOW TABLES LIKE 'bhav____'")
                 years: List[int] = []
@@ -259,7 +275,7 @@ class BhavRepository:
             return None
 
         candidate_years = [year for year in self.available_year_tables() if year <= trade_date.year]
-        cursor = self.conn.cursor()
+        cursor = self._get_conn().cursor()
         try:
             for year in candidate_years:
                 cursor.execute(
@@ -285,6 +301,71 @@ class BhavRepository:
         finally:
             cursor.close()
         return None
+
+    def fetch_daily_bars(self, symbol: str, start_date: date, end_date: date) -> List[Dict[str, object]]:
+        normalized = normalize_symbol(symbol)
+        if not normalized or start_date > end_date:
+            return []
+        candidate_years = [year for year in self.available_year_tables() if start_date.year <= year <= end_date.year]
+        if not candidate_years:
+            return []
+
+        cursor = self._get_conn().cursor()
+        rows: List[Dict[str, object]] = []
+        try:
+            for year in candidate_years:
+                cursor.execute(
+                    f"""
+                    SELECT MKTDATE, OPEN, HIGH, LOW, CLOSE
+                    FROM bhav{year}
+                    WHERE UPPER(SYMBOL) = %s
+                      AND MKTDATE BETWEEN %s AND %s
+                    ORDER BY MKTDATE
+                    """,
+                    (normalized, start_date, end_date),
+                )
+                for mktdate, open_price, high_price, low_price, close_price in cursor.fetchall():
+                    rows.append(
+                        {
+                            "mktdate": mktdate,
+                            "open": float(open_price) if open_price is not None else None,
+                            "high": float(high_price) if high_price is not None else None,
+                            "low": float(low_price) if low_price is not None else None,
+                            "close": float(close_price) if close_price is not None else None,
+                        }
+                    )
+        finally:
+            cursor.close()
+        rows.sort(key=lambda item: item["mktdate"])
+        return rows
+
+    def latest_market_date(self) -> Optional[date]:
+        latest: Optional[date] = None
+        cursor = self._get_conn().cursor()
+        try:
+            for year in self.available_year_tables():
+                cursor.execute(f"SELECT MAX(MKTDATE) FROM bhav{year}")
+                row = cursor.fetchone()
+                if not row:
+                    continue
+                value = row[0]
+                if value is None:
+                    continue
+                if isinstance(value, datetime):
+                    value = value.date()
+                elif isinstance(value, str):
+                    try:
+                        value = date.fromisoformat(value[:10])
+                    except Exception:
+                        parsed = self._parse_tradebook_time(value)
+                        value = parsed.date() if parsed else None
+                if not isinstance(value, date):
+                    continue
+                if latest is None or value > latest:
+                    latest = value
+        finally:
+            cursor.close()
+        return latest
 
     def resolve_with_price(self, raw_symbol: str, trade_date: date) -> Dict[str, object]:
         canonical, matched_via, suggestions = self.resolve_symbol(raw_symbol)
@@ -325,7 +406,20 @@ class TradePlanStore:
         self.save_dir = self.html_path.with_name(f"{self.html_path.stem}_data")
         self.save_dir.mkdir(parents=True, exist_ok=True)
         self.base_dir = Path(__file__).resolve().parent
+        self.debug_log_path = self.base_dir / "logs" / "trade_plan_server.log"
+        self.debug_log_path.parent.mkdir(parents=True, exist_ok=True)
         self.settings_path = self.save_dir / "settings.json"
+        self._kite_token_maps: Optional[Tuple[Dict[str, int], Dict[str, int]]] = None
+        self._kite_client = None
+
+    def _log_debug(self, message: str) -> None:
+        stamp = datetime.now().isoformat(timespec="seconds")
+        line = f"[{stamp}] {message}\n"
+        try:
+            with self.debug_log_path.open("a", encoding="utf-8") as fh:
+                fh.write(line)
+        except Exception:
+            pass
 
     def plan_path(self, plan_date: str) -> Path:
         return self.save_dir / f"{plan_date}.json"
@@ -347,6 +441,7 @@ class TradePlanStore:
             "available_capital": None,
             "daily_risk": None,
             "per_position_risk": None,
+            "stop_loss_pct": 2.0,
             "checklist_groups": default_checklist_groups(),
         }
         if not self.settings_path.exists():
@@ -397,6 +492,7 @@ class TradePlanStore:
             "available_capital": payload.get("available_capital"),
             "daily_risk": payload.get("daily_risk"),
             "per_position_risk": payload.get("per_position_risk"),
+            "stop_loss_pct": payload.get("stop_loss_pct", 2.0),
             "checklist_groups": groups,
             **legacy,
         }
@@ -408,12 +504,1187 @@ class TradePlanStore:
             "available_capital": settings.get("available_capital"),
             "daily_risk": settings.get("daily_risk"),
             "per_position_risk": settings.get("per_position_risk"),
+            "stop_loss_pct": settings.get("stop_loss_pct", 2.0),
             "checklist_groups": groups,
             **legacy,
             "saved_at": datetime.now().isoformat(timespec="seconds"),
         }
         self.settings_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return {"ok": True, "path": str(self.settings_path), **payload}
+
+    def _latest_tradebook_path(self) -> Optional[Path]:
+        trade_dir = self.base_dir / "trades"
+        self._log_debug(f"tradebook lookup started: base_dir={self.base_dir} trade_dir={trade_dir}")
+        if not trade_dir.exists():
+            self._log_debug("tradebook lookup failed: trades folder does not exist")
+            return None
+        try:
+            candidates = [path for path in trade_dir.glob("*.csv") if path.is_file()]
+        except Exception as exc:
+            self._log_debug(f"tradebook lookup failed while listing csv files: {exc}")
+            return None
+        if not candidates:
+            self._log_debug("tradebook lookup found no csv candidates")
+            return None
+        try:
+            chosen = max(candidates, key=lambda path: (path.stat().st_mtime, path.name.lower()))
+        except Exception as exc:
+            self._log_debug(f"tradebook lookup failed while selecting latest file: {exc}")
+            return None
+        try:
+            stats = chosen.stat()
+            self._log_debug(
+                "tradebook lookup picked %s size=%s mtime=%s candidate_count=%s"
+                % (chosen.name, stats.st_size, datetime.fromtimestamp(stats.st_mtime).isoformat(timespec="seconds"), len(candidates))
+            )
+        except Exception:
+            self._log_debug(f"tradebook lookup picked {chosen}")
+        return chosen
+
+    def _parse_tradebook_time(self, raw_value: object) -> Optional[datetime]:
+        raw_text = str(raw_value or "").strip()
+        if not raw_text:
+            return None
+        try:
+            return datetime.fromisoformat(raw_text)
+        except ValueError:
+            pass
+        try:
+            return datetime.strptime(raw_text, "%Y-%m-%d")
+        except ValueError:
+            return None
+
+    def _kite_client_for_analysis(self):
+        if self._kite_client is not None:
+            return self._kite_client
+        kite_mod = importlib.import_module("place_kite_stop_loss_orders")
+        self._kite_client = kite_mod.get_kite_client(Path(kite_mod.DEFAULT_TOKEN_FILE))
+        return self._kite_client
+
+    def _kite_symbol_token_maps(self) -> Tuple[Dict[str, int], Dict[str, int]]:
+        if self._kite_token_maps is not None:
+            return self._kite_token_maps
+        kite = self._kite_client_for_analysis()
+        instruments = kite.instruments("NSE")
+        exact: Dict[str, int] = {}
+        normalized: Dict[str, int] = {}
+        for inst in instruments or []:
+            symbol = str(inst.get("tradingsymbol") or "").strip().upper()
+            if not symbol:
+                continue
+            segment = str(inst.get("segment") or "").strip().upper()
+            if segment and segment != "NSE":
+                continue
+            try:
+                token = int(inst.get("instrument_token"))
+            except (TypeError, ValueError):
+                continue
+            exact.setdefault(symbol, token)
+            normalized.setdefault(normalize_symbol(symbol), token)
+        self._kite_token_maps = (exact, normalized)
+        return self._kite_token_maps
+
+    def _resolve_kite_token(self, symbol: str) -> Optional[int]:
+        normalized = normalize_symbol(symbol)
+        if not normalized:
+            return None
+        exact, normalized_map = self._kite_symbol_token_maps()
+        if symbol.strip().upper() in exact:
+            return exact[symbol.strip().upper()]
+        return normalized_map.get(normalized)
+
+    def _fetch_kite_rows(self, symbol: str, start_dt: datetime, end_dt: datetime, interval: str) -> List[Dict[str, object]]:
+        token = self._resolve_kite_token(symbol)
+        if token is None:
+            return []
+        kite = self._kite_client_for_analysis()
+        def fetch_rows() -> List[Dict[str, object]]:
+            try:
+                rows = kite.historical_data(
+                    instrument_token=token,
+                    from_date=start_dt,
+                    to_date=end_dt,
+                    interval=interval,
+                    continuous=False,
+                )
+            except Exception as exc:
+                self._log_debug(f"kite fetch failed for {symbol} interval={interval}: {exc}")
+                return []
+            return rows if isinstance(rows, list) else []
+
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        try:
+            future = pool.submit(fetch_rows)
+            return future.result(timeout=8)
+        except concurrent.futures.TimeoutError:
+            self._log_debug(f"kite fetch timed out for {symbol} interval={interval} from {start_dt.isoformat()} to {end_dt.isoformat()}")
+            return []
+        except Exception as exc:
+            self._log_debug(f"kite fetch wrapper failed for {symbol} interval={interval}: {exc}")
+            return []
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+
+    def _intraday_row_dt(self, row: Dict[str, object]) -> Optional[datetime]:
+        for key in ("date", "datetime", "timestamp", "time"):
+            value = row.get(key)
+            if isinstance(value, datetime):
+                return value.replace(tzinfo=None)
+            parsed = self._parse_tradebook_time(value)
+            if parsed:
+                return parsed.replace(tzinfo=None)
+        return None
+
+    def _naive_dt(self, value: Optional[datetime]) -> Optional[datetime]:
+        if value is None:
+            return None
+        return value.replace(tzinfo=None)
+
+    def _normalize_kite_bar(self, row: Dict[str, object]) -> Optional[Dict[str, object]]:
+        bar_dt = self._intraday_row_dt(row)
+        if bar_dt is None:
+            return None
+        return {
+            "mktdate": bar_dt.date(),
+            "open": self._as_float(row.get("open")),
+            "high": self._as_float(row.get("high")),
+            "low": self._as_float(row.get("low")),
+            "close": self._as_float(row.get("close")),
+        }
+
+    def _evaluate_stop_path(
+        self,
+        symbol: str,
+        entry_dt: Optional[datetime],
+        entry_day: Optional[date],
+        end_day: Optional[date],
+        entry_price: Optional[float],
+        stop_loss_pct: float,
+        repo: BhavRepository,
+        exit_dt: Optional[datetime] = None,
+        live_return_pct: Optional[float] = None,
+        simulation_end_day: Optional[date] = None,
+    ) -> Dict[str, object]:
+        stop_price = round((entry_price or 0.0) * (1.0 - (stop_loss_pct / 100.0)), 2) if entry_price else None
+        analysis_end_day = simulation_end_day or end_day
+        self._log_debug(
+            "evaluate stop path: symbol=%s entry_dt=%s entry_day=%s end_day=%s analysis_end_day=%s entry_price=%s exit_dt=%s live_return=%s"
+            % (
+                symbol,
+                entry_dt.isoformat(timespec="seconds") if entry_dt else "",
+                entry_day.isoformat() if entry_day else "",
+                end_day.isoformat() if end_day else "",
+                analysis_end_day.isoformat() if analysis_end_day else "",
+                f"{entry_price:.2f}" if entry_price is not None else "",
+                exit_dt.isoformat(timespec="seconds") if exit_dt else "",
+                f"{live_return_pct:.2f}" if live_return_pct is not None else "",
+            )
+        )
+        result = {
+            "stop_price": stop_price,
+            "stop_touched": False,
+            "stop_touch_date": "",
+            "stop_touch_stage": "",
+            "stop_touch_price": None,
+            "counterfactual_return_pct": live_return_pct,
+        }
+        last_stop = stop_price
+
+        if not entry_price or not entry_day or not analysis_end_day or analysis_end_day < entry_day:
+            return result
+
+        warm_start = max(date(2000, 1, 1), entry_day - timedelta(days=40))
+        all_bars = repo.fetch_daily_bars(symbol, warm_start, analysis_end_day)
+        all_bars = [bar for bar in all_bars if bar.get("mktdate")]
+        if not all_bars:
+            return result
+
+        alpha = 2.0 / (5.0 + 1.0)
+        ema_values: List[Optional[float]] = []
+        ema_val: Optional[float] = None
+        for bar in all_bars:
+            close_value = self._as_float(bar.get("close"))
+            if close_value <= 0:
+                ema_values.append(ema_val)
+                continue
+            if ema_val is None:
+                ema_val = close_value
+            else:
+                ema_val = ema_val + (alpha * (close_value - ema_val))
+            ema_values.append(ema_val)
+
+        bar_index = {bar["mktdate"]: idx for idx, bar in enumerate(all_bars)}
+        entry_idx = next((idx for idx, bar in enumerate(all_bars) if bar["mktdate"] >= entry_day), None)
+        if entry_idx is None:
+            return result
+
+        session_end = datetime.combine(entry_day, dt_time(15, 30))
+        first_day_limit = session_end
+        entry_dt = self._naive_dt(entry_dt)
+        first_day_limit = self._naive_dt(first_day_limit)
+        exit_dt = self._naive_dt(exit_dt)
+
+        kite_daily_raw = self._fetch_kite_rows(symbol, datetime.combine(entry_day, dt_time(0, 0)), datetime.combine(analysis_end_day, dt_time(23, 59)), "day")
+        kite_daily_rows = [bar for row in kite_daily_raw if (bar := self._normalize_kite_bar(row))]
+        if kite_daily_rows:
+            self._log_debug(f"kite daily rows loaded for {symbol}: {len(kite_daily_rows)}")
+        daily_rows = kite_daily_rows if kite_daily_rows else all_bars
+
+        daily_entry_idx = next((idx for idx, bar in enumerate(daily_rows) if bar["mktdate"] >= entry_day), None)
+        if daily_entry_idx is None:
+            return result
+
+        for idx, bar in enumerate(daily_rows[daily_entry_idx:], start=1):
+            bar_date = bar["mktdate"]
+            close_value = self._as_float(bar.get("close"))
+            if close_value <= 0:
+                continue
+            if idx == 1 and entry_dt is not None:
+                if stop_price is None:
+                    continue
+                intraday_rows = self._fetch_kite_rows(symbol, entry_dt, first_day_limit, "30minute")
+                if intraday_rows:
+                    self._log_debug(f"entry-day intraday rows loaded for {symbol}: {len(intraday_rows)}")
+                    intraday_rows = sorted(
+                        intraday_rows,
+                        key=lambda row: self._intraday_row_dt(row) or datetime.min,
+                    )
+                    for intrabar in intraday_rows:
+                        intrabar_dt = self._intraday_row_dt(intrabar)
+                        if intrabar_dt is None or intrabar_dt < entry_dt or intrabar_dt > first_day_limit:
+                            continue
+                        intrabar_low = self._as_float(intrabar.get("low"))
+                        if intrabar_low <= 0:
+                            continue
+                        if stop_price is not None and intrabar_low <= stop_price:
+                            result["stop_touched"] = True
+                            result["stop_touch_date"] = intrabar_dt.isoformat(timespec="seconds")
+                            result["stop_touch_stage"] = "initial"
+                            result["stop_touch_price"] = stop_price
+                            result["counterfactual_return_pct"] = round(((stop_price / entry_price) - 1.0) * 100.0, 2)
+                            return result
+                    continue
+                self._log_debug(
+                    f"stop-loss streak entry-day intraday rows missing for {symbol} on {entry_day.isoformat()}, unable to confirm whether stop was touched after buy time"
+                )
+                continue
+            if idx <= 2:
+                current_stop = stop_price
+                stop_stage = "initial"
+            else:
+                prev_ema = ema_values[bar_index[bar_date] - 1] if bar_index[bar_date] - 1 >= 0 else None
+                current_stop = round(max(entry_price, prev_ema if prev_ema is not None else entry_price), 2)
+                stop_stage = "trail"
+            last_stop = current_stop
+            if current_stop is not None and close_value <= current_stop:
+                result["stop_touched"] = True
+                result["stop_touch_date"] = bar_date.isoformat()
+                result["stop_touch_stage"] = stop_stage
+                result["stop_touch_price"] = current_stop
+                result["counterfactual_return_pct"] = round(((current_stop / entry_price) - 1.0) * 100.0, 2)
+                return result
+
+        if daily_rows and entry_price:
+            final_close = self._as_float(daily_rows[-1].get("close"))
+            if final_close > 0:
+                result["counterfactual_return_pct"] = round(((final_close / entry_price) - 1.0) * 100.0, 2)
+        else:
+            final_close_info = repo.lookup_last_close(symbol, analysis_end_day)
+            if final_close_info and final_close_info.get("cmp") is not None and entry_price:
+                final_close = float(final_close_info["cmp"])
+                result["counterfactual_return_pct"] = round(((final_close / entry_price) - 1.0) * 100.0, 2)
+        self._log_debug(
+            "stop path completed without touch: symbol=%s analysis_end_day=%s counterfactual=%s"
+            % (
+                symbol,
+                analysis_end_day.isoformat() if analysis_end_day else "",
+                f"{result['counterfactual_return_pct']:.2f}" if result["counterfactual_return_pct"] is not None else "",
+            )
+        )
+        return result
+
+    def _build_stop_loss_campaigns(self, rows: List[Dict[str, object]], repo: BhavRepository, stop_loss_pct: float) -> Dict[str, object]:
+        grouped: Dict[str, List[Dict[str, object]]] = {}
+        for row in rows:
+            symbol = normalize_symbol(str(row.get("symbol", "")))
+            if not symbol:
+                continue
+            grouped.setdefault(symbol, []).append(row)
+
+        campaigns: List[Dict[str, object]] = []
+        latest_trade_dt: Optional[date] = None
+        latest_market_day = repo.latest_market_date()
+
+        for symbol, symbol_rows in grouped.items():
+            symbol_rows = sorted(
+                symbol_rows,
+                key=lambda row: (
+                    self._parse_tradebook_time(row.get("order_execution_time")) or datetime.min,
+                    str(row.get("trade_date") or ""),
+                    str(row.get("trade_id") or ""),
+                    str(row.get("order_id") or ""),
+                ),
+            )
+            if symbol_rows:
+                row_dt = self._parse_tradebook_time(symbol_rows[-1].get("trade_date"))
+                if row_dt:
+                    latest_trade_dt = max(latest_trade_dt, row_dt.date()) if latest_trade_dt else row_dt.date()
+
+            current: Optional[Dict[str, object]] = None
+            for row in symbol_rows:
+                trade_type = str(row.get("trade_type") or "").strip().lower()
+                qty = self._as_float(row.get("quantity"))
+                price = self._as_float(row.get("price"))
+                if qty <= 0 or price <= 0:
+                    continue
+                row_time = self._parse_tradebook_time(row.get("order_execution_time")) or self._parse_tradebook_time(row.get("trade_date")) or datetime.min
+                if trade_type == "buy":
+                    if current is None:
+                        current = {
+                            "symbol": symbol,
+                            "start_time": row_time,
+                            "end_time": None,
+                            "trade_date": str(row.get("trade_date") or ""),
+                            "buy_qty": 0.0,
+                            "sell_qty": 0.0,
+                            "buy_value": 0.0,
+                            "sell_value": 0.0,
+                            "net_qty": 0.0,
+                            "status": "open",
+                        }
+                    current["buy_qty"] = float(current["buy_qty"]) + qty
+                    current["buy_value"] = float(current["buy_value"]) + (qty * price)
+                    current["net_qty"] = float(current["net_qty"]) + qty
+                    current["end_time"] = row_time
+                elif trade_type == "sell":
+                    if current is None:
+                        continue
+                    current["sell_qty"] = float(current["sell_qty"]) + qty
+                    current["sell_value"] = float(current["sell_value"]) + (qty * price)
+                    current["net_qty"] = float(current["net_qty"]) - qty
+                    current["end_time"] = row_time
+
+                if current is not None and float(current["net_qty"]) <= 1e-9 and float(current["buy_qty"]) > 0:
+                    buy_qty = float(current["buy_qty"])
+                    sell_qty = float(current["sell_qty"])
+                    buy_value = float(current["buy_value"])
+                    sell_value = float(current["sell_value"])
+                    entry_price = round(buy_value / buy_qty, 2) if buy_qty else None
+                    exit_price = round(sell_value / sell_qty, 2) if sell_qty else None
+                    actual_return_pct = ((sell_value / buy_value) - 1.0) * 100.0 if buy_value else None
+                    entry_day = current["start_time"].date() if isinstance(current.get("start_time"), datetime) else None
+                    end_day = current["end_time"].date() if isinstance(current.get("end_time"), datetime) else (latest_trade_dt or entry_day)
+                    path = self._evaluate_stop_path(
+                        symbol=symbol,
+                        entry_dt=current.get("start_time") if isinstance(current.get("start_time"), datetime) else None,
+                        entry_day=entry_day,
+                        end_day=end_day,
+                        entry_price=entry_price,
+                        stop_loss_pct=stop_loss_pct,
+                        repo=repo,
+                        exit_dt=current.get("end_time") if isinstance(current.get("end_time"), datetime) else None,
+                        live_return_pct=actual_return_pct,
+                        simulation_end_day=latest_market_day,
+                    )
+                    stop_price = path["stop_price"]
+                    stop_touched = bool(path["stop_touched"])
+                    stop_touch_date = str(path["stop_touch_date"] or "")
+                    stop_touch_stage = str(path["stop_touch_stage"] or "")
+                    stop_touch_price = path.get("stop_touch_price")
+                    counterfactual_return_pct = path["counterfactual_return_pct"]
+                    simulation_exit_price = stop_touch_price if stop_touched else (
+                        round(entry_price * (1.0 + (float(counterfactual_return_pct) / 100.0)), 2)
+                        if counterfactual_return_pct is not None and entry_price is not None
+                        else (exit_price if exit_price is not None else None)
+                    )
+                    sim_qty = self._simulation_qty(entry_price, 300000.0)
+                    campaigns.append(
+                        {
+                            "symbol": symbol,
+                            "entry_date": entry_day.isoformat() if entry_day else "",
+                            "start_time": current["start_time"].isoformat() if isinstance(current["start_time"], datetime) else "",
+                            "end_time": current["end_time"].isoformat() if isinstance(current["end_time"], datetime) else "",
+                            "status": "closed",
+                            "entry_price": entry_price,
+                            "exit_price": exit_price,
+                            "sim_qty": sim_qty,
+                            "simulated_exit_price": simulation_exit_price,
+                            "sim_value": round(float(simulation_exit_price or 0.0) * sim_qty, 2) if simulation_exit_price is not None and sim_qty else None,
+                            "stop_price": stop_price,
+                            "stop_touch_price": stop_touch_price,
+                            "buy_qty": round(buy_qty, 6),
+                            "sell_qty": round(sell_qty, 6),
+                            "actual_return_pct": round(actual_return_pct, 2) if actual_return_pct is not None else None,
+                            "return_pct": round(actual_return_pct, 2) if actual_return_pct is not None else None,
+                            "honored": not stop_touched,
+                            "stop_touched": stop_touched,
+                            "counterfactual_return_pct": counterfactual_return_pct,
+                            "breach_pct": round((actual_return_pct or 0.0) - (counterfactual_return_pct or 0.0), 2) if actual_return_pct is not None else None,
+                            "stop_touch_date": stop_touch_date,
+                            "stop_touch_stage": stop_touch_stage,
+                            "analysis_basis": "symbol_roundtrip_day1_intraday_then_daily_close_with_day3_ema_trailing",
+                        }
+                    )
+                    current = None
+
+            if current is not None and float(current["buy_qty"]) > 0:
+                buy_qty = float(current["buy_qty"])
+                buy_value = float(current["buy_value"])
+                entry_price = round(buy_value / buy_qty, 2) if buy_qty else None
+                price_info = repo.lookup_last_close(symbol, latest_trade_dt) if latest_trade_dt else None
+                cmp_value = None
+                cmp_date = None
+                if price_info and price_info.get("cmp") is not None:
+                    cmp_value = float(price_info["cmp"])
+                    cmp_date = str(price_info.get("price_date") or "")
+                current_return = ((cmp_value / entry_price) - 1.0) * 100.0 if cmp_value and entry_price else None
+                entry_day = current["start_time"].date() if isinstance(current.get("start_time"), datetime) else None
+                end_day = latest_trade_dt or entry_day
+                path = self._evaluate_stop_path(
+                    symbol=symbol,
+                    entry_dt=current.get("start_time") if isinstance(current.get("start_time"), datetime) else None,
+                    entry_day=entry_day,
+                    end_day=end_day,
+                    entry_price=entry_price,
+                    stop_loss_pct=stop_loss_pct,
+                    repo=repo,
+                    exit_dt=current.get("end_time") if isinstance(current.get("end_time"), datetime) else None,
+                    live_return_pct=current_return,
+                    simulation_end_day=latest_market_day,
+                )
+                stop_price = path["stop_price"]
+                stop_touched = bool(path["stop_touched"])
+                stop_touch_date = str(path["stop_touch_date"] or "")
+                stop_touch_stage = str(path["stop_touch_stage"] or "")
+                stop_touch_price = path.get("stop_touch_price")
+                counterfactual_return_pct = path["counterfactual_return_pct"]
+                simulation_exit_price = stop_touch_price if stop_touched else (
+                    round(entry_price * (1.0 + (float(counterfactual_return_pct) / 100.0)), 2)
+                    if counterfactual_return_pct is not None and entry_price is not None
+                    else cmp_value
+                )
+                sim_qty = self._simulation_qty(entry_price, 300000.0)
+                campaigns.append(
+                    {
+                        "symbol": symbol,
+                        "entry_date": entry_day.isoformat() if entry_day else "",
+                        "start_time": current["start_time"].isoformat() if isinstance(current["start_time"], datetime) else "",
+                        "end_time": "",
+                        "status": "open",
+                        "entry_price": entry_price,
+                        "exit_price": cmp_value,
+                        "sim_qty": sim_qty,
+                        "simulated_exit_price": simulation_exit_price,
+                        "sim_value": round(cmp_value * sim_qty, 2) if cmp_value is not None and sim_qty else None,
+                        "stop_price": stop_price,
+                        "stop_touch_price": stop_touch_price,
+                        "price_date": cmp_date,
+                        "buy_qty": round(buy_qty, 6),
+                        "sell_qty": round(float(current["sell_qty"]), 6),
+                        "actual_return_pct": round(current_return, 2) if current_return is not None else None,
+                        "return_pct": round(current_return, 2) if current_return is not None else None,
+                        "honored": not stop_touched,
+                        "stop_touched": stop_touched,
+                        "counterfactual_return_pct": counterfactual_return_pct,
+                        "breach_pct": round((current_return or 0.0) - (counterfactual_return_pct or 0.0), 2) if current_return is not None else None,
+                        "stop_touch_date": stop_touch_date,
+                        "stop_touch_stage": stop_touch_stage,
+                        "analysis_basis": "symbol_roundtrip_day1_intraday_then_daily_close_with_day3_ema_trailing",
+                    }
+                )
+
+        campaigns.sort(
+            key=lambda item: (
+                item.get("end_time") or item.get("start_time") or "",
+                item.get("symbol") or "",
+            )
+        )
+
+        closed_campaigns = [item for item in campaigns if item.get("status") == "closed"]
+        open_campaigns = [item for item in campaigns if item.get("status") == "open"]
+
+        closed_honored = [item for item in closed_campaigns if item.get("honored")]
+        closed_losses = [item for item in closed_campaigns if item.get("actual_return_pct") is not None and float(item.get("actual_return_pct")) < 0]
+        closed_wins = [item for item in closed_campaigns if item.get("actual_return_pct") is not None and float(item.get("actual_return_pct")) >= 0]
+        breaches = [item for item in closed_campaigns if item.get("stop_touched")]
+        actual_gain_returns = [
+            float(item.get("actual_return_pct"))
+            for item in closed_campaigns
+            if item.get("actual_return_pct") is not None and float(item.get("actual_return_pct")) >= 0
+        ]
+        actual_loss_returns = [
+            float(item.get("actual_return_pct"))
+            for item in closed_campaigns
+            if item.get("actual_return_pct") is not None and float(item.get("actual_return_pct")) < 0
+        ]
+        actual_breakeven_returns = [
+            float(item.get("actual_return_pct"))
+            for item in closed_campaigns
+            if item.get("actual_return_pct") is not None and round(float(item.get("actual_return_pct")), 2) == 0.0
+        ]
+        counterfactual_wins = [
+            item for item in closed_campaigns
+            if item.get("counterfactual_return_pct") is not None and float(item.get("counterfactual_return_pct")) >= 0
+        ]
+        counterfactual_losses = [
+            item for item in closed_campaigns
+            if item.get("counterfactual_return_pct") is not None and float(item.get("counterfactual_return_pct")) < 0
+        ]
+        counterfactual_gain_returns = [
+            float(item.get("counterfactual_return_pct"))
+            for item in closed_campaigns
+            if item.get("counterfactual_return_pct") is not None and float(item.get("counterfactual_return_pct")) >= 0
+        ]
+        counterfactual_loss_returns = [
+            float(item.get("counterfactual_return_pct"))
+            for item in closed_campaigns
+            if item.get("counterfactual_return_pct") is not None and float(item.get("counterfactual_return_pct")) < 0
+        ]
+        counterfactual_breakeven_returns = [
+            float(item.get("counterfactual_return_pct"))
+            for item in closed_campaigns
+            if item.get("counterfactual_return_pct") is not None and round(float(item.get("counterfactual_return_pct")), 2) == 0.0
+        ]
+        counterfactual_positive_count = len([
+            item for item in closed_campaigns
+            if item.get("counterfactual_return_pct") is not None and float(item.get("counterfactual_return_pct")) > 0
+        ])
+        counterfactual_negative_count = len([
+            item for item in closed_campaigns
+            if item.get("counterfactual_return_pct") is not None and float(item.get("counterfactual_return_pct")) < 0
+        ])
+        counterfactual_decisive_count = counterfactual_positive_count + counterfactual_negative_count
+
+        longest_streak = 0
+        current_streak = 0
+        for item in closed_campaigns:
+            if item.get("honored"):
+                current_streak += 1
+                longest_streak = max(longest_streak, current_streak)
+            else:
+                current_streak = 0
+
+        live_streak = 0
+        for item in campaigns:
+            if item.get("honored"):
+                live_streak += 1
+            else:
+                live_streak = 0
+
+        closed_count = len(closed_campaigns)
+        honored_count = len(closed_honored)
+        win_count = len(closed_wins)
+        loss_count = len(closed_losses)
+        breach_count = len(breaches)
+        return {
+            "ok": True,
+            "tradebook_path": str(self._latest_tradebook_path()) if self._latest_tradebook_path() else "",
+            "latest_trade_date": latest_trade_dt.isoformat() if latest_trade_dt else "",
+            "stop_loss_pct": round(stop_loss_pct, 2),
+            "summary": {
+                "closed_campaigns": closed_count,
+                "open_campaigns": len(open_campaigns),
+                "honored_campaigns": honored_count,
+                "stop_touched_campaigns": breach_count,
+                "breach_count": breach_count,
+                "honor_rate": round((honored_count / closed_count) * 100.0, 1) if closed_count else None,
+                "win_rate": round((win_count / closed_count) * 100.0, 1) if closed_count else None,
+                "loss_rate": round((loss_count / closed_count) * 100.0, 1) if closed_count else None,
+                "longest_honor_streak": longest_streak,
+                "current_honor_streak": live_streak,
+                "actual_win_count": win_count,
+                "actual_loss_count": loss_count,
+                "actual_win_rate": round((win_count / closed_count) * 100.0, 1) if closed_count else None,
+                "actual_loss_rate": round((loss_count / closed_count) * 100.0, 1) if closed_count else None,
+                "actual_avg_gain_pct": round(sum(actual_gain_returns) / len(actual_gain_returns), 2) if actual_gain_returns else None,
+                "actual_avg_loss_pct": round(sum(actual_loss_returns) / len(actual_loss_returns), 2) if actual_loss_returns else None,
+                "actual_breakeven_count": len(actual_breakeven_returns),
+                "actual_breakeven_rate": round((len(actual_breakeven_returns) / closed_count) * 100.0, 1) if closed_count else None,
+                "counterfactual_win_rate": round((counterfactual_positive_count / counterfactual_decisive_count) * 100.0, 1) if counterfactual_decisive_count else None,
+                "counterfactual_loss_rate": round((counterfactual_negative_count / counterfactual_decisive_count) * 100.0, 1) if counterfactual_decisive_count else None,
+                "counterfactual_avg_gain_pct": round(sum(counterfactual_gain_returns) / len(counterfactual_gain_returns), 2) if counterfactual_gain_returns else None,
+                "counterfactual_avg_loss_pct": round(sum(counterfactual_loss_returns) / len(counterfactual_loss_returns), 2) if counterfactual_loss_returns else None,
+                "counterfactual_decisive_count": counterfactual_decisive_count,
+                "counterfactual_breakeven_count": len(counterfactual_breakeven_returns),
+                "counterfactual_breakeven_rate": round((len(counterfactual_breakeven_returns) / closed_count) * 100.0, 1) if closed_count else None,
+                "breaches_prevented": breach_count,
+                "best_return_pct": round(max((float(item.get("return_pct")) for item in closed_campaigns if item.get("return_pct") is not None), default=0.0), 2) if closed_campaigns else None,
+                "worst_return_pct": round(min((float(item.get("return_pct")) for item in closed_campaigns if item.get("return_pct") is not None), default=0.0), 2) if closed_campaigns else None,
+            },
+            "campaigns": campaigns,
+            "closed_campaigns": closed_campaigns,
+            "open_campaigns_list": open_campaigns,
+            "note": "Stop-loss honoring is measured on round-trip tradebook campaigns using your rule: day 1 checks intraday after the actual buy time, day 2 checks the daily chart close against the original 2% stop, and from day 3 onward the stop trails to breakeven or the prior 5-day EMA, whichever is higher.",
+        }
+
+    def _build_roundtrip_campaigns(self, rows: List[Dict[str, object]]) -> List[Dict[str, object]]:
+        grouped: Dict[str, List[Dict[str, object]]] = {}
+        for row in rows:
+            symbol = normalize_symbol(str(row.get("symbol", "")))
+            if not symbol:
+                continue
+            grouped.setdefault(symbol, []).append(row)
+
+        campaigns: List[Dict[str, object]] = []
+        for symbol, symbol_rows in grouped.items():
+            symbol_rows = sorted(
+                symbol_rows,
+                key=lambda row: (
+                    self._parse_tradebook_time(row.get("order_execution_time")) or datetime.min,
+                    str(row.get("trade_date") or ""),
+                    str(row.get("trade_id") or ""),
+                    str(row.get("order_id") or ""),
+                ),
+            )
+
+            campaign_idx = 0
+            current: Optional[Dict[str, object]] = None
+            for row in symbol_rows:
+                trade_type = str(row.get("trade_type") or "").strip().lower()
+                qty = self._as_float(row.get("quantity"))
+                price = self._as_float(row.get("price"))
+                if qty <= 0 or price <= 0:
+                    continue
+                row_time = self._parse_tradebook_time(row.get("order_execution_time")) or self._parse_tradebook_time(row.get("trade_date")) or datetime.min
+
+                if trade_type == "buy":
+                    if current is None:
+                        campaign_idx += 1
+                        current = {
+                            "campaign_id": f"{symbol}:{campaign_idx}",
+                            "symbol": symbol,
+                            "start_time": row_time,
+                            "end_time": None,
+                            "buy_qty": 0.0,
+                            "sell_qty": 0.0,
+                            "buy_value": 0.0,
+                            "sell_value": 0.0,
+                            "net_qty": 0.0,
+                        }
+                    current["buy_qty"] = float(current["buy_qty"]) + qty
+                    current["buy_value"] = float(current["buy_value"]) + (qty * price)
+                    current["net_qty"] = float(current["net_qty"]) + qty
+                    current["end_time"] = row_time
+                elif trade_type == "sell":
+                    if current is None:
+                        continue
+                    current["sell_qty"] = float(current["sell_qty"]) + qty
+                    current["sell_value"] = float(current["sell_value"]) + (qty * price)
+                    current["net_qty"] = float(current["net_qty"]) - qty
+                    current["end_time"] = row_time
+
+                if current is not None and float(current["net_qty"]) <= 1e-9 and float(current["buy_qty"]) > 0:
+                    buy_qty = float(current["buy_qty"])
+                    sell_qty = float(current["sell_qty"])
+                    buy_value = float(current["buy_value"])
+                    sell_value = float(current["sell_value"])
+                    entry_price = round(buy_value / buy_qty, 2) if buy_qty else None
+                    exit_price = round(sell_value / sell_qty, 2) if sell_qty else None
+                    campaigns.append(
+                        {
+                            "campaign_id": current["campaign_id"],
+                            "symbol": symbol,
+                            "start_time": current["start_time"].isoformat() if isinstance(current["start_time"], datetime) else "",
+                            "end_time": current["end_time"].isoformat() if isinstance(current["end_time"], datetime) else "",
+                            "status": "closed",
+                            "entry_price": entry_price,
+                            "exit_price": exit_price,
+                            "buy_qty": round(buy_qty, 6),
+                            "sell_qty": round(sell_qty, 6),
+                        }
+                    )
+                    current = None
+
+            if current is not None and float(current["buy_qty"]) > 0:
+                buy_qty = float(current["buy_qty"])
+                buy_value = float(current["buy_value"])
+                entry_price = round(buy_value / buy_qty, 2) if buy_qty else None
+                campaigns.append(
+                    {
+                        "campaign_id": current["campaign_id"],
+                        "symbol": symbol,
+                        "start_time": current["start_time"].isoformat() if isinstance(current["start_time"], datetime) else "",
+                        "end_time": "",
+                        "status": "open",
+                        "entry_price": entry_price,
+                        "exit_price": None,
+                        "buy_qty": round(buy_qty, 6),
+                        "sell_qty": round(float(current["sell_qty"]), 6),
+                    }
+                )
+
+        campaigns.sort(key=lambda item: (item.get("start_time") or "", item.get("symbol") or ""))
+        return campaigns
+
+    def build_stop_loss_streak(self, repo: BhavRepository) -> Dict[str, object]:
+        tradebook_path = self._latest_tradebook_path()
+        settings = self.load_settings()
+        stop_loss_pct = self._as_float(settings.get("stop_loss_pct"))
+        if stop_loss_pct <= 0:
+            stop_loss_pct = 2.0
+        self._log_debug(
+            "stop-loss streak request: stop_loss_pct=%.2f tradebook_path=%s"
+            % (stop_loss_pct, str(tradebook_path) if tradebook_path else "")
+        )
+        if not tradebook_path or not tradebook_path.exists():
+            self._log_debug("stop-loss streak aborted: tradebook csv not found")
+            return {
+                "ok": False,
+                "message": "No tradebook CSV found in the trades folder.",
+                "stop_loss_pct": round(stop_loss_pct, 2),
+                "summary": {},
+                "campaigns": [],
+                "closed_campaigns": [],
+                "open_campaigns_list": [],
+                "debug_log_path": str(self.debug_log_path),
+            }
+
+        try:
+            self._log_debug(f"stop-loss streak reading csv: {tradebook_path}")
+            with tradebook_path.open("r", encoding="utf-8-sig", newline="") as fh:
+                reader = csv.DictReader(fh)
+                rows = [row for row in reader if row.get("symbol")]
+            self._log_debug(f"stop-loss streak csv read complete: row_count={len(rows)}")
+        except Exception as exc:
+            self._log_debug(f"stop-loss streak csv read failed: {exc}")
+            return {
+                "ok": False,
+                "message": f"Failed to read tradebook CSV: {exc}",
+                "stop_loss_pct": round(stop_loss_pct, 2),
+                "summary": {},
+                "campaigns": [],
+                "closed_campaigns": [],
+                "open_campaigns_list": [],
+                "debug_log_path": str(self.debug_log_path),
+            }
+
+        report = self._build_stop_loss_campaigns(rows, repo, stop_loss_pct)
+        try:
+            summary = report.get("summary") if isinstance(report, dict) else {}
+            closed_count = summary.get("closed_campaigns") if isinstance(summary, dict) else None
+            open_count = summary.get("open_campaigns") if isinstance(summary, dict) else None
+            honored_count = summary.get("honored_campaigns") if isinstance(summary, dict) else None
+            self._log_debug(
+                "stop-loss streak report ready: closed=%s open=%s honored=%s campaigns=%s"
+                % (
+                    closed_count,
+                    open_count,
+                    honored_count,
+                    len(report.get("campaigns", [])) if isinstance(report, dict) else 0,
+                )
+            )
+        except Exception:
+            pass
+        if isinstance(report, dict):
+            report["debug_log_path"] = str(self.debug_log_path)
+            report["tradebook_path"] = str(tradebook_path)
+        return report
+
+    def _simulation_qty(self, entry_price: Optional[float], budget: float = 300000.0) -> int:
+        price = self._as_float(entry_price)
+        if price <= 0:
+            return 0
+        return max(1, int(math.ceil(budget / price)))
+
+    def build_portfolio_simulation(self, repo: BhavRepository) -> Dict[str, object]:
+        tradebook_path = self._latest_tradebook_path()
+        starting_capital = 3000000.0
+        per_position_budget = 300000.0
+        self._log_debug(
+            "portfolio sim request: starting_capital=%.2f per_position_budget=%.2f tradebook_path=%s"
+            % (starting_capital, per_position_budget, str(tradebook_path) if tradebook_path else "")
+        )
+        if not tradebook_path or not tradebook_path.exists():
+            return {
+                "ok": False,
+                "message": "No tradebook CSV found in the trades folder.",
+                "starting_capital": starting_capital,
+                "per_position_budget": per_position_budget,
+                "summary": {},
+                "daily": [],
+                "positions": [],
+                "open_positions": [],
+                "campaigns": [],
+                "tradebook_path": "",
+                "debug_log_path": str(self.debug_log_path),
+            }
+
+        try:
+            with tradebook_path.open("r", encoding="utf-8-sig", newline="") as fh:
+                reader = csv.DictReader(fh)
+                rows = [row for row in reader if row.get("symbol")]
+        except Exception as exc:
+            self._log_debug(f"portfolio sim csv read failed: {exc}")
+            return {
+                "ok": False,
+                "message": f"Failed to read tradebook CSV: {exc}",
+                "starting_capital": starting_capital,
+                "per_position_budget": per_position_budget,
+                "summary": {},
+                "daily": [],
+                "positions": [],
+                "open_positions": [],
+                "campaigns": [],
+                "tradebook_path": str(tradebook_path),
+                "debug_log_path": str(self.debug_log_path),
+            }
+
+        campaigns = self._build_roundtrip_campaigns(rows)
+        if not campaigns:
+            return {
+                "ok": True,
+                "starting_capital": starting_capital,
+                "per_position_budget": per_position_budget,
+                "summary": {
+                    "funded_campaigns": 0,
+                    "skipped_campaigns": 0,
+                    "closed_campaigns": 0,
+                    "open_campaigns": 0,
+                    "portfolio_value": starting_capital,
+                    "invested_amount": 0.0,
+                    "cash": starting_capital,
+                    "market_value": 0.0,
+                    "open_positions_count": 0,
+                    "portfolio_return_pct": 0.0,
+                },
+                "daily": [],
+                "positions": [],
+                "open_positions": [],
+                "campaigns": [],
+                "tradebook_path": str(tradebook_path),
+                "latest_market_date": repo.latest_market_date().isoformat() if repo.latest_market_date() else "",
+                "note": "No round-trip campaigns were detected in the latest tradebook.",
+                "debug_log_path": str(self.debug_log_path),
+            }
+
+        latest_market_day = repo.latest_market_date() or date.today()
+        settings = self.load_settings()
+        stop_loss_pct = self._as_float(settings.get("stop_loss_pct"))
+        if stop_loss_pct <= 0:
+            stop_loss_pct = 2.0
+        campaign_days: List[date] = []
+        for item in campaigns:
+            start_dt = self._parse_tradebook_time(item.get("start_time"))
+            if start_dt:
+                campaign_days.append(start_dt.date())
+        earliest_day = min(campaign_days) if campaign_days else latest_market_day
+        if earliest_day > latest_market_day:
+            earliest_day = latest_market_day
+
+        unique_symbols = sorted({normalize_symbol(str(item.get("symbol") or "")) for item in campaigns if normalize_symbol(str(item.get("symbol") or ""))})
+        close_by_symbol: Dict[str, Dict[date, float]] = {}
+        all_market_days: set[date] = set()
+        for symbol in unique_symbols:
+            bars = repo.fetch_daily_bars(symbol, earliest_day, latest_market_day)
+            day_map: Dict[date, float] = {}
+            for bar in bars:
+                bar_date = bar.get("mktdate")
+                close_value = self._as_float(bar.get("close"))
+                if isinstance(bar_date, date) and close_value > 0:
+                    day_map[bar_date] = close_value
+                    all_market_days.add(bar_date)
+            if day_map:
+                close_by_symbol[symbol] = day_map
+
+        if not all_market_days:
+            return {
+                "ok": False,
+                "message": "No bhav daily data found for portfolio simulation.",
+                "starting_capital": starting_capital,
+                "per_position_budget": per_position_budget,
+                "summary": {},
+                "daily": [],
+                "positions": [],
+                "open_positions": [],
+                "campaigns": campaigns,
+                "tradebook_path": str(tradebook_path),
+                "debug_log_path": str(self.debug_log_path),
+            }
+
+        market_days = sorted(day for day in all_market_days if earliest_day <= day <= latest_market_day)
+        campaign_meta: Dict[str, Dict[str, object]] = {}
+        campaign_records: Dict[str, Dict[str, object]] = {}
+        events: List[Dict[str, object]] = []
+        for item in campaigns:
+            entry_dt = self._parse_tradebook_time(item.get("start_time"))
+            entry_price = self._as_float(item.get("entry_price"))
+            if not entry_dt or entry_price <= 0:
+                continue
+            symbol = normalize_symbol(str(item.get("symbol") or ""))
+            entry_day = entry_dt.date()
+            path = self._evaluate_stop_path(
+                symbol=symbol,
+                entry_dt=entry_dt,
+                entry_day=entry_day,
+                end_day=latest_market_day,
+                entry_price=entry_price,
+                stop_loss_pct=stop_loss_pct,
+                repo=repo,
+                exit_dt=self._parse_tradebook_time(item.get("end_time")) if item.get("end_time") else None,
+                live_return_pct=None,
+                simulation_end_day=latest_market_day,
+            )
+            stop_touched = bool(path.get("stop_touched"))
+            stop_touch_raw = str(path.get("stop_touch_date") or "")
+            stop_touch_dt = None
+            if stop_touched and stop_touch_raw:
+                parsed_touch = self._parse_tradebook_time(stop_touch_raw)
+                if parsed_touch:
+                    if len(stop_touch_raw) == 10:
+                        stop_touch_dt = datetime.combine(parsed_touch.date(), dt_time(15, 30))
+                    else:
+                        stop_touch_dt = self._naive_dt(parsed_touch)
+            stop_touch_price = self._as_float(path.get("stop_touch_price")) if stop_touched else None
+            if stop_touched and stop_touch_price <= 0:
+                stop_touch_price = entry_price
+            key = str(item.get("campaign_id") or "")
+            campaign_meta[key] = {
+                "stop_touched": stop_touched,
+                "stop_touch_date": stop_touch_raw,
+                "stop_touch_stage": str(path.get("stop_touch_stage") or ""),
+                "stop_touch_price": stop_touch_price,
+                "analysis_basis": "symbol_roundtrip_day1_intraday_then_daily_close_with_day3_ema_trailing",
+            }
+            events.append(
+                {
+                    "ts": entry_dt,
+                    "kind": "entry",
+                    "campaign_id": key,
+                    "symbol": symbol,
+                    "entry_price": entry_price,
+                }
+            )
+            if stop_touched and stop_touch_dt and stop_touch_price > 0:
+                events.append(
+                    {
+                        "ts": stop_touch_dt,
+                        "kind": "exit",
+                        "campaign_id": key,
+                        "symbol": symbol,
+                        "exit_price": round(stop_touch_price, 2),
+                        "stop_touch_date": stop_touch_raw,
+                        "stop_touch_stage": str(path.get("stop_touch_stage") or ""),
+                    }
+                )
+
+        events.sort(key=lambda ev: (ev["ts"], 0 if ev["kind"] == "entry" else 1, str(ev.get("campaign_id") or "")))
+
+        cash = starting_capital
+        open_positions: Dict[str, Dict[str, object]] = {}
+        funded_campaigns = 0
+        skipped_campaigns = 0
+        daily: List[Dict[str, object]] = []
+        event_idx = 0
+
+        for market_day in market_days:
+            while event_idx < len(events) and events[event_idx]["ts"].date() == market_day:
+                ev = events[event_idx]
+                key = str(ev.get("campaign_id") or "")
+                if ev["kind"] == "entry":
+                    entry_price = self._as_float(ev.get("entry_price"))
+                    if entry_price <= 0:
+                        skipped_campaigns += 1
+                        event_idx += 1
+                        continue
+                    budget = min(per_position_budget, cash)
+                    qty = 0
+                    if entry_price > 0 and budget > 0:
+                        target_qty = int(math.ceil(per_position_budget / entry_price))
+                        target_cost = round(target_qty * entry_price, 2)
+                        if cash >= per_position_budget and target_cost <= cash + 0.01:
+                            qty = target_qty
+                        else:
+                            qty = int(budget // entry_price)
+                    invested = round(qty * entry_price, 2)
+                    if qty <= 0 or invested <= 0:
+                        skipped_campaigns += 1
+                        self._log_debug(
+                            "portfolio sim skipped entry: date=%s symbol=%s entry_price=%.2f cash=%.2f budget=%.2f"
+                            % (market_day.isoformat(), ev.get("symbol") or "", entry_price, cash, budget)
+                        )
+                    else:
+                        cash = round(cash - invested, 2)
+                        open_positions[key] = {
+                            "campaign_id": key,
+                            "symbol": ev.get("symbol"),
+                            "qty": int(qty),
+                            "entry_price": round(entry_price, 2),
+                            "invested": invested,
+                            "entry_time": ev["ts"].isoformat(timespec="seconds"),
+                            "status": "open",
+                        }
+                        meta = campaign_meta.get(key, {})
+                        campaign_records[key] = {
+                            "campaign_id": key,
+                            "symbol": ev.get("symbol"),
+                            "entry_date": ev["ts"].date().isoformat(),
+                            "entry_time": ev["ts"].isoformat(timespec="seconds"),
+                            "exit_time": "",
+                            "status": "open",
+                            "sim_qty": int(qty),
+                            "entry_price": round(entry_price, 2),
+                            "current_price": round(entry_price, 2),
+                            "invested": invested,
+                            "current_value": invested,
+                            "pnl_value": 0.0,
+                            "pnl_pct": 0.0,
+                            "simulated_exit_price": None,
+                            "stop_touched": bool(meta.get("stop_touched")),
+                            "stop_touch_date": str(meta.get("stop_touch_date") or ""),
+                            "stop_touch_stage": str(meta.get("stop_touch_stage") or ""),
+                            "stop_touch_price": meta.get("stop_touch_price"),
+                            "analysis_basis": str(meta.get("analysis_basis") or ""),
+                        }
+                        if budget < per_position_budget or invested < per_position_budget:
+                            self._log_debug(
+                                "portfolio sim reduced allocation: date=%s symbol=%s budget=%.2f qty=%s invested=%.2f cash_left=%.2f"
+                                % (
+                                    market_day.isoformat(),
+                                    ev.get("symbol") or "",
+                                    budget,
+                                    qty,
+                                    invested,
+                                    cash,
+                                )
+                            )
+                        funded_campaigns += 1
+                elif ev["kind"] == "exit":
+                    pos = open_positions.pop(key, None)
+                    if pos:
+                        exit_price = round(float(ev.get("exit_price") or 0.0), 2)
+                        qty = int(pos.get("qty") or 0)
+                        proceeds = round(qty * exit_price, 2)
+                        cash = round(cash + proceeds, 2)
+                        pos["exit_time"] = ev["ts"].isoformat(timespec="seconds")
+                        pos["exit_price"] = exit_price
+                        pos["status"] = "closed"
+                        rec = campaign_records.get(key)
+                        if rec:
+                            invested = float(rec.get("invested") or 0.0)
+                            pnl_value = round(proceeds - invested, 2)
+                            pnl_pct = round((pnl_value / invested) * 100.0, 2) if invested else None
+                            rec.update(
+                                {
+                                    "exit_time": ev["ts"].isoformat(timespec="seconds"),
+                                    "status": "closed",
+                                    "current_price": exit_price,
+                                    "current_value": round(proceeds, 2),
+                                    "pnl_value": pnl_value,
+                                    "pnl_pct": pnl_pct,
+                                    "simulated_exit_price": exit_price,
+                                    "stop_touched": True,
+                                    "stop_touch_date": str(ev.get("stop_touch_date") or ev["ts"].date().isoformat()),
+                                    "stop_touch_stage": str(ev.get("stop_touch_stage") or ""),
+                                    "stop_touch_price": exit_price,
+                                }
+                            )
+                event_idx += 1
+
+            open_list: List[Dict[str, object]] = []
+            invested_amount = 0.0
+            market_value = 0.0
+            for pos in open_positions.values():
+                symbol = str(pos.get("symbol") or "")
+                qty = int(pos.get("qty") or 0)
+                entry_price = self._as_float(pos.get("entry_price"))
+                close_map = close_by_symbol.get(symbol, {})
+                close_price = close_map.get(market_day)
+                if close_price is None and close_map:
+                    prior_days = [d for d in close_map.keys() if d <= market_day]
+                    if prior_days:
+                        close_price = close_map[max(prior_days)]
+                if close_price is None:
+                    close_price = entry_price
+                current_value = round(qty * float(close_price or 0.0), 2)
+                pnl_value = round(current_value - float(pos.get("invested") or 0.0), 2)
+                pnl_pct = round((pnl_value / float(pos.get("invested") or 1.0)) * 100.0, 2) if pos.get("invested") else None
+                open_list.append(
+                    {
+                        "campaign_id": pos.get("campaign_id"),
+                        "symbol": symbol,
+                        "qty": qty,
+                        "entry_price": entry_price,
+                        "current_price": round(float(close_price or 0.0), 2),
+                        "invested": round(float(pos.get("invested") or 0.0), 2),
+                        "current_value": current_value,
+                        "pnl_value": pnl_value,
+                        "pnl_pct": pnl_pct,
+                        "entry_time": pos.get("entry_time"),
+                        "status": "open",
+                    }
+                )
+                rec = campaign_records.get(str(pos.get("campaign_id") or ""))
+                if rec:
+                    invested = float(pos.get("invested") or 0.0)
+                    pnl_value = round(current_value - invested, 2)
+                    pnl_pct = round((pnl_value / invested) * 100.0, 2) if invested else None
+                    rec.update(
+                        {
+                            "status": "open",
+                            "current_price": round(float(close_price or 0.0), 2),
+                            "current_value": current_value,
+                            "pnl_value": pnl_value,
+                            "pnl_pct": pnl_pct,
+                        }
+                    )
+                invested_amount += float(pos.get("invested") or 0.0)
+                market_value += current_value
+
+            portfolio_value = round(cash + market_value, 2)
+            portfolio_return_pct = round(((portfolio_value - starting_capital) / starting_capital) * 100.0, 2) if starting_capital > 0 else None
+            daily.append(
+                {
+                    "date": market_day.isoformat(),
+                    "cash": round(cash, 2),
+                    "invested_amount": round(invested_amount, 2),
+                    "market_value": round(market_value, 2),
+                    "portfolio_value": portfolio_value,
+                    "open_positions_count": len(open_list),
+                    "portfolio_return_pct": portfolio_return_pct,
+                    "open_positions": open_list,
+                }
+            )
+
+        current_snapshot = daily[-1] if daily else {}
+        current_open_positions = current_snapshot.get("open_positions", []) if isinstance(current_snapshot, dict) else []
+        campaign_rows = sorted(
+            campaign_records.values(),
+            key=lambda item: (
+                item.get("entry_time") or "",
+                item.get("symbol") or "",
+            ),
+        )
+        summary = {
+            "funded_campaigns": funded_campaigns,
+            "skipped_campaigns": skipped_campaigns,
+            "closed_campaigns": sum(1 for item in campaign_rows if item.get("status") == "closed"),
+            "open_campaigns": sum(1 for item in campaign_rows if item.get("status") == "open"),
+            "portfolio_value": current_snapshot.get("portfolio_value", starting_capital) if isinstance(current_snapshot, dict) else starting_capital,
+            "invested_amount": current_snapshot.get("invested_amount", 0.0) if isinstance(current_snapshot, dict) else 0.0,
+            "cash": current_snapshot.get("cash", starting_capital) if isinstance(current_snapshot, dict) else starting_capital,
+            "market_value": current_snapshot.get("market_value", 0.0) if isinstance(current_snapshot, dict) else 0.0,
+            "open_positions_count": current_snapshot.get("open_positions_count", 0) if isinstance(current_snapshot, dict) else 0,
+            "portfolio_return_pct": current_snapshot.get("portfolio_return_pct", 0.0) if isinstance(current_snapshot, dict) else 0.0,
+        }
+        self._log_debug(
+            "portfolio sim ready: funded=%s skipped=%s open=%s portfolio=%.2f"
+            % (funded_campaigns, skipped_campaigns, summary["open_positions_count"], float(summary["portfolio_value"] or 0.0))
+        )
+        return {
+            "ok": True,
+            "starting_capital": starting_capital,
+            "per_position_budget": per_position_budget,
+            "summary": summary,
+            "daily": daily,
+            "positions": current_open_positions,
+            "open_positions": current_open_positions,
+            "campaign_rows": campaign_rows,
+            "campaigns": campaign_rows,
+            "tradebook_path": str(tradebook_path),
+            "latest_market_date": latest_market_day.isoformat(),
+            "note": "Each funded campaign is sized using up to 3 lakhs at entry, or whatever cash is available if less remains. Portfolio cash flow now follows the simulated exit path after entry; open rows show mark-to-market value and closed rows show realized value.",
+            "debug_log_path": str(self.debug_log_path),
+        }
 
     def _remaining_qty(self, position: Dict[str, object]) -> Optional[int]:
         actual_qty = self._total_qty(position)
@@ -1144,6 +2415,44 @@ class TradePlanHandler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/goal-tracker":
             return self._send_json(self.store.build_goal_tracker(self.repo))
+
+        if parsed.path == "/api/stop-loss-streak":
+            if getattr(self.store, "_log_debug", None):
+                try:
+                    self.store._log_debug(
+                        "stop-loss streak endpoint hit from %s:%s"
+                        % (self.client_address[0], self.client_address[1])
+                    )
+                except Exception:
+                    pass
+            try:
+                return self._send_json(self.store.build_stop_loss_streak(self.repo))
+            except Exception as exc:
+                if getattr(self.store, "_log_debug", None):
+                    try:
+                        self.store._log_debug(f"stop-loss streak endpoint failed: {exc}")
+                    except Exception:
+                        pass
+                return self._send_error_json(HTTPStatus.INTERNAL_SERVER_ERROR, f"Stop-loss streak report failed: {exc}")
+
+        if parsed.path == "/api/portfolio-sim":
+            if getattr(self.store, "_log_debug", None):
+                try:
+                    self.store._log_debug(
+                        "portfolio sim endpoint hit from %s:%s"
+                        % (self.client_address[0], self.client_address[1])
+                    )
+                except Exception:
+                    pass
+            try:
+                return self._send_json(self.store.build_portfolio_simulation(self.repo))
+            except Exception as exc:
+                if getattr(self.store, "_log_debug", None):
+                    try:
+                        self.store._log_debug(f"portfolio sim endpoint failed: {exc}")
+                    except Exception:
+                        pass
+                return self._send_error_json(HTTPStatus.INTERNAL_SERVER_ERROR, f"Portfolio simulation failed: {exc}")
 
         if parsed.path == "/api/plan":
             plan_date = self._require_date(params.get("date", [""])[0])

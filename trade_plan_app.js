@@ -15,9 +15,30 @@ let settings = {
   available_capital: null,
   daily_risk: null,
   per_position_risk: null,
+  stop_loss_pct: 2.0,
   checklist_groups: []
 };
 let goalTracker = { exposure_items: [], r_progress_items: [], plan_stats_items: [], latest_date: todayStr() };
+let streakReport = {
+  summary: {},
+  campaigns: [],
+  closed_campaigns: [],
+  open_campaigns_list: [],
+  latest_trade_date: todayStr(),
+  stop_loss_pct: 2.0,
+  tradebook_path: ""
+};
+let portfolioSimReport = {
+  summary: {},
+  daily: [],
+  positions: [],
+  open_positions: [],
+  campaigns: [],
+  starting_capital: 3000000,
+  per_position_budget: 300000,
+  latest_market_date: todayStr(),
+  tradebook_path: ""
+};
 let goalTrackerTab = "exposure";
 let kitePublicIp = "";
 const QUIET = new Set(["symbol", "merits", "trailNote", "mgmt.fe", "mgmt.fsl", "mgmt.ft", "mgmt.fbe", "mgmt.note"]);
@@ -34,6 +55,7 @@ function normalizeSymbol(v) { return (v || "").toUpperCase().replace(/[^A-Z0-9]/
 function fi(v) { return Math.abs(Number(v || 0)).toLocaleString("en-IN", { maximumFractionDigits: 0 }); }
 function money(v) { return v == null ? "-" : "Rs " + fi(v); }
 function price2(v) { return v == null ? "-" : "Rs " + Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function pricePlain(v) { return v == null ? "-" : Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function priceSL(v) {
   if (v == null || v === "") return "-";
   const n = Number(v);
@@ -255,10 +277,40 @@ function setSaveState(text, kind, title) {
 }
 
 function setNav(view) {
-  [["nav-dashboard", "dashboard"], ["nav-day", "day"], ["nav-exposure", "exposure"], ["nav-settings", "settings"]].forEach(([id, key]) => {
+  [["nav-dashboard", "dashboard"], ["nav-day", "day"], ["nav-exposure", "exposure"], ["nav-simulation", "simulation"], ["nav-portfolio", "portfolio"], ["nav-settings", "settings"]].forEach(([id, key]) => {
     const node = e(id);
     if (node) node.className = "nav-btn" + (view === key ? " on" : "");
   });
+}
+
+function ensureSimulationNav() {
+  if (e("nav-simulation")) return;
+  const nav = document.querySelector(".topnav");
+  if (!nav) return;
+  const btn = document.createElement("button");
+  btn.className = "nav-btn";
+  btn.id = "nav-simulation";
+  btn.type = "button";
+  btn.textContent = "Simulation";
+  btn.onclick = () => goStreak();
+  const settingsBtn = e("nav-settings");
+  if (settingsBtn && settingsBtn.parentNode === nav) nav.insertBefore(btn, settingsBtn);
+  else nav.appendChild(btn);
+}
+
+function ensurePortfolioNav() {
+  if (e("nav-portfolio")) return;
+  const nav = document.querySelector(".topnav");
+  if (!nav) return;
+  const btn = document.createElement("button");
+  btn.className = "nav-btn";
+  btn.id = "nav-portfolio";
+  btn.type = "button";
+  btn.textContent = "Portfolio";
+  btn.onclick = () => goPortfolio();
+  const settingsBtn = e("nav-settings");
+  if (settingsBtn && settingsBtn.parentNode === nav) nav.insertBefore(btn, settingsBtn);
+  else nav.appendChild(btn);
 }
 
 function syncChrome() {
@@ -295,6 +347,7 @@ async function loadSettings() {
       available_capital: payload.available_capital,
       daily_risk: payload.daily_risk,
       per_position_risk: payload.per_position_risk,
+      stop_loss_pct: payload.stop_loss_pct != null ? payload.stop_loss_pct : 2.0,
       checklist_groups: normalizeChecklistGroups(payload.checklist_groups || [
         {
           title: payload.checklist_group_1_title || "Entry",
@@ -324,6 +377,7 @@ async function saveSettings() {
     available_capital: parseFloat(e("set-capital")?.value || "") || null,
     daily_risk: parseFloat(e("set-daily-risk")?.value || "") || null,
     per_position_risk: parseFloat(e("set-position-risk")?.value || "") || null,
+    stop_loss_pct: parseFloat(e("set-stop-loss")?.value || "") || null,
     checklist_groups: checklistGroups,
     ...legacy
   };
@@ -337,6 +391,7 @@ async function saveSettings() {
     available_capital: result.available_capital,
     daily_risk: result.daily_risk,
     per_position_risk: result.per_position_risk,
+    stop_loss_pct: result.stop_loss_pct != null ? result.stop_loss_pct : 2.0,
     checklist_groups: normalizeChecklistGroups(result.checklist_groups || checklistGroups)
   };
   setSaveState("Settings saved", "saved", "Autosave active");
@@ -1586,7 +1641,7 @@ function renderSettingsView() {
   main.innerHTML = `
     <section class="settings-card">
       <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">Global Settings</div>
-      <div class="view-note">These defaults feed the dashboard exposure numbers, new trade cards, and checklist copy.</div>
+      <div class="view-note">These defaults feed the dashboard exposure numbers, new trade cards, checklist copy, and simulation analysis.</div>
       <div class="settings-grid" style="margin-top:14px">
         <div class="field">
           <div class="flabel">Available capital</div>
@@ -1599,6 +1654,10 @@ function renderSettingsView() {
         <div class="field">
           <div class="flabel">Per-position risk</div>
           <input type="number" class="fin num" id="set-position-risk" placeholder="Default risk per trade" value="${settings.per_position_risk != null ? settings.per_position_risk : ""}">
+        </div>
+        <div class="field">
+          <div class="flabel">Stop loss %</div>
+          <input type="number" step="0.1" class="fin num" id="set-stop-loss" placeholder="2.0" value="${settings.stop_loss_pct != null ? settings.stop_loss_pct : 2.0}">
         </div>
       </div>
       <div class="settings-card" style="margin-top:14px">
@@ -1717,6 +1776,8 @@ function renderRightRail(p) {
 function renderApp() {
   if (currentView === "dashboard") renderDashboardView();
   else if (currentView === "exposure") renderExposureView();
+  else if (currentView === "simulation") renderStreakView();
+  else if (currentView === "portfolio") renderPortfolioView();
   else if (currentView === "settings") renderSettingsView();
   else renderDayView();
 }
@@ -1749,6 +1810,291 @@ async function goExposure() {
   await flushPendingSave();
   currentView = "exposure";
   await loadGoalTracker();
+  renderApp();
+}
+
+async function goPortfolio() {
+  await flushPendingSave();
+  currentView = "portfolio";
+  await loadPortfolioSim();
+  renderApp();
+}
+
+async function loadPortfolioSim() {
+  if (!storageOnline) await loadStorageInfo();
+  await loadSettings();
+  try {
+    const payload = await api("/portfolio-sim");
+    portfolioSimReport = {
+      ok: payload.ok !== false,
+      message: payload.message || "",
+      summary: payload.summary || {},
+      daily: Array.isArray(payload.daily) ? payload.daily : [],
+      positions: Array.isArray(payload.positions) ? payload.positions : [],
+      open_positions: Array.isArray(payload.open_positions) ? payload.open_positions : [],
+      campaign_rows: Array.isArray(payload.campaign_rows) ? payload.campaign_rows : [],
+      campaigns: Array.isArray(payload.campaigns) ? payload.campaigns : [],
+      starting_capital: payload.starting_capital != null ? Number(payload.starting_capital) : 3000000,
+      per_position_budget: payload.per_position_budget != null ? Number(payload.per_position_budget) : 300000,
+      latest_market_date: payload.latest_market_date || todayStr(),
+      tradebook_path: payload.tradebook_path || "",
+      note: payload.note || "",
+      debug_log_path: payload.debug_log_path || ""
+    };
+  } catch (_err) {
+    portfolioSimReport = {
+      ok: false,
+      message: "Unable to load portfolio simulation from the local server.",
+      summary: {},
+      daily: [],
+      positions: [],
+      open_positions: [],
+      campaign_rows: [],
+      campaigns: [],
+      starting_capital: 3000000,
+      per_position_budget: 300000,
+      latest_market_date: todayStr(),
+      tradebook_path: "",
+      note: "",
+      debug_log_path: ""
+    };
+  }
+}
+
+function renderPortfolioView() {
+  syncChrome();
+  const main = e("main");
+  if (!main) return;
+  const report = portfolioSimReport || {};
+  const summary = report.summary || {};
+  const daily = Array.isArray(report.daily) ? report.daily : [];
+  const positions = Array.isArray(report.positions) ? report.positions : [];
+  const openPositions = Array.isArray(report.open_positions) ? report.open_positions : [];
+  const campaignRows = Array.isArray(report.campaign_rows) ? report.campaign_rows : [];
+  const startCapital = Number(report.starting_capital || 3000000);
+  const perPosition = Number(report.per_position_budget || 300000);
+  const latestDay = daily.length ? daily[daily.length - 1] : null;
+  const currentValue = summary.portfolio_value != null ? Number(summary.portfolio_value) : (latestDay && latestDay.portfolio_value != null ? Number(latestDay.portfolio_value) : startCapital);
+  const profitAmount = summary.portfolio_value != null ? Number(summary.portfolio_value) - startCapital : (latestDay && latestDay.portfolio_value != null ? Number(latestDay.portfolio_value) - startCapital : 0);
+  const investedAmount = summary.invested_amount != null ? Number(summary.invested_amount) : (latestDay && latestDay.invested_amount != null ? Number(latestDay.invested_amount) : 0);
+  const cashLeft = summary.cash != null ? Number(summary.cash) : (latestDay && latestDay.cash != null ? Number(latestDay.cash) : startCapital);
+  const openCount = summary.open_positions_count != null ? Number(summary.open_positions_count) : (latestDay && latestDay.open_positions_count != null ? Number(latestDay.open_positions_count) : openPositions.length);
+  const returnPct = summary.portfolio_return_pct != null ? Number(summary.portfolio_return_pct) : (latestDay && latestDay.portfolio_return_pct != null ? Number(latestDay.portfolio_return_pct) : null);
+  const fmtNum = v => v == null ? "-" : Number(v).toLocaleString("en-IN", { maximumFractionDigits: 2 });
+  const fmtPct = v => v == null ? "-" : `${Number(v).toFixed(2)}%`;
+  const reportAlert = report.ok === false && report.message ? `<div class="view-note" style="margin-top:10px;color:#ffb4b4">${escHtml(report.message)}${report.debug_log_path ? ` Debug log: ${escHtml(report.debug_log_path)}` : ""}</div>` : "";
+  const dailyRows = daily.length ? daily.map((row, idx) => {
+    const val = row.portfolio_value != null ? Number(row.portfolio_value) : null;
+    const inv = row.invested_amount != null ? Number(row.invested_amount) : null;
+    const cash = row.cash != null ? Number(row.cash) : null;
+    const open = row.open_positions_count != null ? Number(row.open_positions_count) : 0;
+    const ret = row.portfolio_return_pct != null ? Number(row.portfolio_return_pct) : null;
+    return `<tr><td>${idx + 1}</td><td>${escHtml(fmtDateLabel(row.date || ""))}</td><td>${open}</td><td>${fmtNum(inv)}</td><td>${fmtNum(cash)}</td><td>${fmtNum(val)}</td><td class="t-pl ${ret != null && ret >= 0 ? "pos" : "neg"}">${fmtPct(ret)}</td></tr>`;
+  }).join("") : `<tr><td colspan="7"><div class="view-note">No daily portfolio snapshots available.</div></td></tr>`;
+  const positionRows = campaignRows.length ? campaignRows.map((item, idx) => {
+    const simQty = item.sim_qty != null ? Number(item.sim_qty) : null;
+    const entry = item.entry_price != null ? Number(item.entry_price) : null;
+    const cur = item.current_price != null ? Number(item.current_price) : null;
+    const inv = item.invested != null ? Number(item.invested) : null;
+    const curVal = item.current_value != null ? Number(item.current_value) : null;
+    const pnlPct = item.pnl_pct != null ? Number(item.pnl_pct) : null;
+    const isOpen = String(item.status || "").toLowerCase() === "open";
+    const statusBadge = `<span class="badge ${isOpen ? "badge-partial" : "badge-closed"}">${isOpen ? "OPEN" : "CLOSED"}</span>`;
+    return `<tr><td>${idx + 1}</td><td><strong>${escHtml(item.symbol || "-")}</strong></td><td>${escHtml(fmtDateLabel(item.entry_date || ""))}</td><td>${simQty != null ? simQty : "-"}</td><td>${fmtNum(inv)}</td><td>${fmtNum(curVal)}</td><td class="t-pl ${pnlPct != null && pnlPct >= 0 ? "pos" : "neg"}">${fmtPct(pnlPct)}</td><td>${statusBadge}</td><td>${escHtml(item.exit_time || item.entry_time || "")}</td></tr>`;
+  }).join("") : `<tr><td colspan="9"><div class="view-note">No funded simulation campaigns were available.</div></td></tr>`;
+  main.innerHTML = `
+    <section class="hero">
+      <h2>Portfolio</h2>
+      <p>Real-money capital simulation using a 30 lakh starting pool and a 3 lakh target per position. Qty is rounded to whole shares, and if free cash drops below the target the simulation uses whatever is left in whole shares. Open positions are marked to bhav closes at each EOD.</p>
+    </section>
+    <section class="settings-card">
+      <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">Latest snapshot</div>
+        <div class="view-note">Starting capital: ${fmtNum(startCapital)}. Per-position budget target: ${fmtNum(perPosition)}. Latest market date: ${escHtml(report.latest_market_date || "-")}. ${escHtml(report.note || "")}</div>
+      ${reportAlert}
+      <div class="tracker-grid" style="margin-top:14px">
+        <div class="metric-card"><div class="dash-k">Portfolio value</div><div class="metric-big">${fmtNum(currentValue)}</div><div class="metric-copy">Cash plus current market value of open positions.</div></div>
+        <div class="metric-card"><div class="dash-k">Profit amount</div><div class="metric-big ${profitAmount >= 0 ? "pos" : "neg"}">${fmtNum(profitAmount)}</div><div class="metric-copy">Portfolio value minus the 30 lakh starting capital.</div></div>
+        <div class="metric-card"><div class="dash-k">Invested amount</div><div class="metric-big">${fmtNum(investedAmount)}</div><div class="metric-copy">Capital tied up in open positions at the latest EOD.</div></div>
+        <div class="metric-card"><div class="dash-k">Cash left</div><div class="metric-big">${fmtNum(cashLeft)}</div><div class="metric-copy">Unallocated capital still sitting in cash.</div></div>
+        <div class="metric-card"><div class="dash-k">Open positions</div><div class="metric-big">${openCount}</div><div class="metric-copy">Positions still open in the simulation at the latest EOD.</div></div>
+        <div class="metric-card"><div class="dash-k">Portfolio return</div><div class="metric-big ${returnPct != null && returnPct >= 0 ? "pos" : "neg"}">${fmtPct(returnPct)}</div><div class="metric-copy">Gain or loss versus the 30 lakh starting capital.</div></div>
+        <div class="metric-card"><div class="dash-k">Campaigns funded</div><div class="metric-big">${summary.funded_campaigns != null ? summary.funded_campaigns : 0}</div><div class="metric-copy">${summary.skipped_campaigns != null ? summary.skipped_campaigns : 0} campaign(s) were skipped if capital was unavailable.</div></div>
+      </div>
+      <div class="view-note" style="margin-top:12px">Each campaign targets 3 lakhs at entry. If free cash is lower at the time of entry, the simulation deploys whatever is available in whole shares.</div>
+    </section>
+    <section class="settings-card" style="margin-top:14px">
+      <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">Daily portfolio value</div>
+      <div class="view-note">EOD snapshots show how much of the 30 lakh pool is deployed, how many positions remain open, and what the whole book is worth at the close of each day.</div>
+      <div style="overflow:auto;margin-top:12px">
+        <table class="ttbl">
+          <thead><tr><th>#</th><th>Date</th><th>Open</th><th>Invested</th><th>Cash</th><th>Value</th><th>Return</th></tr></thead>
+          <tbody>${dailyRows}</tbody>
+        </table>
+      </div>
+    </section>
+    <section class="settings-card" style="margin-top:14px">
+      <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">Campaign simulation</div>
+        <div class="view-note">Each campaign targets 3 lakhs at entry. Open rows show mark-to-market value; closed rows show realized value.</div>
+      <div style="overflow:auto;margin-top:12px">
+        <table class="ttbl">
+          <thead><tr><th>#</th><th>Symbol</th><th>Entry</th><th>Sim qty</th><th>Invested</th><th>Current / Realized</th><th>P/L</th><th>Status</th><th>Closed / last update</th></tr></thead>
+          <tbody>${positionRows}</tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+async function loadStreakReport() {
+  if (!storageOnline) await loadStorageInfo();
+  await loadSettings();
+  try {
+    const payload = await api("/stop-loss-streak");
+    streakReport = {
+      ok: payload.ok !== false,
+      message: payload.message || "",
+      summary: payload.summary || {},
+      campaigns: Array.isArray(payload.campaigns) ? payload.campaigns : [],
+      closed_campaigns: Array.isArray(payload.closed_campaigns) ? payload.closed_campaigns : [],
+      open_campaigns_list: Array.isArray(payload.open_campaigns_list) ? payload.open_campaigns_list : [],
+      latest_trade_date: payload.latest_trade_date || todayStr(),
+      stop_loss_pct: payload.stop_loss_pct != null ? payload.stop_loss_pct : Number(settings.stop_loss_pct || 2.0),
+      note: payload.note || "",
+      tradebook_path: payload.tradebook_path || "",
+      debug_log_path: payload.debug_log_path || ""
+    };
+    } catch (_err) {
+      streakReport = {
+        ok: false,
+        message: "Unable to load simulation report from the local server.",
+        summary: {},
+        campaigns: [],
+        closed_campaigns: [],
+      open_campaigns_list: [],
+      latest_trade_date: todayStr(),
+      stop_loss_pct: Number(settings.stop_loss_pct || 2.0),
+      tradebook_path: "",
+      debug_log_path: ""
+    };
+  }
+}
+
+function renderStreakView() {
+  syncChrome();
+  const main = e("main");
+  if (!main) return;
+  const summary = streakReport.summary || {};
+  const stop = Number(streakReport.stop_loss_pct || settings.stop_loss_pct || 2.0);
+  const closed = Array.isArray(streakReport.closed_campaigns) ? streakReport.closed_campaigns : [];
+  const open = Array.isArray(streakReport.open_campaigns_list) ? streakReport.open_campaigns_list : [];
+  const totalClosed = summary.closed_campaigns != null ? summary.closed_campaigns : closed.length;
+  const honorRate = summary.honor_rate != null ? summary.honor_rate : (totalClosed ? (summary.honored_campaigns || 0) / totalClosed * 100 : null);
+    const actualWinRate = summary.actual_win_rate != null ? summary.actual_win_rate : summary.win_rate;
+    const actualLossRate = summary.actual_loss_rate != null ? summary.actual_loss_rate : summary.loss_rate;
+    const counterWinRate = summary.counterfactual_win_rate != null ? summary.counterfactual_win_rate : actualWinRate;
+    const counterLossRate = summary.counterfactual_loss_rate != null ? summary.counterfactual_loss_rate : actualLossRate;
+    const actualAvgGain = summary.actual_avg_gain_pct != null ? summary.actual_avg_gain_pct : null;
+    const actualAvgLoss = summary.actual_avg_loss_pct != null ? summary.actual_avg_loss_pct : null;
+    const counterAvgGain = summary.counterfactual_avg_gain_pct != null ? summary.counterfactual_avg_gain_pct : null;
+    const counterAvgLoss = summary.counterfactual_avg_loss_pct != null ? summary.counterfactual_avg_loss_pct : null;
+    const actualBeCount = summary.actual_breakeven_count != null ? summary.actual_breakeven_count : 0;
+    const counterBeCount = summary.counterfactual_breakeven_count != null ? summary.counterfactual_breakeven_count : 0;
+    const fmtRate = v => v == null ? "-" : `${Number(v).toFixed(1)}%`;
+    const fmtPct = v => v == null ? "-" : `${Number(v).toFixed(2)}%`;
+    const tradebookName = String(streakReport.tradebook_path || "").split(/[\\/]/).pop() || "not found";
+    const reportAlert = streakReport.ok === false && streakReport.message ? `<div class="view-note" style="margin-top:10px;color:#ffb4b4">${escHtml(streakReport.message)}${streakReport.debug_log_path ? ` Debug log: ${escHtml(streakReport.debug_log_path)}` : ""}</div>` : "";
+  const rowHtml = (arr, emptyMsg) => {
+    const rows = [];
+    let totalQty = 0;
+    let totalInvested = 0;
+    let totalValue = 0;
+    let totalPnl = 0;
+    let totalSimReturn = 0;
+    let simReturnCount = 0;
+    for (const item of arr) {
+      const simQty = item.sim_qty != null ? Number(item.sim_qty) : null;
+      const buyPrice = item.entry_price != null ? Number(item.entry_price) : null;
+      const simExitPrice = item.simulated_exit_price != null ? Number(item.simulated_exit_price) : null;
+      const simValue = item.sim_value != null ? Number(item.sim_value) : null;
+      const actualPct = item.actual_return_pct != null ? Number(item.actual_return_pct) : (item.return_pct != null ? Number(item.return_pct) : null);
+      const simPct = item.counterfactual_return_pct != null ? Number(item.counterfactual_return_pct) : null;
+      const isSimOpen = !Boolean(item.stop_touched);
+      const statusText = isSimOpen ? "OPEN" : "CLOSED";
+      const statusBadge = isSimOpen
+        ? `<span class="badge" style="background:rgba(34,197,94,.14);color:#22c55e;border:1px solid rgba(34,197,94,.30)">OPEN</span>`
+        : `<span class="badge" style="background:rgba(148,163,184,.12);color:#94a3b8;border:1px solid rgba(148,163,184,.25)">CLOSED</span>`;
+      const invested = simQty != null && buyPrice != null ? simQty * buyPrice : null;
+      const pnl = simValue != null && invested != null ? simValue - invested : null;
+      if (simQty != null) totalQty += simQty;
+      if (invested != null) totalInvested += invested;
+      if (simValue != null) totalValue += simValue;
+      if (pnl != null) totalPnl += pnl;
+      if (simPct != null) {
+        totalSimReturn += simPct;
+        simReturnCount += 1;
+      }
+      const simSellTxt = simExitPrice != null ? pricePlain(simExitPrice) : "-";
+      const valueTxt = simValue != null ? pricePlain(simValue) : "-";
+      const pnlTxt = pnl != null ? `${pnl >= 0 ? "+" : "-"}${pricePlain(Math.abs(pnl))}` : "-";
+      rows.push(`<tr><td>${rows.length + 1}</td><td><strong>${escHtml(item.symbol || "-")}</strong></td><td>${escHtml(fmtDateLabel(item.entry_date || item.start_time || ""))}</td><td>${simQty != null ? simQty : "-"}</td><td>${buyPrice != null ? pricePlain(buyPrice) : "-"}</td><td>${simSellTxt}</td><td>${valueTxt}</td><td class="t-pl ${pnl != null && pnl >= 0 ? "pos" : "neg"}">${pnlTxt}</td><td class="t-pl ${actualPct != null && actualPct >= 0 ? "pos" : "neg"}">${actualPct != null ? `${actualPct >= 0 ? "+" : ""}${actualPct.toFixed(2)}%` : "-"}</td><td class="t-pl ${simPct != null && simPct >= 0 ? "pos" : "neg"}">${simPct != null ? `${simPct >= 0 ? "+" : ""}${simPct.toFixed(2)}%` : "-"}</td><td>${statusBadge}</td></tr>`);
+    }
+    const totalSimAvg = simReturnCount ? totalSimReturn / simReturnCount : null;
+    const totalPnlTxt = `${totalPnl >= 0 ? "+" : "-"}${pricePlain(Math.abs(totalPnl))}`;
+    const totalRow = rows.length ? `<tr class="total-row"><td></td><td><strong>TOTAL</strong></td><td></td><td>${totalQty || "-"}</td><td>${totalInvested ? pricePlain(totalInvested / Math.max(totalQty, 1)) : "-"}</td><td></td><td>${pricePlain(totalValue)}</td><td class="t-pl ${totalPnl >= 0 ? "pos" : "neg"}">${totalPnlTxt}</td><td></td><td class="t-pl ${totalSimAvg != null && totalSimAvg >= 0 ? "pos" : "neg"}">${totalSimAvg != null ? `${totalSimAvg >= 0 ? "+" : ""}${totalSimAvg.toFixed(2)}%` : "-"}</td><td></td></tr>` : "";
+    return { body: rows.join(""), totalRow };
+  };
+  const closedTable = rowHtml(closed, "No closed campaigns found in the latest tradebook.");
+  const openTable = rowHtml(open, "No open campaigns were present in the latest tradebook.");
+  main.innerHTML = `
+    <section class="hero">
+      <h2>Simulation</h2>
+      <p>Measures whether each closed campaign stayed inside your selected stop loss. This is percentage-only and focuses on discipline, not rupees.</p>
+    </section>
+    <section class="settings-card">
+      <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">Latest snapshot</div>
+        <div class="view-note">Stop loss used for this analysis: ${pct(stop)}. Latest tradebook: ${escHtml(tradebookName)}. The table compares actual live return with the strategy simulation: day 1 checks intraday after the actual buy time, day 2 checks the daily chart close against the original 2% stop, and from day 3 onward the stop trails to breakeven or the prior 5-day EMA, whichever is higher.</div>
+      ${reportAlert}
+      <div class="tracker-grid" style="margin-top:14px">
+        <div class="metric-card"><div class="dash-k">Closed campaigns</div><div class="metric-big">${totalClosed || 0}</div><div class="metric-copy">Round-trip trades closed in the latest tradebook.</div></div>
+        <div class="metric-card"><div class="dash-k">Stop held at ${pct(stop)}</div><div class="metric-big">${summary.honored_campaigns || 0}</div><div class="metric-copy">${fmtRate(honorRate)} of closed campaigns never touched the stop intraday.</div></div>
+          <div class="metric-card"><div class="dash-k">Longest simulation streak</div><div class="metric-big">${summary.longest_honor_streak || 0}</div><div class="metric-copy">Longest consecutive run of trades that never touched the stop.</div></div>
+          <div class="metric-card"><div class="dash-k">Current simulation streak</div><div class="metric-big">${summary.current_honor_streak || 0}</div><div class="metric-copy">Current run remains intact if the latest live marks stay above the stop.</div></div>
+          <div class="metric-card"><div class="dash-k">Actual win / loss</div><div class="metric-big">${fmtRate(actualWinRate)} / ${fmtRate(actualLossRate)}</div><div class="metric-copy">${summary.actual_win_count || 0} wins, ${summary.actual_loss_count || 0} losses, ${actualBeCount} breakevens.</div></div>
+          <div class="metric-card"><div class="dash-k">Strategy sim</div><div class="metric-big">${fmtRate(counterWinRate)} / ${fmtRate(counterLossRate)}</div><div class="metric-copy">${summary.stop_touched_campaigns || 0} campaigns touched the stop in this sample, ${counterBeCount} ended at breakeven.</div></div>
+          <div class="metric-card"><div class="dash-k">Avg gain / loss</div><div class="metric-big">${fmtPct(actualAvgGain)} / ${fmtPct(actualAvgLoss)}</div><div class="metric-copy">Closed campaigns only, based on the live tradebook exits.</div></div>
+          <div class="metric-card"><div class="dash-k">Sim avg gain / loss</div><div class="metric-big">${fmtPct(counterAvgGain)} / ${fmtPct(counterAvgLoss)}</div><div class="metric-copy">Closed campaigns only, based on the simulated stop-plan exits.</div></div>
+        </div>
+      <div class="view-note" style="margin-top:12px">${escHtml(streakReport.note || "No additional note.")}</div>
+    </section>
+      <section class="settings-card" style="margin-top:14px">
+        <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">Open campaigns</div>
+        <div class="view-note">These are still open in the latest tradebook. Their return is marked to the latest bhav close when available.</div>
+        <div style="overflow:auto;margin-top:12px">
+            <table class="ttbl">
+            <thead><tr><th>#</th><th>Symbol</th><th>Entry</th><th>Sim qty</th><th>Buy</th><th>Sim sell / CMP</th><th>Sim value</th><th>P/L</th><th>Actual %</th><th>Sim %</th><th>Status</th></tr></thead>
+            <tbody>${openTable.body || `<tr><td colspan="11"><div class="view-note">${escHtml("No open campaigns were present in the latest tradebook.")}</div></td></tr>`}</tbody>
+            ${openTable.totalRow ? `<tfoot>${openTable.totalRow}</tfoot>` : ""}
+            </table>
+          </div>
+      </section>
+      <section class="settings-card" style="margin-top:14px">
+        <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">Closed campaigns</div>
+        <div class="view-note">Each row is one round-trip campaign grouped by symbol and execution order. Actual return is the live trade outcome; the simulation column shows what the trade would have returned if your stop plan had been followed against real market data after the buy.</div>
+        <div style="overflow:auto;margin-top:12px">
+          <table class="ttbl">
+            <thead><tr><th>#</th><th>Symbol</th><th>Entry</th><th>Sim qty</th><th>Buy</th><th>Sim sell / CMP</th><th>Sim value</th><th>P/L</th><th>Actual %</th><th>Sim %</th><th>Status</th></tr></thead>
+            <tbody>${closedTable.body || `<tr><td colspan="11"><div class="view-note">${escHtml("No closed campaigns found in the latest tradebook.")}</div></td></tr>`}</tbody>
+            ${closedTable.totalRow ? `<tfoot>${closedTable.totalRow}</tfoot>` : ""}
+          </table>
+        </div>
+      </section>
+    `;
+  }
+
+async function goStreak() {
+  await flushPendingSave();
+  currentView = "simulation";
+  await loadStreakReport();
   renderApp();
 }
 
@@ -1863,6 +2209,8 @@ function buildCard(p, num) {
 document.addEventListener("DOMContentLoaded", async () => {
   planDate = todayStr();
   if (e("plan-date")) e("plan-date").value = planDate;
+  ensureSimulationNav();
+  ensurePortfolioNav();
   await loadStorageInfo();
   await loadDashboard();
   renderApp();
