@@ -88,6 +88,14 @@ def build_apps(settings: Dict) -> Dict[str, Dict]:
             "cwd":  str(BASE_DIR),
             "icon": "BV",
         },
+        "bhav_screener": {
+            "name": "Bhav Screener",
+            "desc": "Low-volume / low-volatility screener (Flask).",
+            "port": int(settings["screener_port"]),
+            "cmd":  [PY, "bhav_screener.py", "--port", str(settings["screener_port"])],
+            "cwd":  str(BASE_DIR),
+            "icon": "BS",
+        },
         "perf_tracker": {
             "name": "Performance Tracker",
             "desc": "Picks Performance tracker (Streamlit).",

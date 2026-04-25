@@ -139,6 +139,7 @@ class BhavRepository:
         self._symbol_set: set[str] = set()
         self._inactive_map: Dict[str, str] = {}
         self._company_names: Dict[str, str] = {}
+        self._debug_log_path = Path(__file__).resolve().parent / "logs" / "trade_plan_server.log"
         self._load_reference_data()
 
     def _get_conn(self):
@@ -154,13 +155,70 @@ class BhavRepository:
             self.conn = conn
         return conn
 
+    def _log_debug(self, message: str) -> None:
+        stamp = datetime.now().isoformat(timespec="seconds")
+        line = f"[{stamp}] {message}\n"
+        try:
+            self._debug_log_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._debug_log_path.open("a", encoding="utf-8") as fh:
+                fh.write(line)
+        except Exception:
+            pass
+
+    def _close_conn(self) -> None:
+        conn = getattr(self, "conn", None)
+        self.conn = None
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def _is_transient_mysql_error(self, exc: Exception) -> bool:
+        if not isinstance(exc, mysql.connector.Error):
+            return False
+        text = str(exc).lower()
+        return any(
+            token in text
+            for token in (
+                "lost connection",
+                "server has gone away",
+                "connection not available",
+                "not connected",
+                "broken pipe",
+            )
+        )
+
+    def _with_retry_cursor(self, work):
+        last_exc: Optional[Exception] = None
+        for attempt in range(2):
+            conn = self._get_conn()
+            cursor = None
+            try:
+                cursor = conn.cursor()
+                return work(cursor)
+            except Exception as exc:
+                last_exc = exc
+                if attempt == 0 and self._is_transient_mysql_error(exc):
+                    self._log_debug(f"mysql reconnect retry after transient error: {exc}")
+                    self._close_conn()
+                    continue
+                raise
+            finally:
+                if cursor is not None:
+                    try:
+                        cursor.close()
+                    except Exception:
+                        pass
+        if last_exc is not None:
+            raise last_exc
+
     def _load_reference_data(self) -> None:
         self._inactive_map = self._load_inactive_map()
         symbols = set(self._inactive_map.keys()) | {v for v in self._inactive_map.values() if v}
         self._company_names = {}
 
-        cursor = self._get_conn().cursor()
-        try:
+        def load_company_names(cursor):
             cursor.execute("SELECT UPPER(SYMBOL), COMPANY_NAME FROM nse_symbols")
             for symbol, company_name in cursor.fetchall():
                 normalized = normalize_symbol(symbol)
@@ -169,27 +227,27 @@ class BhavRepository:
                 symbols.add(normalized)
                 if company_name:
                     self._company_names[normalized] = str(company_name)
-        finally:
-            cursor.close()
+
+        self._with_retry_cursor(load_company_names)
 
         latest_years = self.available_year_tables()[:3]
-        cursor = self._get_conn().cursor()
-        try:
+        def load_symbol_catalog(cursor):
             for year in latest_years:
                 cursor.execute(f"SELECT DISTINCT UPPER(SYMBOL) FROM bhav{year}")
                 for (symbol,) in cursor.fetchall():
                     normalized = normalize_symbol(symbol)
                     if normalized:
                         symbols.add(normalized)
-        finally:
-            cursor.close()
+
+        self._with_retry_cursor(load_symbol_catalog)
 
         self._symbol_catalog = sorted(symbols)
         self._symbol_set = set(self._symbol_catalog)
 
     def _load_inactive_map(self) -> Dict[str, str]:
-        cursor = self._get_conn().cursor()
-        try:
+        result: Dict[str, str] = {}
+
+        def load(cursor):
             cursor.execute(
                 """
                 SELECT UPPER(symbol) AS symbol, UPPER(TRIM(new_symbol)) AS new_symbol
@@ -198,29 +256,28 @@ class BhavRepository:
                   AND TRIM(new_symbol) <> ''
                 """
             )
-            result: Dict[str, str] = {}
             for old_symbol, new_symbol in cursor.fetchall():
                 old_norm = normalize_symbol(old_symbol)
                 new_norm = normalize_symbol(new_symbol)
                 if old_norm and new_norm:
                     result[old_norm] = new_norm
-            return result
-        finally:
-            cursor.close()
+
+        self._with_retry_cursor(load)
+        return result
 
     def available_year_tables(self) -> List[int]:
         if self._year_tables is None:
-            cursor = self._get_conn().cursor()
-            try:
+            years: List[int] = []
+
+            def load(cursor):
                 cursor.execute("SHOW TABLES LIKE 'bhav____'")
-                years: List[int] = []
                 for (table_name,) in cursor.fetchall():
                     suffix = table_name[4:]
                     if suffix.isdigit():
                         years.append(int(suffix))
-                self._year_tables = sorted(years, reverse=True)
-            finally:
-                cursor.close()
+
+            self._with_retry_cursor(load)
+            self._year_tables = sorted(years, reverse=True)
         return self._year_tables
 
     def suggest_symbols(self, term: str, limit: int = 10) -> List[Dict[str, str]]:
@@ -275,9 +332,10 @@ class BhavRepository:
             return None
 
         candidate_years = [year for year in self.available_year_tables() if year <= trade_date.year]
-        cursor = self._get_conn().cursor()
-        try:
-            for year in candidate_years:
+        for year in candidate_years:
+            row = None
+
+            def lookup(cursor):
                 cursor.execute(
                     f"""
                     SELECT UPPER(SYMBOL) AS symbol, CLOSE, MKTDATE
@@ -289,17 +347,21 @@ class BhavRepository:
                     """,
                     (normalized, trade_date),
                 )
-                row = cursor.fetchone()
-                if row:
-                    actual_symbol, close_price, price_date = row
-                    return {
-                        "symbol": normalize_symbol(actual_symbol),
-                        "cmp": float(close_price) if close_price is not None else None,
-                        "price_date": price_date.isoformat(),
-                        "table": f"bhav{year}",
-                    }
-        finally:
-            cursor.close()
+                return cursor.fetchone()
+
+            try:
+                row = self._with_retry_cursor(lookup)
+            except Exception as exc:
+                self._log_debug(f"lookup_last_close failed for {normalized} year={year}: {exc}")
+                continue
+            if row:
+                actual_symbol, close_price, price_date = row
+                return {
+                    "symbol": normalize_symbol(actual_symbol),
+                    "cmp": float(close_price) if close_price is not None else None,
+                    "price_date": price_date.isoformat(),
+                    "table": f"bhav{year}",
+                }
         return None
 
     def fetch_daily_bars(self, symbol: str, start_date: date, end_date: date) -> List[Dict[str, object]]:
@@ -310,10 +372,9 @@ class BhavRepository:
         if not candidate_years:
             return []
 
-        cursor = self._get_conn().cursor()
         rows: List[Dict[str, object]] = []
-        try:
-            for year in candidate_years:
+        for year in candidate_years:
+            def load_year(cursor):
                 cursor.execute(
                     f"""
                     SELECT MKTDATE, OPEN, HIGH, LOW, CLOSE
@@ -324,47 +385,55 @@ class BhavRepository:
                     """,
                     (normalized, start_date, end_date),
                 )
-                for mktdate, open_price, high_price, low_price, close_price in cursor.fetchall():
-                    rows.append(
-                        {
-                            "mktdate": mktdate,
-                            "open": float(open_price) if open_price is not None else None,
-                            "high": float(high_price) if high_price is not None else None,
-                            "low": float(low_price) if low_price is not None else None,
-                            "close": float(close_price) if close_price is not None else None,
-                        }
-                    )
-        finally:
-            cursor.close()
+                return cursor.fetchall()
+
+            try:
+                year_rows = self._with_retry_cursor(load_year)
+            except Exception as exc:
+                self._log_debug(f"fetch_daily_bars failed for {normalized} year={year}: {exc}")
+                continue
+            for mktdate, open_price, high_price, low_price, close_price in year_rows or []:
+                rows.append(
+                    {
+                        "mktdate": mktdate,
+                        "open": float(open_price) if open_price is not None else None,
+                        "high": float(high_price) if high_price is not None else None,
+                        "low": float(low_price) if low_price is not None else None,
+                        "close": float(close_price) if close_price is not None else None,
+                    }
+                )
         rows.sort(key=lambda item: item["mktdate"])
         return rows
 
     def latest_market_date(self) -> Optional[date]:
         latest: Optional[date] = None
-        cursor = self._get_conn().cursor()
-        try:
-            for year in self.available_year_tables():
+        for year in self.available_year_tables():
+            def load(cursor):
                 cursor.execute(f"SELECT MAX(MKTDATE) FROM bhav{year}")
-                row = cursor.fetchone()
-                if not row:
-                    continue
-                value = row[0]
-                if value is None:
-                    continue
-                if isinstance(value, datetime):
-                    value = value.date()
-                elif isinstance(value, str):
-                    try:
-                        value = date.fromisoformat(value[:10])
-                    except Exception:
-                        parsed = self._parse_tradebook_time(value)
-                        value = parsed.date() if parsed else None
-                if not isinstance(value, date):
-                    continue
-                if latest is None or value > latest:
-                    latest = value
-        finally:
-            cursor.close()
+                return cursor.fetchone()
+
+            try:
+                row = self._with_retry_cursor(load)
+            except Exception as exc:
+                self._log_debug(f"latest_market_date failed for year={year}: {exc}")
+                continue
+            if not row:
+                continue
+            value = row[0]
+            if value is None:
+                continue
+            if isinstance(value, datetime):
+                value = value.date()
+            elif isinstance(value, str):
+                try:
+                    value = date.fromisoformat(value[:10])
+                except Exception:
+                    parsed = self._parse_tradebook_time(value)
+                    value = parsed.date() if parsed else None
+            if not isinstance(value, date):
+                continue
+            if latest is None or value > latest:
+                latest = value
         return latest
 
     def resolve_with_price(self, raw_symbol: str, trade_date: date) -> Dict[str, object]:
@@ -803,7 +872,13 @@ class TradePlanStore:
         )
         return result
 
-    def _build_stop_loss_campaigns(self, rows: List[Dict[str, object]], repo: BhavRepository, stop_loss_pct: float) -> Dict[str, object]:
+    def _build_stop_loss_campaigns(
+        self,
+        rows: List[Dict[str, object]],
+        repo: BhavRepository,
+        stop_loss_pct: float,
+        history_start_date: Optional[date] = None,
+    ) -> Dict[str, object]:
         grouped: Dict[str, List[Dict[str, object]]] = {}
         for row in rows:
             symbol = normalize_symbol(str(row.get("symbol", "")))
@@ -1000,6 +1075,12 @@ class TradePlanStore:
             )
         )
 
+        if history_start_date:
+            campaigns = [
+                item for item in campaigns
+                if (self._parse_tradebook_time(item.get("start_time")) or datetime.min).date() >= history_start_date
+            ]
+
         closed_campaigns = [item for item in campaigns if item.get("status") == "closed"]
         open_campaigns = [item for item in campaigns if item.get("status") == "open"]
 
@@ -1114,7 +1195,690 @@ class TradePlanStore:
             "campaigns": campaigns,
             "closed_campaigns": closed_campaigns,
             "open_campaigns_list": open_campaigns,
-            "note": "Stop-loss honoring is measured on round-trip tradebook campaigns using your rule: day 1 checks intraday after the actual buy time, day 2 checks the daily chart close against the original 2% stop, and from day 3 onward the stop trails to breakeven or the prior 5-day EMA, whichever is higher.",
+            "history_start_date": history_start_date.isoformat() if history_start_date else "",
+            "note": "Real-life stop-loss honoring is measured on round-trip tradebook campaigns using your rule: day 1 checks intraday after the actual buy time, day 2 checks the daily chart close against the original 2% stop, and from day 3 onward the stop trails to breakeven or the prior 5-day EMA, whichever is higher.",
+        }
+
+    def _build_plan_history_streaks(self, repo: BhavRepository, history_start_date: date) -> Dict[str, object]:
+        settings = self.load_settings()
+        default_stop_loss_pct = self._as_float(settings.get("stop_loss_pct"))
+        if default_stop_loss_pct <= 0:
+            default_stop_loss_pct = 2.0
+        latest_market_day = repo.latest_market_date() or history_start_date
+
+        plan_dates = [
+            d for d in self.list_plan_dates()
+            if history_start_date.isoformat() <= d <= latest_market_day.isoformat()
+        ]
+        if not plan_dates:
+            return {
+                "ok": True,
+                "history_start_date": history_start_date.isoformat(),
+                "latest_trade_date": "",
+                "stop_loss_pct": round(default_stop_loss_pct, 2),
+                "summary": {
+                    "closed_campaigns": 0,
+                    "open_campaigns": 0,
+                    "honored_campaigns": 0,
+                    "stop_touched_campaigns": 0,
+                    "breach_count": 0,
+                    "honor_rate": None,
+                    "win_rate": None,
+                    "loss_rate": None,
+                    "longest_honor_streak": 0,
+                    "current_honor_streak": 0,
+                    "actual_win_count": 0,
+                    "actual_loss_count": 0,
+                    "actual_win_rate": None,
+                    "actual_loss_rate": None,
+                    "actual_avg_gain_pct": None,
+                    "actual_avg_loss_pct": None,
+                    "actual_breakeven_count": 0,
+                    "actual_breakeven_rate": None,
+                    "counterfactual_win_rate": None,
+                    "counterfactual_loss_rate": None,
+                    "counterfactual_avg_gain_pct": None,
+                    "counterfactual_avg_loss_pct": None,
+                    "counterfactual_decisive_count": 0,
+                    "counterfactual_breakeven_count": 0,
+                    "counterfactual_breakeven_rate": None,
+                    "breaches_prevented": 0,
+                    "best_return_pct": None,
+                    "worst_return_pct": None,
+                },
+                "campaigns": [],
+                "closed_campaigns": [],
+                "open_campaigns_list": [],
+                "note": "No plan snapshots were found in the tracked history window.",
+                "debug_log_path": str(self.debug_log_path),
+            }
+
+        first_seen: Dict[str, Dict[str, object]] = {}
+        last_seen: Dict[str, Dict[str, object]] = {}
+        latest_plan_date = history_start_date
+
+        for plan_date in plan_dates:
+            payload = self.load_plan(plan_date)
+            if not isinstance(payload, dict):
+                continue
+            positions = payload.get("positions", [])
+            if not isinstance(positions, list):
+                continue
+            for raw_position in positions:
+                if not isinstance(raw_position, dict):
+                    continue
+                position = copy.deepcopy(raw_position)
+                if self._entry_value(position) is None:
+                    continue
+                symbol = normalize_symbol(str(position.get("symbol") or ""))
+                if not symbol:
+                    continue
+                pid = str(position.get("id") or "").strip()
+                if not pid:
+                    pid = "|".join(
+                        [
+                            symbol,
+                            str(position.get("entryDate") or ""),
+                            str(position.get("actualEntry") or ""),
+                            str(position.get("overnightEntry") or ""),
+                            str(position.get("planSL") or ""),
+                            str(position.get("trailOverride") or ""),
+                        ]
+                    )
+                if pid not in first_seen:
+                    first_seen[pid] = {
+                        "position": position,
+                        "plan_date": plan_date,
+                    }
+                last_seen[pid] = {
+                    "position": position,
+                    "plan_date": plan_date,
+                }
+
+        if not first_seen:
+            return {
+                "ok": True,
+                "history_start_date": history_start_date.isoformat(),
+                "latest_trade_date": latest_plan_date.isoformat(),
+                "stop_loss_pct": round(default_stop_loss_pct, 2),
+                "summary": {
+                    "closed_campaigns": 0,
+                    "open_campaigns": 0,
+                    "honored_campaigns": 0,
+                    "stop_touched_campaigns": 0,
+                    "breach_count": 0,
+                    "honor_rate": None,
+                    "win_rate": None,
+                    "loss_rate": None,
+                    "longest_honor_streak": 0,
+                    "current_honor_streak": 0,
+                    "actual_win_count": 0,
+                    "actual_loss_count": 0,
+                    "actual_win_rate": None,
+                    "actual_loss_rate": None,
+                    "actual_avg_gain_pct": None,
+                    "actual_avg_loss_pct": None,
+                    "actual_breakeven_count": 0,
+                    "actual_breakeven_rate": None,
+                    "counterfactual_win_rate": None,
+                    "counterfactual_loss_rate": None,
+                    "counterfactual_avg_gain_pct": None,
+                    "counterfactual_avg_loss_pct": None,
+                    "counterfactual_decisive_count": 0,
+                    "counterfactual_breakeven_count": 0,
+                    "counterfactual_breakeven_rate": None,
+                    "breaches_prevented": 0,
+                    "best_return_pct": None,
+                    "worst_return_pct": None,
+                },
+                "campaigns": [],
+                "closed_campaigns": [],
+                "open_campaigns_list": [],
+                "note": "No executed trade-plan snapshots were found in the tracked history window.",
+                "debug_log_path": str(self.debug_log_path),
+            }
+
+        campaigns: List[Dict[str, object]] = []
+        for pid, first_item in first_seen.items():
+            first_pos = first_item["position"]
+            last_pos = last_seen.get(pid, first_item)["position"]
+            symbol = normalize_symbol(str(first_pos.get("symbol") or last_pos.get("symbol") or ""))
+            entry_date_raw = str(first_pos.get("entryDate") or first_item["plan_date"] or "")
+            try:
+                entry_day = datetime.strptime(entry_date_raw, "%Y-%m-%d").date() if entry_date_raw else None
+            except ValueError:
+                entry_day = None
+            if entry_day is None:
+                continue
+
+            entry_price = self._entry_value(first_pos)
+            if entry_price is None or entry_price <= 0:
+                continue
+            exec_summary = self._execution_summary(last_pos)
+            qty = exec_summary.get("total_qty") or self._total_qty(first_pos)
+            if qty is None or qty <= 0:
+                continue
+
+            plan_sl = self._as_float(first_pos.get("planSL"))
+            if plan_sl <= 0:
+                plan_sl = self._as_float(first_pos.get("_currentSL"))
+            if plan_sl <= 0:
+                plan_sl = round(entry_price * (1.0 - (default_stop_loss_pct / 100.0)), 2)
+            derived_stop_pct = round(((entry_price - plan_sl) / entry_price) * 100.0, 2) if entry_price else default_stop_loss_pct
+            stop_loss_pct = max(0.01, derived_stop_pct)
+
+            latest_close_info = repo.lookup_last_close(symbol, latest_market_day) if symbol else None
+            latest_cmp = None
+            latest_cmp_date = ""
+            if latest_close_info and latest_close_info.get("cmp") is not None:
+                latest_cmp = float(latest_close_info["cmp"])
+                latest_cmp_date = str(latest_close_info.get("price_date") or "")
+            live_return_pct = ((latest_cmp / entry_price) - 1.0) * 100.0 if latest_cmp and entry_price else None
+
+            path = self._evaluate_stop_path(
+                symbol=symbol,
+                entry_dt=datetime.combine(entry_day, dt_time(9, 15)),
+                entry_day=entry_day,
+                end_day=latest_market_day,
+                entry_price=entry_price,
+                stop_loss_pct=stop_loss_pct,
+                repo=repo,
+                exit_dt=None,
+                live_return_pct=live_return_pct,
+                simulation_end_day=latest_market_day,
+            )
+            stop_touched = bool(path.get("stop_touched"))
+            stop_touch_date = str(path.get("stop_touch_date") or "")
+            stop_touch_stage = str(path.get("stop_touch_stage") or "")
+            stop_touch_price = self._as_float(path.get("stop_touch_price")) if stop_touched else None
+            if stop_touched and stop_touch_price <= 0:
+                stop_touch_price = plan_sl
+            counterfactual_return_pct = path.get("counterfactual_return_pct")
+            simulated_exit_price = stop_touch_price if stop_touched else (
+                round(entry_price * (1.0 + (float(counterfactual_return_pct) / 100.0)), 2)
+                if counterfactual_return_pct is not None and entry_price is not None
+                else latest_cmp
+            )
+            realized_qty = self._as_float(exec_summary.get("realized_qty"))
+            realized_value = self._as_float(exec_summary.get("realized_value"))
+            remaining_qty = self._as_float(exec_summary.get("remaining_qty"))
+            executed_sell_price = self._as_float(exec_summary.get("last_sell_price"))
+            if executed_sell_price <= 0:
+                executed_sell_price = self._as_float(exec_summary.get("sell_price"))
+            current_value = None
+            if latest_cmp is not None and remaining_qty > 0:
+                current_value = round(realized_value + (remaining_qty * latest_cmp), 2)
+            elif realized_value > 0:
+                current_value = round(realized_value, 2)
+            elif latest_cmp is not None and qty:
+                current_value = round(float(latest_cmp or 0.0) * qty, 2)
+            actual_return_pct = ((current_value / (entry_price * qty)) - 1.0) * 100.0 if current_value is not None and entry_price and qty else None
+
+            campaigns.append(
+                {
+                    "campaign_id": pid,
+                    "symbol": symbol,
+                    "entry_date": entry_day.isoformat(),
+                    "start_time": entry_day.isoformat(),
+                    "end_time": "",
+                    "status": str(last_pos.get("_status") or ("closed" if stop_touched else "open")).lower(),
+                    "entry_price": round(entry_price, 2),
+                    "buy_price": round(entry_price, 2),
+                    "buy_qty": round(float(qty), 6),
+                    "actual_qty": round(float(qty), 6),
+                    "executed_sell_price": executed_sell_price,
+                    "current_cmp": latest_cmp,
+                    "actual_value": current_value,
+                    "stop_price": round(plan_sl, 2),
+                    "stop_touch_price": stop_touch_price,
+                    "price_date": latest_cmp_date,
+                    "sell_qty": round(float(realized_qty), 6),
+                    "actual_return_pct": round(actual_return_pct, 2) if actual_return_pct is not None else None,
+                    "return_pct": round(actual_return_pct, 2) if actual_return_pct is not None else None,
+                    "honored": not stop_touched,
+                    "stop_touched": stop_touched,
+                    "counterfactual_return_pct": counterfactual_return_pct,
+                    "breach_pct": round((actual_return_pct or 0.0) - (counterfactual_return_pct or 0.0), 2) if actual_return_pct is not None else None,
+                    "stop_touch_date": stop_touch_date,
+                    "stop_touch_stage": stop_touch_stage,
+                    "analysis_basis": "trade_plan_snapshot_day1_intraday_then_daily_close_with_day3_ema_trailing",
+                    "plan_status": str(last_pos.get("_status") or ""),
+                    "plan_days": last_pos.get("_days"),
+                    "plan_rem": last_pos.get("_rem"),
+                    "plan_current_sl": last_pos.get("_currentSL"),
+                    "plan_moved_be": bool(last_pos.get("movedBE")),
+                    "plan_trail_override": last_pos.get("trailOverride"),
+                    "realized_qty": round(float(realized_qty), 6),
+                    "realized_value": round(float(realized_value), 2),
+                    "remaining_qty": round(float(remaining_qty), 6),
+                }
+            )
+
+        campaigns.sort(
+            key=lambda item: (
+                item.get("entry_date") or "",
+                item.get("symbol") or "",
+            )
+        )
+        closed_campaigns = [item for item in campaigns if item.get("status") == "closed"]
+        open_campaigns = [item for item in campaigns if item.get("status") != "closed"]
+        closed_honored = [item for item in closed_campaigns if item.get("honored")]
+        closed_losses = [item for item in closed_campaigns if item.get("actual_return_pct") is not None and float(item.get("actual_return_pct")) < 0]
+        closed_wins = [item for item in closed_campaigns if item.get("actual_return_pct") is not None and float(item.get("actual_return_pct")) >= 0]
+        breaches = [item for item in closed_campaigns if item.get("stop_touched")]
+        actual_gain_returns = [
+            float(item.get("actual_return_pct"))
+            for item in closed_campaigns
+            if item.get("actual_return_pct") is not None and float(item.get("actual_return_pct")) >= 0
+        ]
+        actual_loss_returns = [
+            float(item.get("actual_return_pct"))
+            for item in closed_campaigns
+            if item.get("actual_return_pct") is not None and float(item.get("actual_return_pct")) < 0
+        ]
+        actual_breakeven_returns = [
+            float(item.get("actual_return_pct"))
+            for item in closed_campaigns
+            if item.get("actual_return_pct") is not None and round(float(item.get("actual_return_pct")), 2) == 0.0
+        ]
+        counterfactual_wins = [
+            item for item in closed_campaigns
+            if item.get("counterfactual_return_pct") is not None and float(item.get("counterfactual_return_pct")) >= 0
+        ]
+        counterfactual_losses = [
+            item for item in closed_campaigns
+            if item.get("counterfactual_return_pct") is not None and float(item.get("counterfactual_return_pct")) < 0
+        ]
+        counterfactual_gain_returns = [
+            float(item.get("counterfactual_return_pct"))
+            for item in closed_campaigns
+            if item.get("counterfactual_return_pct") is not None and float(item.get("counterfactual_return_pct")) >= 0
+        ]
+        counterfactual_loss_returns = [
+            float(item.get("counterfactual_return_pct"))
+            for item in closed_campaigns
+            if item.get("counterfactual_return_pct") is not None and float(item.get("counterfactual_return_pct")) < 0
+        ]
+        counterfactual_breakeven_returns = [
+            float(item.get("counterfactual_return_pct"))
+            for item in closed_campaigns
+            if item.get("counterfactual_return_pct") is not None and round(float(item.get("counterfactual_return_pct")), 2) == 0.0
+        ]
+        counterfactual_positive_count = len([
+            item for item in closed_campaigns
+            if item.get("counterfactual_return_pct") is not None and float(item.get("counterfactual_return_pct")) > 0
+        ])
+        counterfactual_negative_count = len([
+            item for item in closed_campaigns
+            if item.get("counterfactual_return_pct") is not None and float(item.get("counterfactual_return_pct")) < 0
+        ])
+        counterfactual_decisive_count = counterfactual_positive_count + counterfactual_negative_count
+        longest_streak = 0
+        current_streak = 0
+        for item in closed_campaigns:
+            if item.get("honored"):
+                current_streak += 1
+                longest_streak = max(longest_streak, current_streak)
+            else:
+                current_streak = 0
+        live_streak = 0
+        for item in campaigns:
+            if item.get("honored"):
+                live_streak += 1
+            else:
+                live_streak = 0
+        closed_count = len(closed_campaigns)
+        honored_count = len(closed_honored)
+        win_count = len(closed_wins)
+        loss_count = len(closed_losses)
+        breach_count = len(breaches)
+        return {
+            "ok": True,
+            "tradebook_path": "",
+            "latest_trade_date": latest_market_day.isoformat(),
+            "history_start_date": history_start_date.isoformat(),
+            "stop_loss_pct": round(default_stop_loss_pct, 2),
+            "summary": {
+                "closed_campaigns": closed_count,
+                "open_campaigns": len(open_campaigns),
+                "honored_campaigns": honored_count,
+                "stop_touched_campaigns": breach_count,
+                "breach_count": breach_count,
+                "honor_rate": round((honored_count / closed_count) * 100.0, 1) if closed_count else None,
+                "win_rate": round((win_count / closed_count) * 100.0, 1) if closed_count else None,
+                "loss_rate": round((loss_count / closed_count) * 100.0, 1) if closed_count else None,
+                "longest_honor_streak": longest_streak,
+                "current_honor_streak": live_streak,
+                "actual_win_count": win_count,
+                "actual_loss_count": loss_count,
+                "actual_win_rate": round((win_count / closed_count) * 100.0, 1) if closed_count else None,
+                "actual_loss_rate": round((loss_count / closed_count) * 100.0, 1) if closed_count else None,
+                "actual_avg_gain_pct": round(sum(actual_gain_returns) / len(actual_gain_returns), 2) if actual_gain_returns else None,
+                "actual_avg_loss_pct": round(sum(actual_loss_returns) / len(actual_loss_returns), 2) if actual_loss_returns else None,
+                "actual_breakeven_count": len(actual_breakeven_returns),
+                "actual_breakeven_rate": round((len(actual_breakeven_returns) / closed_count) * 100.0, 1) if closed_count else None,
+                "counterfactual_win_rate": round((counterfactual_positive_count / counterfactual_decisive_count) * 100.0, 1) if counterfactual_decisive_count else None,
+                "counterfactual_loss_rate": round((counterfactual_negative_count / counterfactual_decisive_count) * 100.0, 1) if counterfactual_decisive_count else None,
+                "counterfactual_avg_gain_pct": round(sum(counterfactual_gain_returns) / len(counterfactual_gain_returns), 2) if counterfactual_gain_returns else None,
+                "counterfactual_avg_loss_pct": round(sum(counterfactual_loss_returns) / len(counterfactual_loss_returns), 2) if counterfactual_loss_returns else None,
+                "counterfactual_decisive_count": counterfactual_decisive_count,
+                "counterfactual_breakeven_count": len(counterfactual_breakeven_returns),
+                "counterfactual_breakeven_rate": round((len(counterfactual_breakeven_returns) / closed_count) * 100.0, 1) if closed_count else None,
+                "breaches_prevented": breach_count,
+                "best_return_pct": round(max((float(item.get("return_pct")) for item in closed_campaigns if item.get("return_pct") is not None), default=0.0), 2) if closed_campaigns else None,
+                "worst_return_pct": round(min((float(item.get("return_pct")) for item in closed_campaigns if item.get("return_pct") is not None), default=0.0), 2) if closed_campaigns else None,
+            },
+            "campaigns": campaigns,
+            "closed_campaigns": closed_campaigns,
+            "open_campaigns_list": open_campaigns,
+            "note": "Real-life stop-loss honoring is measured on saved trade-plan snapshots from the tracked history window. The entry date comes from the plan snapshot, and the stop path is evaluated from that plan against real market data using the plan's stored stop level.",
+        }
+
+    def _build_snapshot_streaks(self, history_start_date: date) -> Dict[str, object]:
+        settings = self.load_settings()
+        default_stop_loss_pct = self._as_float(settings.get("stop_loss_pct"))
+        if default_stop_loss_pct <= 0:
+            default_stop_loss_pct = 2.0
+
+        plan_dates = [
+            d for d in self.list_plan_dates()
+            if history_start_date.isoformat() <= d
+        ]
+        if not plan_dates:
+            return {
+                "ok": True,
+                "history_start_date": history_start_date.isoformat(),
+                "latest_trade_date": "",
+                "stop_loss_pct": round(default_stop_loss_pct, 2),
+                "summary": {
+                    "closed_campaigns": 0,
+                    "open_campaigns": 0,
+                    "honored_campaigns": 0,
+                    "violated_campaigns": 0,
+                    "stop_touched_campaigns": 0,
+                    "breach_count": 0,
+                    "honor_rate": None,
+                    "violation_rate": None,
+                    "win_rate": None,
+                    "loss_rate": None,
+                    "longest_honor_streak": 0,
+                    "current_honor_streak": 0,
+                    "actual_win_count": 0,
+                    "actual_loss_count": 0,
+                    "actual_win_rate": None,
+                    "actual_loss_rate": None,
+                    "actual_avg_gain_pct": None,
+                    "actual_avg_loss_pct": None,
+                    "actual_breakeven_count": 0,
+                    "actual_breakeven_rate": None,
+                    "counterfactual_win_rate": None,
+                    "counterfactual_loss_rate": None,
+                    "counterfactual_avg_gain_pct": None,
+                    "counterfactual_avg_loss_pct": None,
+                    "counterfactual_decisive_count": 0,
+                    "counterfactual_breakeven_count": 0,
+                    "counterfactual_breakeven_rate": None,
+                    "breaches_prevented": 0,
+                    "best_return_pct": None,
+                    "worst_return_pct": None,
+                },
+                "campaigns": [],
+                "closed_campaigns": [],
+                "open_campaigns_list": [],
+                "note": "No saved trade-plan snapshots were found in the tracked history window.",
+                "debug_log_path": str(self.debug_log_path),
+            }
+
+        first_seen: Dict[str, Dict[str, object]] = {}
+        last_seen: Dict[str, Dict[str, object]] = {}
+        latest_plan_date = history_start_date
+
+        for plan_date in plan_dates:
+            latest_plan_date = max(latest_plan_date, datetime.strptime(plan_date, "%Y-%m-%d").date())
+            payload = self.load_plan(plan_date)
+            if not isinstance(payload, dict):
+                continue
+            positions = payload.get("positions", [])
+            if not isinstance(positions, list):
+                continue
+            for raw_position in positions:
+                if not isinstance(raw_position, dict):
+                    continue
+                position = copy.deepcopy(raw_position)
+                if self._entry_value(position) is None:
+                    continue
+                symbol = normalize_symbol(str(position.get("symbol") or ""))
+                if not symbol:
+                    continue
+                pid = str(position.get("id") or "").strip()
+                if not pid:
+                    pid = "|".join(
+                        [
+                            symbol,
+                            str(position.get("entryDate") or ""),
+                            str(position.get("actualEntry") or ""),
+                            str(position.get("overnightEntry") or ""),
+                            str(position.get("planSL") or ""),
+                            str(position.get("trailOverride") or ""),
+                        ]
+                    )
+                if pid not in first_seen:
+                    first_seen[pid] = {"position": position, "plan_date": plan_date}
+                last_seen[pid] = {"position": position, "plan_date": plan_date}
+
+        campaigns: List[Dict[str, object]] = []
+        for pid, first_item in first_seen.items():
+            first_pos = first_item["position"]
+            last_pos = last_seen.get(pid, first_item)["position"]
+            symbol = normalize_symbol(str(first_pos.get("symbol") or last_pos.get("symbol") or ""))
+            entry_date_raw = str(first_pos.get("entryDate") or first_item["plan_date"] or "")
+            try:
+                entry_day = datetime.strptime(entry_date_raw, "%Y-%m-%d").date() if entry_date_raw else None
+            except ValueError:
+                entry_day = None
+            if entry_day is None:
+                continue
+
+            entry_price = self._entry_value(first_pos)
+            if entry_price is None or entry_price <= 0:
+                continue
+
+            exec_summary = self._execution_summary(last_pos)
+            total_qty = exec_summary.get("total_qty") or self._total_qty(first_pos)
+            if total_qty is None or total_qty <= 0:
+                continue
+
+            realized_qty = self._as_float(exec_summary.get("realized_qty"))
+            realized_value = self._as_float(exec_summary.get("realized_value"))
+            remaining_qty = self._as_float(exec_summary.get("remaining_qty"))
+            executed_sell_price = self._as_float(exec_summary.get("last_sell_price"))
+            if executed_sell_price <= 0:
+                executed_sell_price = self._as_float(exec_summary.get("sell_price"))
+            snapshot_cmp = self._as_float(last_pos.get("cmp"))
+            open_pnl = self._as_float(last_pos.get("_openPnl"))
+            real_pnl = self._as_float(last_pos.get("_realPnl"))
+            invested = round(entry_price * float(total_qty), 2)
+
+            actual_value = realized_value
+            if snapshot_cmp > 0 and remaining_qty > 0:
+                actual_value = round(realized_value + (remaining_qty * snapshot_cmp), 2)
+            elif actual_value <= 0 and snapshot_cmp > 0:
+                actual_value = round(float(total_qty) * snapshot_cmp, 2)
+            elif real_pnl != 0 or open_pnl != 0:
+                actual_value = round(invested + real_pnl + open_pnl, 2)
+
+            actual_return_pct = ((actual_value / invested) - 1.0) * 100.0 if invested else None
+            status_raw = str(last_pos.get("_status") or "").strip().lower()
+            remaining_qty = self._as_float(last_pos.get("_rem"))
+            initial_sl = self._as_float(first_pos.get("planSL"))
+            trail_sl = self._as_float(last_pos.get("_currentSL"))
+            plan_days = int(self._as_float(last_pos.get("_days")))
+            moved_be = bool(last_pos.get("movedBE"))
+            trail_override = self._as_float(last_pos.get("trailOverride"))
+            trail_active = (
+                trail_sl > 0
+                and trail_sl > initial_sl + 0.01
+                and (plan_days >= 2 or moved_be or trail_override > 0)
+            )
+
+            plan_sl = trail_sl if trail_active else initial_sl
+            if plan_sl <= 0:
+                plan_sl = self._as_float(first_pos.get("_currentSL"))
+            if plan_sl <= 0:
+                plan_sl = round(entry_price * (1.0 - (default_stop_loss_pct / 100.0)), 2)
+
+            stop_basis = "trailing stop" if trail_active else "initial stop"
+            honored = False
+            violated = False
+            if status_raw == "closed" and remaining_qty <= 0:
+                if executed_sell_price is not None and executed_sell_price > 0 and plan_sl > 0:
+                    honored = executed_sell_price <= plan_sl + 0.01
+                    violated = not honored
+                elif realized_qty > 0 and realized_value > 0 and plan_sl > 0:
+                    avg_exit = realized_value / realized_qty if realized_qty > 0 else 0.0
+                    honored = avg_exit <= plan_sl + 0.01
+                    violated = not honored
+            elif remaining_qty > 0 and self._as_float(snapshot_cmp) > 0 and plan_sl > 0:
+                cmp_now = self._as_float(snapshot_cmp)
+                if realized_qty > 0 and executed_sell_price is not None and executed_sell_price > plan_sl + 0.01:
+                    violated = True
+                elif cmp_now <= plan_sl + 0.01:
+                    violated = True
+                else:
+                    status_label = "OPEN"
+
+            if honored:
+                status_label = "HONORED"
+            elif violated:
+                status_label = "VIOLATED"
+            else:
+                status_label = "OPEN"
+
+            campaigns.append(
+                {
+                    "campaign_id": pid,
+                    "symbol": symbol,
+                    "entry_date": entry_day.isoformat(),
+                    "start_time": entry_day.isoformat(),
+                    "end_time": "",
+                    "status": status_label,
+                    "entry_price": round(entry_price, 2),
+                    "buy_price": round(entry_price, 2),
+                    "buy_qty": round(float(total_qty), 6),
+                    "actual_qty": round(float(total_qty), 6),
+                    "executed_sell_price": executed_sell_price,
+                    "current_cmp": snapshot_cmp if snapshot_cmp > 0 else None,
+                    "actual_value": actual_value,
+                    "stop_price": round(plan_sl, 2),
+                    "stop_touch_price": None,
+                    "price_date": str(last_item["plan_date"]) if isinstance((last_item := last_seen.get(pid, first_item)), dict) else "",
+                    "sell_qty": round(float(realized_qty), 6),
+                    "actual_return_pct": round(actual_return_pct, 2) if actual_return_pct is not None else None,
+                    "return_pct": round(actual_return_pct, 2) if actual_return_pct is not None else None,
+                    "honored": honored,
+                    "stop_touched": not honored,
+                    "counterfactual_return_pct": None,
+                    "breach_pct": None,
+                    "stop_touch_date": "",
+                    "stop_touch_stage": "",
+                    "status_reason": (
+                        f"Executed sell {executed_sell_price:.2f} was at/below {stop_basis} {plan_sl:.2f}"
+                        if honored and executed_sell_price is not None and executed_sell_price > 0
+                        else (
+                        f"Executed sell {executed_sell_price:.2f} was above {stop_basis} {plan_sl:.2f}"
+                            if violated and executed_sell_price is not None and executed_sell_price > 0
+                            else (
+                                f"Partial exit existed above {stop_basis} {plan_sl:.2f}"
+                                if violated and realized_qty > 0
+                                else (
+                                f"Current CMP {snapshot_cmp:.2f} is above {stop_basis} {plan_sl:.2f}"
+                                if remaining_qty > 0 and snapshot_cmp > 0 and not violated
+                                else f"Current CMP {snapshot_cmp:.2f} is below {stop_basis} {plan_sl:.2f}"
+                                if remaining_qty > 0 and snapshot_cmp > 0
+                                else f"Latest stored status is {status_raw or 'unknown'} with remaining qty {remaining_qty:.0f}"
+                                )
+                            )
+                        )
+                    ),
+                    "analysis_basis": "trade_plan_snapshot_local_only",
+                    "plan_status": status_raw,
+                    "plan_days": last_pos.get("_days"),
+                    "plan_rem": last_pos.get("_rem"),
+                    "plan_current_sl": last_pos.get("_currentSL"),
+                    "plan_moved_be": bool(last_pos.get("movedBE")),
+                    "plan_trail_override": last_pos.get("trailOverride"),
+                    "realized_qty": round(float(realized_qty), 6),
+                    "realized_value": round(float(realized_value), 2),
+                    "remaining_qty": round(float(remaining_qty), 6),
+                }
+            )
+
+        campaigns.sort(key=lambda item: (item.get("entry_date") or "", item.get("symbol") or ""))
+        honored_campaigns = [item for item in campaigns if item.get("honored")]
+        violated_campaigns = [item for item in campaigns if item.get("status") == "VIOLATED"]
+        open_campaigns = [item for item in campaigns if item.get("status") == "OPEN"]
+        resolved_campaigns = honored_campaigns + violated_campaigns
+        actual_gain_returns = [float(item.get("actual_return_pct")) for item in resolved_campaigns if item.get("actual_return_pct") is not None and float(item.get("actual_return_pct")) >= 0]
+        actual_loss_returns = [float(item.get("actual_return_pct")) for item in resolved_campaigns if item.get("actual_return_pct") is not None and float(item.get("actual_return_pct")) < 0]
+        actual_breakeven_returns = [float(item.get("actual_return_pct")) for item in resolved_campaigns if item.get("actual_return_pct") is not None and round(float(item.get("actual_return_pct")), 2) == 0.0]
+
+        current_streak = 0
+        longest_streak = 0
+        for item in campaigns:
+            if item.get("honored"):
+                current_streak += 1
+                longest_streak = max(longest_streak, current_streak)
+            else:
+                current_streak = 0
+
+        win_count = len([item for item in campaigns if item.get("actual_return_pct") is not None and float(item.get("actual_return_pct")) >= 0])
+        loss_count = len([item for item in campaigns if item.get("actual_return_pct") is not None and float(item.get("actual_return_pct")) < 0])
+        closed_count = len(resolved_campaigns)
+        honored_count = len(honored_campaigns)
+        violated_count = len(violated_campaigns)
+        return {
+            "ok": True,
+            "tradebook_path": "",
+            "latest_trade_date": latest_plan_date.isoformat(),
+            "history_start_date": history_start_date.isoformat(),
+            "stop_loss_pct": round(default_stop_loss_pct, 2),
+            "summary": {
+                "closed_campaigns": len(resolved_campaigns),
+                "open_campaigns": len(open_campaigns),
+                "honored_campaigns": honored_count,
+                "violated_campaigns": violated_count,
+                "stop_touched_campaigns": violated_count,
+                "breach_count": violated_count,
+                "honor_rate": round((honored_count / len(resolved_campaigns)) * 100.0, 1) if resolved_campaigns else None,
+                "violation_rate": round((violated_count / len(resolved_campaigns)) * 100.0, 1) if resolved_campaigns else None,
+                "win_rate": round((win_count / closed_count) * 100.0, 1) if closed_count else None,
+                "loss_rate": round((loss_count / closed_count) * 100.0, 1) if closed_count else None,
+                "longest_honor_streak": longest_streak,
+                "current_honor_streak": current_streak,
+                "actual_win_count": win_count,
+                "actual_loss_count": loss_count,
+                "actual_win_rate": round((win_count / closed_count) * 100.0, 1) if closed_count else None,
+                "actual_loss_rate": round((loss_count / closed_count) * 100.0, 1) if closed_count else None,
+                "actual_avg_gain_pct": round(sum(actual_gain_returns) / len(actual_gain_returns), 2) if actual_gain_returns else None,
+                "actual_avg_loss_pct": round(sum(actual_loss_returns) / len(actual_loss_returns), 2) if actual_loss_returns else None,
+                "actual_breakeven_count": len(actual_breakeven_returns),
+                "actual_breakeven_rate": round((len(actual_breakeven_returns) / closed_count) * 100.0, 1) if closed_count else None,
+                "counterfactual_win_rate": None,
+                "counterfactual_loss_rate": None,
+                "counterfactual_avg_gain_pct": None,
+                "counterfactual_avg_loss_pct": None,
+                "counterfactual_decisive_count": 0,
+                "counterfactual_breakeven_count": 0,
+                "counterfactual_breakeven_rate": None,
+                "breaches_prevented": 0,
+                "best_return_pct": round(max((float(item.get("return_pct")) for item in campaigns if item.get("return_pct") is not None), default=0.0), 2) if campaigns else None,
+                "worst_return_pct": round(min((float(item.get("return_pct")) for item in campaigns if item.get("return_pct") is not None), default=0.0), 2) if campaigns else None,
+            },
+            "campaigns": campaigns,
+            "closed_campaigns": honored_campaigns + violated_campaigns,
+            "open_campaigns_list": open_campaigns,
+            "note": "Real-life streaks are measured from saved trade-plan snapshots only. HONORED means a long trade exited at or below the applicable stop (trailing stop if active, otherwise the initial SL). VIOLATED means it exited above the stop or remained open below it. OPEN means the trade is still above stop and not yet resolved. No Kite or CSV lookup is used.",
+            "debug_log_path": str(self.debug_log_path),
         }
 
     def _build_roundtrip_campaigns(self, rows: List[Dict[str, object]]) -> List[Dict[str, object]]:
@@ -1222,9 +1986,10 @@ class TradePlanStore:
         stop_loss_pct = self._as_float(settings.get("stop_loss_pct"))
         if stop_loss_pct <= 0:
             stop_loss_pct = 2.0
+        history_start_date = date(2026, 4, 17)
         self._log_debug(
-            "stop-loss streak request: stop_loss_pct=%.2f tradebook_path=%s"
-            % (stop_loss_pct, str(tradebook_path) if tradebook_path else "")
+            "stop-loss streak request: stop_loss_pct=%.2f tradebook_path=%s history_start_date=%s"
+            % (stop_loss_pct, str(tradebook_path) if tradebook_path else "", history_start_date.isoformat())
         )
         if not tradebook_path or not tradebook_path.exists():
             self._log_debug("stop-loss streak aborted: tradebook csv not found")
@@ -1232,6 +1997,7 @@ class TradePlanStore:
                 "ok": False,
                 "message": "No tradebook CSV found in the trades folder.",
                 "stop_loss_pct": round(stop_loss_pct, 2),
+                "history_start_date": history_start_date.isoformat(),
                 "summary": {},
                 "campaigns": [],
                 "closed_campaigns": [],
@@ -1251,6 +2017,7 @@ class TradePlanStore:
                 "ok": False,
                 "message": f"Failed to read tradebook CSV: {exc}",
                 "stop_loss_pct": round(stop_loss_pct, 2),
+                "history_start_date": history_start_date.isoformat(),
                 "summary": {},
                 "campaigns": [],
                 "closed_campaigns": [],
@@ -1258,7 +2025,7 @@ class TradePlanStore:
                 "debug_log_path": str(self.debug_log_path),
             }
 
-        report = self._build_stop_loss_campaigns(rows, repo, stop_loss_pct)
+        report = self._build_stop_loss_campaigns(rows, repo, stop_loss_pct, history_start_date=history_start_date)
         try:
             summary = report.get("summary") if isinstance(report, dict) else {}
             closed_count = summary.get("closed_campaigns") if isinstance(summary, dict) else None
@@ -1278,6 +2045,7 @@ class TradePlanStore:
         if isinstance(report, dict):
             report["debug_log_path"] = str(self.debug_log_path)
             report["tradebook_path"] = str(tradebook_path)
+            report["history_start_date"] = history_start_date.isoformat()
         return report
 
     def _simulation_qty(self, entry_price: Optional[float], budget: float = 300000.0) -> int:
@@ -1696,6 +2464,41 @@ class TradePlanStore:
                 sold += int(trim.get("sq") or 0)
         return max(0, int(actual_qty) - sold)
 
+    def _execution_summary(self, position: Dict[str, object]) -> Dict[str, object]:
+        total_qty = self._total_qty(position) or 0.0
+        realized_qty = 0.0
+        realized_value = 0.0
+        last_sell_price = None
+        last_sell_qty = 0.0
+        last_sell_date = ""
+        for trim in position.get("trims", []) or []:
+            if not isinstance(trim, dict) or not trim.get("done"):
+                continue
+            sq = self._as_float(trim.get("sq"))
+            ap = self._as_float(trim.get("ap"))
+            if sq <= 0 or ap <= 0:
+                continue
+            realized_qty += sq
+            realized_value += sq * ap
+            last_sell_price = ap
+            last_sell_qty = sq
+            trim_date = str(trim.get("dt") or "").strip()
+            if trim_date:
+                last_sell_date = trim_date
+        remaining_qty = self._remaining_qty(position)
+        if remaining_qty is None:
+            remaining_qty = max(0.0, total_qty - realized_qty)
+        return {
+            "total_qty": round(total_qty, 6),
+            "realized_qty": round(realized_qty, 6),
+            "realized_value": round(realized_value, 2),
+            "remaining_qty": round(float(remaining_qty), 6),
+            "sell_price": round(realized_value / realized_qty, 2) if realized_qty > 0 else None,
+            "last_sell_price": round(last_sell_price, 2) if last_sell_price is not None else None,
+            "last_sell_qty": round(last_sell_qty, 6),
+            "last_sell_date": last_sell_date,
+        }
+
     def _total_qty(self, position: Dict[str, object]) -> Optional[float]:
         overnight_qty = self._as_float(position.get("overnightQty"))
         actual_qty = self._as_float(position.get("actualQty"))
@@ -1825,7 +2628,7 @@ class TradePlanStore:
                 if self._entry_value(position) is not None:
                     if not position.get("entryDate"):
                         position["entryDate"] = item_date
-                    key = self._live_position_key(position, item_date)
+                    key = str(position.get("id") or "").strip() or self._live_position_key(position, item_date)
                     is_closed = self._remaining_qty(position) == 0 or position.get("_status") == "closed"
                     # Once a position key has been observed as closed, do not let a later stale snapshot
                     # reopen it on a future day.
@@ -2050,6 +2853,7 @@ class TradePlanStore:
         payload = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
             payload = {"positions": []}
+        payload["positions"] = self._dedupe_positions(payload.get("positions", []))
         payload["date"] = plan_date
         payload["path"] = str(path)
         payload["exists"] = True
@@ -2058,6 +2862,7 @@ class TradePlanStore:
     def save_plan(self, plan_date: str, positions: Sequence[dict]) -> Dict[str, object]:
         path = self.plan_path(plan_date)
         cleaned_positions = [position for position in positions if self._is_meaningful_position(position)]
+        cleaned_positions = self._dedupe_positions(cleaned_positions)
         payload = {
             "date": plan_date,
             "saved_at": datetime.now().isoformat(timespec="seconds"),
@@ -2065,6 +2870,26 @@ class TradePlanStore:
         }
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return {"ok": True, "date": plan_date, "path": str(path), "saved_at": payload["saved_at"]}
+
+    def _dedupe_positions(self, positions: Sequence[dict]) -> List[dict]:
+        deduped: Dict[str, dict] = {}
+        for position in positions:
+            if not isinstance(position, dict):
+                continue
+            pid = str(position.get("id") or "").strip()
+            if not pid:
+                pid = "|".join(
+                    [
+                        normalize_symbol(str(position.get("symbol") or "")),
+                        str(position.get("entryDate") or ""),
+                        str(position.get("actualEntry") or ""),
+                        str(position.get("overnightEntry") or ""),
+                        str(position.get("planSL") or ""),
+                        str(position.get("trailOverride") or ""),
+                    ]
+                )
+            deduped[pid] = position
+        return list(deduped.values())
 
 
 class TradePlanHandler(BaseHTTPRequestHandler):
@@ -2420,8 +3245,8 @@ class TradePlanHandler(BaseHTTPRequestHandler):
             if getattr(self.store, "_log_debug", None):
                 try:
                     self.store._log_debug(
-                        "stop-loss streak endpoint hit from %s:%s"
-                        % (self.client_address[0], self.client_address[1])
+                        "stop-loss streak endpoint hit (%s) from %s:%s"
+                        % (parsed.path, self.client_address[0], self.client_address[1])
                     )
                 except Exception:
                     pass
@@ -2434,6 +3259,25 @@ class TradePlanHandler(BaseHTTPRequestHandler):
                     except Exception:
                         pass
                 return self._send_error_json(HTTPStatus.INTERNAL_SERVER_ERROR, f"Stop-loss streak report failed: {exc}")
+
+        if parsed.path == "/api/streaks":
+            if getattr(self.store, "_log_debug", None):
+                try:
+                    self.store._log_debug(
+                        "plan streaks endpoint hit from %s:%s"
+                        % (self.client_address[0], self.client_address[1])
+                    )
+                except Exception:
+                    pass
+            try:
+                return self._send_json(self.store._build_snapshot_streaks(date(2026, 4, 17)))
+            except Exception as exc:
+                if getattr(self.store, "_log_debug", None):
+                    try:
+                        self.store._log_debug(f"plan streaks endpoint failed: {exc}")
+                    except Exception:
+                        pass
+                return self._send_error_json(HTTPStatus.INTERNAL_SERVER_ERROR, f"Plan streaks report failed: {exc}")
 
         if parsed.path == "/api/portfolio-sim":
             if getattr(self.store, "_log_debug", None):

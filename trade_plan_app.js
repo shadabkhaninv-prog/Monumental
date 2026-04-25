@@ -28,6 +28,16 @@ let streakReport = {
   stop_loss_pct: 2.0,
   tradebook_path: ""
 };
+let planStreakReport = {
+  summary: {},
+  campaigns: [],
+  closed_campaigns: [],
+  open_campaigns_list: [],
+  latest_trade_date: todayStr(),
+  history_start_date: "2026-04-17",
+  stop_loss_pct: 2.0,
+  tradebook_path: ""
+};
 let portfolioSimReport = {
   summary: {},
   daily: [],
@@ -85,6 +95,27 @@ function fmtDateLabel(value) {
   const [y, m, d] = value.split("-");
   if (!y || !m || !d) return value;
   return `${d}-${m}-${y}`;
+}
+
+function normalizeIsoDate(value, fallback = "") {
+  const raw = String(value || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const year = Number(raw.slice(0, 4));
+    const month = Number(raw.slice(5, 7));
+    const day = Number(raw.slice(8, 10));
+    if (year >= 2000 && year <= 2100 && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return raw;
+    }
+  }
+  if (/^\d{2}-\d{2}-\d{4}$/.test(raw)) {
+    const [day, month, year] = raw.split("-");
+    const iso = `${year}-${month}-${day}`;
+    const y = Number(year), m = Number(month), d = Number(day);
+    if (y >= 2000 && y <= 2100 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return iso;
+    }
+  }
+  return String(fallback || "").trim();
 }
 
 function escHtml(value) {
@@ -226,6 +257,7 @@ function newPos() {
     actualEntry: null,
     overnightEntry: null,
     overnightQty: null,
+    overnightSL: null,
     actualQty: null,
     intraQty: null,
     entryDate: "",
@@ -236,10 +268,10 @@ function newPos() {
     thoughtLog: [],
     movedBE: false,
     trims: [
-      { pct: 3, type: "fixed", ap: null, sq: null, done: false },
-      { pct: 10, type: "trail", ap: null, sq: null, done: false },
-      { pct: 15, type: "fixed", ap: null, sq: null, done: false },
-      { pct: 25, type: "fixed", ap: null, sq: null, done: false }
+      { pct: 3, type: "fixed", ap: null, sq: null, dt: "", done: false },
+      { pct: 10, type: "trail", ap: null, sq: null, dt: "", done: false },
+      { pct: 15, type: "fixed", ap: null, sq: null, dt: "", done: false },
+      { pct: 25, type: "fixed", ap: null, sq: null, dt: "", done: false }
     ],
     mgmt: { checklist: defaultChecklistStateMatrix(), note: "" },
     collapsed: false
@@ -251,11 +283,26 @@ function hydratePos(raw) {
   const pos = Object.assign({}, base, raw || {});
   pos.mgmt = Object.assign({}, base.mgmt, (raw && raw.mgmt) || {});
   pos.mgmt.checklist = normalizeChecklistStateMatrix(pos.mgmt.checklist || legacyChecklistStateMatrix(pos.mgmt));
-  pos.trims = base.trims.map((t, i) => Object.assign({}, t, ((raw && raw.trims) || [])[i] || {}));
+  pos.entryDate = normalizeIsoDate(pos.entryDate, "");
+  pos.trims = base.trims.map((t, i) => {
+    const src = Object.assign({}, t, ((raw && raw.trims) || [])[i] || {});
+    src.dt = normalizeIsoDate(src.dt, i === 0 ? pos.entryDate : "");
+    return src;
+  });
   pos.thoughtTag = String(pos.thoughtTag || "NOTE").toUpperCase();
   pos.thoughtLog = normalizeThoughtLog(pos.thoughtLog);
   pos.symbol = normalizeSymbol(pos.symbol);
   return pos;
+}
+
+function dedupePositionsById(list) {
+  const seen = new Map();
+  (Array.isArray(list) ? list : []).forEach(item => {
+    if (!item || typeof item !== "object") return;
+    const key = String(item.id || "").trim() || `${normalizeSymbol(item.symbol)}|${String(item.entryDate || "")}|${String(item.actualEntry || item.overnightEntry || "")}`;
+    seen.set(key, item);
+  });
+  return Array.from(seen.values());
 }
 
 async function api(path, options) {
@@ -277,7 +324,7 @@ function setSaveState(text, kind, title) {
 }
 
 function setNav(view) {
-  [["nav-dashboard", "dashboard"], ["nav-day", "day"], ["nav-exposure", "exposure"], ["nav-simulation", "simulation"], ["nav-portfolio", "portfolio"], ["nav-settings", "settings"]].forEach(([id, key]) => {
+  [["nav-dashboard", "dashboard"], ["nav-day", "day"], ["nav-exposure", "exposure"], ["nav-simulation", "simulation"], ["nav-streaks", "streaks"], ["nav-portfolio", "portfolio"], ["nav-settings", "settings"]].forEach(([id, key]) => {
     const node = e(id);
     if (node) node.className = "nav-btn" + (view === key ? " on" : "");
   });
@@ -292,7 +339,22 @@ function ensureSimulationNav() {
   btn.id = "nav-simulation";
   btn.type = "button";
   btn.textContent = "Simulation";
-  btn.onclick = () => goStreak();
+  btn.onclick = () => goSimulation();
+  const settingsBtn = e("nav-settings");
+  if (settingsBtn && settingsBtn.parentNode === nav) nav.insertBefore(btn, settingsBtn);
+  else nav.appendChild(btn);
+}
+
+function ensureStreaksNav() {
+  if (e("nav-streaks")) return;
+  const nav = document.querySelector(".topnav");
+  if (!nav) return;
+  const btn = document.createElement("button");
+  btn.className = "nav-btn";
+  btn.id = "nav-streaks";
+  btn.type = "button";
+  btn.textContent = "Streaks";
+  btn.onclick = () => goStreaks();
   const settingsBtn = e("nav-settings");
   if (settingsBtn && settingsBtn.parentNode === nav) nav.insertBefore(btn, settingsBtn);
   else nav.appendChild(btn);
@@ -515,7 +577,7 @@ async function loadDayView(date) {
       exposure_pct: null
     };
   }
-  positions = Array.isArray(loaded.positions) ? loaded.positions.map(hydratePos) : [];
+  positions = dedupePositionsById(Array.isArray(loaded.positions) ? loaded.positions.map(hydratePos) : []);
   selectedPositionId = null;
   dayMeta = {
     open_positions_count: loaded.open_positions_count || 0,
@@ -611,14 +673,20 @@ function getTrailStopOrderPreview(p, tickSize = 0.05) {
 function getExecutionRisk(p) {
   const planSL = p.planSL != null ? Number(p.planSL) : null;
   const intraSL = p.intraSL != null ? Number(p.intraSL) : null;
+  const overnightSL = p.overnightSL != null ? Number(p.overnightSL) : null;
   const totalQty = getTotalQty(p);
   const entry = getEffectiveEntry(p);
   if (!(totalQty > 0 && entry > 0 && planSL > 0)) return null;
   const intraQty = Math.max(0, Math.round(totalQty * 0.30));
+  const ovQty = Math.max(0, Number(p.overnightQty || 0));
+  const actualQty = Math.max(0, Number(p.actualQty || 0));
   const coreQty = Math.max(0, totalQty - intraQty);
-  const coreRisk = Math.max(0, (entry - planSL) * coreQty);
+  const overnightPortion = ovQty > 0 ? Math.min(coreQty, ovQty) : 0;
+  const actualPortion = Math.max(0, coreQty - overnightPortion);
+  const overnightRisk = Math.max(0, (entry - (overnightSL > 0 ? overnightSL : planSL)) * overnightPortion);
+  const coreRisk = Math.max(0, (entry - planSL) * actualPortion);
   const intraRisk = Math.max(0, (entry - (intraSL > 0 ? intraSL : planSL)) * intraQty);
-  return +(coreRisk + intraRisk).toFixed(2);
+  return +(overnightRisk + coreRisk + intraRisk).toFixed(2);
 }
 
 function getPlannedRisk(p) {
@@ -1549,13 +1617,14 @@ function clearExecutionFields(id) {
   p.actualEntry = null;
   p.overnightEntry = null;
   p.overnightQty = null;
+  p.overnightSL = null;
   p.actualQty = null;
   p.entryDate = "";
   p.posHigh = null;
   p.trailOverride = null;
   p.trailNote = "";
   p.movedBE = false;
-  p.trims = p.trims.map(t => ({ pct: t.pct, type: t.type, ap: null, sq: null, done: false }));
+  p.trims = p.trims.map(t => ({ pct: t.pct, type: t.type, ap: null, sq: null, dt: "", done: false }));
   renderDayView();
   autoSave();
 }
@@ -1777,6 +1846,7 @@ function renderApp() {
   if (currentView === "dashboard") renderDashboardView();
   else if (currentView === "exposure") renderExposureView();
   else if (currentView === "simulation") renderStreakView();
+  else if (currentView === "streaks") renderPlanStreakView();
   else if (currentView === "portfolio") renderPortfolioView();
   else if (currentView === "settings") renderSettingsView();
   else renderDayView();
@@ -1961,6 +2031,7 @@ async function loadStreakReport() {
       stop_loss_pct: payload.stop_loss_pct != null ? payload.stop_loss_pct : Number(settings.stop_loss_pct || 2.0),
       note: payload.note || "",
       tradebook_path: payload.tradebook_path || "",
+      history_start_date: "",
       debug_log_path: payload.debug_log_path || ""
     };
     } catch (_err) {
@@ -1974,21 +2045,110 @@ async function loadStreakReport() {
       latest_trade_date: todayStr(),
       stop_loss_pct: Number(settings.stop_loss_pct || 2.0),
       tradebook_path: "",
+      history_start_date: "",
       debug_log_path: ""
     };
   }
+}
+
+async function loadPlanStreakReport() {
+  if (!storageOnline) await loadStorageInfo();
+  await loadSettings();
+  try {
+    const payload = await api("/streaks");
+    planStreakReport = {
+      ok: payload.ok !== false,
+      message: payload.message || "",
+      summary: payload.summary || {},
+      campaigns: Array.isArray(payload.campaigns) ? payload.campaigns : [],
+      closed_campaigns: Array.isArray(payload.closed_campaigns) ? payload.closed_campaigns : [],
+      open_campaigns_list: Array.isArray(payload.open_campaigns_list) ? payload.open_campaigns_list : [],
+      latest_trade_date: payload.latest_trade_date || todayStr(),
+      history_start_date: payload.history_start_date || "2026-04-17",
+      stop_loss_pct: payload.stop_loss_pct != null ? payload.stop_loss_pct : Number(settings.stop_loss_pct || 2.0),
+      note: payload.note || "",
+      tradebook_path: payload.tradebook_path || "",
+      debug_log_path: payload.debug_log_path || ""
+    };
+  } catch (_err) {
+    planStreakReport = {
+      ok: false,
+      message: "Unable to load streaks report from the local server.",
+      summary: {},
+      campaigns: [],
+      closed_campaigns: [],
+      open_campaigns_list: [],
+      latest_trade_date: todayStr(),
+      history_start_date: "2026-04-17",
+      stop_loss_pct: Number(settings.stop_loss_pct || 2.0),
+      tradebook_path: "",
+      debug_log_path: ""
+    };
+  }
+}
+
+function renderExecutionRibbon(campaigns) {
+  const items = Array.isArray(campaigns) ? campaigns.slice(-10) : [];
+  if (!items.length) return "";
+  const meta = {
+    HONORED: { fg: "#22c55e", bg: "rgba(34,197,94,.12)", ring: "rgba(34,197,94,.28)" },
+    VIOLATED: { fg: "#ef4444", bg: "rgba(239,68,68,.12)", ring: "rgba(239,68,68,.28)" },
+    OPEN: { fg: "#f59e0b", bg: "rgba(245,158,11,.12)", ring: "rgba(245,158,11,.28)" }
+  };
+  const total = items.length;
+  const honored = items.filter(item => String(item.status || "").toUpperCase() === "HONORED").length;
+  const violated = items.filter(item => String(item.status || "").toUpperCase() === "VIOLATED").length;
+  const open = items.filter(item => String(item.status || "").toUpperCase() === "OPEN").length;
+  const chips = items.map(item => {
+    const status = String(item.status || "OPEN").toUpperCase();
+    const m = meta[status] || meta.OPEN;
+    const label = escHtml(status);
+    const symbol = escHtml(item.symbol || "-");
+    const date = escHtml(fmtDateLabel(item.entry_date || item.price_date || ""));
+    return `
+      <div style="min-width:124px;flex:0 0 auto;padding:10px 12px;border-radius:14px;border:1px solid ${m.ring};background:${m.bg};color:${m.fg};box-shadow:inset 0 1px 0 rgba(255,255,255,.03)">
+        <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;font-size:12px;letter-spacing:.02em">
+          <strong style="font-size:13px">${symbol}</strong>
+          <span style="font-size:10px;font-weight:800;opacity:.9">${label}</span>
+        </div>
+        <div style="margin-top:4px;font-size:10px;opacity:.78">${date}</div>
+      </div>
+    `;
+  }).join("");
+  return `
+    <div class="streak-rail" style="margin-top:14px;padding:14px 14px 12px;border-radius:18px;border:1px solid rgba(148,163,184,.16);background:linear-gradient(180deg,rgba(10,14,25,.92),rgba(12,16,28,.72));box-shadow:inset 0 1px 0 rgba(255,255,255,.03)">
+      <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:14px;flex-wrap:wrap">
+        <div>
+          <div class="sec-title" style="margin:0 0 4px 0;border:none;padding:0">Execution ribbon</div>
+          <div class="view-note" style="margin:0">Latest saved outcomes only. Green = honored, red = violated, amber = still open.</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <span class="badge" style="background:rgba(34,197,94,.12);color:#22c55e;border:1px solid rgba(34,197,94,.25)">HONORED ${honored}</span>
+          <span class="badge" style="background:rgba(239,68,68,.12);color:#ef4444;border:1px solid rgba(239,68,68,.25)">VIOLATED ${violated}</span>
+          <span class="badge" style="background:rgba(245,158,11,.12);color:#f59e0b;border:1px solid rgba(245,158,11,.25)">OPEN ${open}</span>
+          <span class="badge" style="background:rgba(148,163,184,.10);color:#cbd5e1;border:1px solid rgba(148,163,184,.16)">TRACKED ${total}</span>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;overflow:auto;margin-top:12px;padding-bottom:2px">
+        ${chips}
+      </div>
+    </div>
+  `;
 }
 
 function renderStreakView() {
   syncChrome();
   const main = e("main");
   if (!main) return;
-  const summary = streakReport.summary || {};
-  const stop = Number(streakReport.stop_loss_pct || settings.stop_loss_pct || 2.0);
-  const closed = Array.isArray(streakReport.closed_campaigns) ? streakReport.closed_campaigns : [];
-  const open = Array.isArray(streakReport.open_campaigns_list) ? streakReport.open_campaigns_list : [];
+  const isPlanMode = currentView === "streaks";
+  const activeReport = isPlanMode ? planStreakReport : streakReport;
+  const summary = activeReport.summary || {};
+  const stop = Number(activeReport.stop_loss_pct || settings.stop_loss_pct || 2.0);
+  const closed = Array.isArray(activeReport.closed_campaigns) ? activeReport.closed_campaigns : [];
+  const open = Array.isArray(activeReport.open_campaigns_list) ? activeReport.open_campaigns_list : [];
   const totalClosed = summary.closed_campaigns != null ? summary.closed_campaigns : closed.length;
   const honorRate = summary.honor_rate != null ? summary.honor_rate : (totalClosed ? (summary.honored_campaigns || 0) / totalClosed * 100 : null);
+  const violationRate = summary.violation_rate != null ? summary.violation_rate : (totalClosed && honorRate != null ? Math.max(0, 100 - honorRate) : null);
     const actualWinRate = summary.actual_win_rate != null ? summary.actual_win_rate : summary.win_rate;
     const actualLossRate = summary.actual_loss_rate != null ? summary.actual_loss_rate : summary.loss_rate;
     const counterWinRate = summary.counterfactual_win_rate != null ? summary.counterfactual_win_rate : actualWinRate;
@@ -2001,8 +2161,11 @@ function renderStreakView() {
     const counterBeCount = summary.counterfactual_breakeven_count != null ? summary.counterfactual_breakeven_count : 0;
     const fmtRate = v => v == null ? "-" : `${Number(v).toFixed(1)}%`;
     const fmtPct = v => v == null ? "-" : `${Number(v).toFixed(2)}%`;
-    const tradebookName = String(streakReport.tradebook_path || "").split(/[\\/]/).pop() || "not found";
-    const reportAlert = streakReport.ok === false && streakReport.message ? `<div class="view-note" style="margin-top:10px;color:#ffb4b4">${escHtml(streakReport.message)}${streakReport.debug_log_path ? ` Debug log: ${escHtml(streakReport.debug_log_path)}` : ""}</div>` : "";
+  const tradebookName = String(activeReport.tradebook_path || "").split(/[\\/]/).pop() || "not found";
+  const sourceName = isPlanMode ? "saved trade-plan snapshots" : tradebookName;
+  const historyStart = activeReport.history_start_date ? fmtDateLabel(activeReport.history_start_date) : "17-04-2026";
+  const reportAlert = activeReport.ok === false && activeReport.message ? `<div class="view-note" style="margin-top:10px;color:#ffb4b4">${escHtml(activeReport.message)}${activeReport.debug_log_path ? ` Debug log: ${escHtml(activeReport.debug_log_path)}` : ""}</div>` : "";
+  const ribbonHtml = isPlanMode ? renderExecutionRibbon([...open, ...closed]) : "";
   const rowHtml = (arr, emptyMsg) => {
     const rows = [];
     let totalQty = 0;
@@ -2012,89 +2175,128 @@ function renderStreakView() {
     let totalSimReturn = 0;
     let simReturnCount = 0;
     for (const item of arr) {
-      const simQty = item.sim_qty != null ? Number(item.sim_qty) : null;
-      const buyPrice = item.entry_price != null ? Number(item.entry_price) : null;
-      const simExitPrice = item.simulated_exit_price != null ? Number(item.simulated_exit_price) : null;
-      const simValue = item.sim_value != null ? Number(item.sim_value) : null;
+      const qty = isPlanMode
+        ? (item.actual_qty != null ? Number(item.actual_qty) : (item.buy_qty != null ? Number(item.buy_qty) : null))
+        : (item.sim_qty != null ? Number(item.sim_qty) : null);
+      const buyPrice = item.buy_price != null
+        ? Number(item.buy_price)
+        : (item.entry_price != null ? Number(item.entry_price) : null);
+      const sellPrice = isPlanMode
+        ? (item.executed_sell_price != null ? Number(item.executed_sell_price) : (item.current_cmp != null ? Number(item.current_cmp) : null))
+        : (item.simulated_exit_price != null ? Number(item.simulated_exit_price) : null);
+      const value = isPlanMode
+        ? (item.actual_value != null ? Number(item.actual_value) : null)
+        : (item.sim_value != null ? Number(item.sim_value) : null);
       const actualPct = item.actual_return_pct != null ? Number(item.actual_return_pct) : (item.return_pct != null ? Number(item.return_pct) : null);
       const simPct = item.counterfactual_return_pct != null ? Number(item.counterfactual_return_pct) : null;
-      const isSimOpen = !Boolean(item.stop_touched);
-      const statusText = isSimOpen ? "OPEN" : "CLOSED";
-      const statusBadge = isSimOpen
-        ? `<span class="badge" style="background:rgba(34,197,94,.14);color:#22c55e;border:1px solid rgba(34,197,94,.30)">OPEN</span>`
-        : `<span class="badge" style="background:rgba(148,163,184,.12);color:#94a3b8;border:1px solid rgba(148,163,184,.25)">CLOSED</span>`;
-      const invested = simQty != null && buyPrice != null ? simQty * buyPrice : null;
-      const pnl = simValue != null && invested != null ? simValue - invested : null;
-      if (simQty != null) totalQty += simQty;
+      const statusValue = String(item.status || item.plan_status || (isPlanMode ? "" : (item.stop_touched ? "closed" : "open"))).toLowerCase();
+      const statusLabel = statusValue ? statusValue.toUpperCase() : (isPlanMode ? "OPEN" : (!Boolean(item.stop_touched) ? "OPEN" : "CLOSED"));
+      const statusBadge = isPlanMode
+        ? (statusLabel === "HONORED"
+          ? `<span class="badge" style="background:rgba(34,197,94,.14);color:#22c55e;border:1px solid rgba(34,197,94,.30)">${escHtml(statusLabel)}</span>`
+          : statusLabel === "OPEN"
+          ? `<span class="badge" style="background:rgba(245,158,11,.14);color:#f59e0b;border:1px solid rgba(245,158,11,.30)">${escHtml(statusLabel)}</span>`
+          : `<span class="badge" style="background:rgba(239,68,68,.14);color:#ef4444;border:1px solid rgba(239,68,68,.30)">${escHtml(statusLabel)}</span>`)
+        : (statusLabel === "CLOSED" || statusLabel === "DONE"
+          ? `<span class="badge" style="background:rgba(148,163,184,.12);color:#94a3b8;border:1px solid rgba(148,163,184,.25)">${escHtml(statusLabel)}</span>`
+          : `<span class="badge" style="background:rgba(34,197,94,.14);color:#22c55e;border:1px solid rgba(34,197,94,.30)">${escHtml(statusLabel)}</span>`);
+      const invested = qty != null && buyPrice != null ? qty * buyPrice : null;
+      const pnl = value != null && invested != null ? value - invested : null;
+      if (qty != null) totalQty += qty;
       if (invested != null) totalInvested += invested;
-      if (simValue != null) totalValue += simValue;
+      if (value != null) totalValue += value;
       if (pnl != null) totalPnl += pnl;
       if (simPct != null) {
         totalSimReturn += simPct;
         simReturnCount += 1;
       }
-      const simSellTxt = simExitPrice != null ? pricePlain(simExitPrice) : "-";
-      const valueTxt = simValue != null ? pricePlain(simValue) : "-";
+      const sellTxt = sellPrice != null ? pricePlain(sellPrice) : "-";
+      const valueTxt = value != null ? pricePlain(value) : "-";
       const pnlTxt = pnl != null ? `${pnl >= 0 ? "+" : "-"}${pricePlain(Math.abs(pnl))}` : "-";
-      rows.push(`<tr><td>${rows.length + 1}</td><td><strong>${escHtml(item.symbol || "-")}</strong></td><td>${escHtml(fmtDateLabel(item.entry_date || item.start_time || ""))}</td><td>${simQty != null ? simQty : "-"}</td><td>${buyPrice != null ? pricePlain(buyPrice) : "-"}</td><td>${simSellTxt}</td><td>${valueTxt}</td><td class="t-pl ${pnl != null && pnl >= 0 ? "pos" : "neg"}">${pnlTxt}</td><td class="t-pl ${actualPct != null && actualPct >= 0 ? "pos" : "neg"}">${actualPct != null ? `${actualPct >= 0 ? "+" : ""}${actualPct.toFixed(2)}%` : "-"}</td><td class="t-pl ${simPct != null && simPct >= 0 ? "pos" : "neg"}">${simPct != null ? `${simPct >= 0 ? "+" : ""}${simPct.toFixed(2)}%` : "-"}</td><td>${statusBadge}</td></tr>`);
+      const pctCell = isPlanMode
+        ? `<td class="t-pl ${actualPct != null && actualPct >= 0 ? "pos" : "neg"}">${actualPct != null ? `${actualPct >= 0 ? "+" : ""}${actualPct.toFixed(2)}%` : "-"}</td>`
+        : `<td class="t-pl ${actualPct != null && actualPct >= 0 ? "pos" : "neg"}">${actualPct != null ? `${actualPct >= 0 ? "+" : ""}${actualPct.toFixed(2)}%` : "-"}</td><td class="t-pl ${simPct != null && simPct >= 0 ? "pos" : "neg"}">${simPct != null ? `${simPct >= 0 ? "+" : ""}${simPct.toFixed(2)}%` : "-"}</td>`;
+      rows.push(`<tr><td>${rows.length + 1}</td><td><strong>${escHtml(item.symbol || "-")}</strong></td><td>${escHtml(fmtDateLabel(item.entry_date || item.start_time || ""))}</td><td>${qty != null ? qty : "-"}</td><td>${buyPrice != null ? pricePlain(buyPrice) : "-"}</td><td>${sellTxt}</td><td>${valueTxt}</td><td class="t-pl ${pnl != null && pnl >= 0 ? "pos" : "neg"}">${pnlTxt}</td>${pctCell}<td>${statusBadge}</td></tr>`);
     }
     const totalSimAvg = simReturnCount ? totalSimReturn / simReturnCount : null;
     const totalPnlTxt = `${totalPnl >= 0 ? "+" : "-"}${pricePlain(Math.abs(totalPnl))}`;
-    const totalRow = rows.length ? `<tr class="total-row"><td></td><td><strong>TOTAL</strong></td><td></td><td>${totalQty || "-"}</td><td>${totalInvested ? pricePlain(totalInvested / Math.max(totalQty, 1)) : "-"}</td><td></td><td>${pricePlain(totalValue)}</td><td class="t-pl ${totalPnl >= 0 ? "pos" : "neg"}">${totalPnlTxt}</td><td></td><td class="t-pl ${totalSimAvg != null && totalSimAvg >= 0 ? "pos" : "neg"}">${totalSimAvg != null ? `${totalSimAvg >= 0 ? "+" : ""}${totalSimAvg.toFixed(2)}%` : "-"}</td><td></td></tr>` : "";
+    const totalRow = rows.length
+      ? isPlanMode
+        ? `<tr class="total-row"><td></td><td><strong>TOTAL</strong></td><td></td><td>${totalQty || "-"}</td><td>${totalInvested ? pricePlain(totalInvested / Math.max(totalQty, 1)) : "-"}</td><td></td><td>${pricePlain(totalValue)}</td><td class="t-pl ${totalPnl >= 0 ? "pos" : "neg"}">${totalPnlTxt}</td><td></td><td></td></tr>`
+        : `<tr class="total-row"><td></td><td><strong>TOTAL</strong></td><td></td><td>${totalQty || "-"}</td><td>${totalInvested ? pricePlain(totalInvested / Math.max(totalQty, 1)) : "-"}</td><td></td><td>${pricePlain(totalValue)}</td><td class="t-pl ${totalPnl >= 0 ? "pos" : "neg"}">${totalPnlTxt}</td><td></td><td class="t-pl ${totalSimAvg != null && totalSimAvg >= 0 ? "pos" : "neg"}">${totalSimAvg != null ? `${totalSimAvg >= 0 ? "+" : ""}${totalSimAvg.toFixed(2)}%` : "-"}</td><td></td></tr>`
+      : "";
     return { body: rows.join(""), totalRow };
   };
-  const closedTable = rowHtml(closed, "No closed campaigns found in the latest tradebook.");
-  const openTable = rowHtml(open, "No open campaigns were present in the latest tradebook.");
+  const closedEmptyMsg = isPlanMode ? "No honored campaigns were found in the saved trade-plan history window." : "No closed campaigns found in the latest tradebook.";
+  const openEmptyMsg = isPlanMode ? "No violated campaigns were present in the saved trade-plan history window." : "No open campaigns were present in the latest tradebook.";
+  const closedTable = rowHtml(closed, closedEmptyMsg);
+  const openTable = rowHtml(open, openEmptyMsg);
+  const tableCols = isPlanMode ? 10 : 11;
+  const tableHeader = isPlanMode
+    ? "<tr><th>#</th><th>Symbol</th><th>Entry</th><th>Qty</th><th>Buy</th><th>Sell / CMP</th><th>Value</th><th>P/L</th><th>Actual %</th><th>Status</th></tr>"
+    : "<tr><th>#</th><th>Symbol</th><th>Entry</th><th>Sim qty</th><th>Buy</th><th>Sim sell / CMP</th><th>Sim value</th><th>P/L</th><th>Actual %</th><th>Sim %</th><th>Status</th></tr>";
   main.innerHTML = `
     <section class="hero">
-      <h2>Simulation</h2>
-      <p>Measures whether each closed campaign stayed inside your selected stop loss. This is percentage-only and focuses on discipline, not rupees.</p>
+      <h2>${isPlanMode ? "Streaks" : "Simulation"}</h2>
+      <p>${isPlanMode ? "Tracks real-life stop-loss honoring from your saved execution snapshots only. This is local, fast, and uses the entries already stored on your machine." : "Measures whether each closed campaign stayed inside your selected stop loss. This is percentage-only and focuses on discipline, not rupees."}</p>
     </section>
     <section class="settings-card">
-      <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">Latest snapshot</div>
-        <div class="view-note">Stop loss used for this analysis: ${pct(stop)}. Latest tradebook: ${escHtml(tradebookName)}. The table compares actual live return with the strategy simulation: day 1 checks intraday after the actual buy time, day 2 checks the daily chart close against the original 2% stop, and from day 3 onward the stop trails to breakeven or the prior 5-day EMA, whichever is higher.</div>
+      <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">${isPlanMode ? "Latest execution snapshot" : "Latest snapshot"}</div>
+        <div class="view-note">${isPlanMode ? `History window: ${escHtml(historyStart)} onward. Latest snapshot date: ${escHtml(activeReport.latest_trade_date || "")}. The table compares stored execution fields only. No Kite or CSV lookup is used here.` : `Stop loss used for this analysis: ${pct(stop)}. Latest tradebook: ${escHtml(tradebookName)}. The table compares actual live return with the stop-plan path: day 1 checks intraday after the actual buy time, day 2 checks the daily chart close against the original 2% stop, and from day 3 onward the stop trails to breakeven or the prior 5-day EMA, whichever is higher.`}</div>
       ${reportAlert}
+      ${ribbonHtml}
       <div class="tracker-grid" style="margin-top:14px">
-        <div class="metric-card"><div class="dash-k">Closed campaigns</div><div class="metric-big">${totalClosed || 0}</div><div class="metric-copy">Round-trip trades closed in the latest tradebook.</div></div>
-        <div class="metric-card"><div class="dash-k">Stop held at ${pct(stop)}</div><div class="metric-big">${summary.honored_campaigns || 0}</div><div class="metric-copy">${fmtRate(honorRate)} of closed campaigns never touched the stop intraday.</div></div>
-          <div class="metric-card"><div class="dash-k">Longest simulation streak</div><div class="metric-big">${summary.longest_honor_streak || 0}</div><div class="metric-copy">Longest consecutive run of trades that never touched the stop.</div></div>
-          <div class="metric-card"><div class="dash-k">Current simulation streak</div><div class="metric-big">${summary.current_honor_streak || 0}</div><div class="metric-copy">Current run remains intact if the latest live marks stay above the stop.</div></div>
-          <div class="metric-card"><div class="dash-k">Actual win / loss</div><div class="metric-big">${fmtRate(actualWinRate)} / ${fmtRate(actualLossRate)}</div><div class="metric-copy">${summary.actual_win_count || 0} wins, ${summary.actual_loss_count || 0} losses, ${actualBeCount} breakevens.</div></div>
-          <div class="metric-card"><div class="dash-k">Strategy sim</div><div class="metric-big">${fmtRate(counterWinRate)} / ${fmtRate(counterLossRate)}</div><div class="metric-copy">${summary.stop_touched_campaigns || 0} campaigns touched the stop in this sample, ${counterBeCount} ended at breakeven.</div></div>
-          <div class="metric-card"><div class="dash-k">Avg gain / loss</div><div class="metric-big">${fmtPct(actualAvgGain)} / ${fmtPct(actualAvgLoss)}</div><div class="metric-copy">Closed campaigns only, based on the live tradebook exits.</div></div>
-          <div class="metric-card"><div class="dash-k">Sim avg gain / loss</div><div class="metric-big">${fmtPct(counterAvgGain)} / ${fmtPct(counterAvgLoss)}</div><div class="metric-copy">Closed campaigns only, based on the simulated stop-plan exits.</div></div>
+        <div class="metric-card"><div class="dash-k">${isPlanMode ? "Tracked executions" : "Closed campaigns"}</div><div class="metric-big">${totalClosed || 0}</div><div class="metric-copy">${isPlanMode ? "Saved execution campaigns found in the history window." : "Round-trip trades closed in the latest tradebook."}</div></div>
+        <div class="metric-card"><div class="dash-k">${isPlanMode ? "Honored" : `Stop held at ${pct(stop)}`}</div><div class="metric-big">${summary.honored_campaigns || 0}</div><div class="metric-copy">${isPlanMode ? `${fmtRate(honorRate)} honored, ${fmtRate(violationRate)} violated.` : `${fmtRate(honorRate)} of closed campaigns never touched the stop intraday.`}</div></div>
+          <div class="metric-card"><div class="dash-k">${isPlanMode ? "Longest honoring streak" : "Longest simulation streak"}</div><div class="metric-big">${summary.longest_honor_streak || 0}</div><div class="metric-copy">Longest consecutive run of trades that never touched the stop.</div></div>
+          <div class="metric-card"><div class="dash-k">${isPlanMode ? "Current honoring streak" : "Current simulation streak"}</div><div class="metric-big">${summary.current_honor_streak || 0}</div><div class="metric-copy">Current run remains intact if the latest live marks stay above the stop.</div></div>
+          <div class="metric-card"><div class="dash-k">${isPlanMode ? "Execution win / loss" : "Actual win / loss"}</div><div class="metric-big">${fmtRate(actualWinRate)} / ${fmtRate(actualLossRate)}</div><div class="metric-copy">${summary.actual_win_count || 0} wins, ${summary.actual_loss_count || 0} losses, ${actualBeCount} breakevens.</div></div>
+          <div class="metric-card"><div class="dash-k">${isPlanMode ? "Violations" : "If stop held"}</div><div class="metric-big">${isPlanMode ? (summary.violated_campaigns || 0) : `${fmtRate(counterWinRate)} / ${fmtRate(counterLossRate)}`}</div><div class="metric-copy">${isPlanMode ? `${summary.violated_campaigns || 0} campaigns are still not honored in the saved snapshots.` : `${summary.stop_touched_campaigns || 0} campaigns touched the stop in this sample, ${counterBeCount} ended at breakeven.`}</div></div>
+          <div class="metric-card"><div class="dash-k">${isPlanMode ? "Execution avg gain / loss" : "Avg gain / loss"}</div><div class="metric-big">${fmtPct(actualAvgGain)} / ${fmtPct(actualAvgLoss)}</div><div class="metric-copy">Based on the saved execution snapshots.</div></div>
+          <div class="metric-card"><div class="dash-k">${isPlanMode ? "Best / worst" : "Sim avg gain / loss"}</div><div class="metric-big">${isPlanMode ? `${fmtPct(summary.best_return_pct)} / ${fmtPct(summary.worst_return_pct)}` : `${fmtPct(counterAvgGain)} / ${fmtPct(counterAvgLoss)}`}</div><div class="metric-copy">${isPlanMode ? "Based on the latest stored execution values." : "Closed campaigns only, based on the simulated stop-plan exits."}</div></div>
         </div>
-      <div class="view-note" style="margin-top:12px">${escHtml(streakReport.note || "No additional note.")}</div>
+      <div class="view-note" style="margin-top:12px">${escHtml(activeReport.note || "No additional note.")}</div>
     </section>
       <section class="settings-card" style="margin-top:14px">
-        <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">Open campaigns</div>
-        <div class="view-note">These are still open in the latest tradebook. Their return is marked to the latest bhav close when available.</div>
+        <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">${isPlanMode ? "Open campaigns" : "Open campaigns"}</div>
+        <div class="view-note">${isPlanMode ? "These saved snapshots are still open. The table shows the latest stored execution state only." : "These are still open in the latest tradebook. Their return is marked to the latest bhav close when available."}</div>
         <div style="overflow:auto;margin-top:12px">
             <table class="ttbl">
-            <thead><tr><th>#</th><th>Symbol</th><th>Entry</th><th>Sim qty</th><th>Buy</th><th>Sim sell / CMP</th><th>Sim value</th><th>P/L</th><th>Actual %</th><th>Sim %</th><th>Status</th></tr></thead>
-            <tbody>${openTable.body || `<tr><td colspan="11"><div class="view-note">${escHtml("No open campaigns were present in the latest tradebook.")}</div></td></tr>`}</tbody>
+            <thead>${tableHeader}</thead>
+            <tbody>${openTable.body || `<tr><td colspan="${tableCols}"><div class="view-note">${escHtml(openEmptyMsg)}</div></td></tr>`}</tbody>
             ${openTable.totalRow ? `<tfoot>${openTable.totalRow}</tfoot>` : ""}
             </table>
           </div>
       </section>
       <section class="settings-card" style="margin-top:14px">
-        <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">Closed campaigns</div>
-        <div class="view-note">Each row is one round-trip campaign grouped by symbol and execution order. Actual return is the live trade outcome; the simulation column shows what the trade would have returned if your stop plan had been followed against real market data after the buy.</div>
+        <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">${isPlanMode ? "Honored campaigns" : "Closed campaigns"}</div>
+        <div class="view-note">${isPlanMode ? "Each row is one saved execution campaign from the history window. HONORED means the exit was at or below the active stop; VIOLATED means it exited above the stop." : "Each row is one round-trip campaign grouped by symbol and execution order. Actual return is the live trade outcome; the stop-plan column shows what the trade would have returned if your stop plan had been followed against real market data after the buy."}</div>
         <div style="overflow:auto;margin-top:12px">
           <table class="ttbl">
-            <thead><tr><th>#</th><th>Symbol</th><th>Entry</th><th>Sim qty</th><th>Buy</th><th>Sim sell / CMP</th><th>Sim value</th><th>P/L</th><th>Actual %</th><th>Sim %</th><th>Status</th></tr></thead>
-            <tbody>${closedTable.body || `<tr><td colspan="11"><div class="view-note">${escHtml("No closed campaigns found in the latest tradebook.")}</div></td></tr>`}</tbody>
+            <thead>${tableHeader}</thead>
+            <tbody>${closedTable.body || `<tr><td colspan="${tableCols}"><div class="view-note">${escHtml(closedEmptyMsg)}</div></td></tr>`}</tbody>
             ${closedTable.totalRow ? `<tfoot>${closedTable.totalRow}</tfoot>` : ""}
           </table>
         </div>
       </section>
     `;
-  }
+}
 
-async function goStreak() {
+function renderPlanStreakView() {
+  renderStreakView();
+}
+
+async function goSimulation() {
   await flushPendingSave();
   currentView = "simulation";
   await loadStreakReport();
+  renderApp();
+}
+
+async function goStreaks() {
+  await flushPendingSave();
+  currentView = "streaks";
+  await loadPlanStreakReport();
   renderApp();
 }
 
@@ -2116,6 +2318,8 @@ function buildCard(p, num) {
   const slOrderNote = slOrder
     ? `Kite order preview: qty ${slOrder.qty}, trigger Rs ${priceSL(slOrder.trigger)}, limit Rs ${priceSL(slOrder.limit)}`
     : "Set a trail override to enable the Kite SL push button.";
+  const compactNumStyle = 'style="max-width:118px;width:100%"';
+  const compactTrimStyle = 'style="max-width:148px;width:100%"';
   const qty = carriedQty != null ? carriedQty : (p._qty || 0);
   const splits = [Math.ceil(qty * 0.33), Math.ceil(qty * 0.25), Math.floor(qty * 0.25), Math.floor(qty * 0.17)];
   const splitHtml = `<div class="qty-splits"><div class="qs-box"><div class="qs-lbl">T1 - lock</div><div class="qs-val" id="sp0-${p.id}">${qty > 0 ? splits[0] : "-"}</div><div class="qs-pct">33%</div></div><div class="qs-box"><div class="qs-lbl">T2 - target</div><div class="qs-val" id="sp1-${p.id}">${qty > 0 ? splits[1] : "-"}</div><div class="qs-pct">25%</div></div><div class="qs-box"><div class="qs-lbl">T3 - run</div><div class="qs-val" id="sp2-${p.id}">${qty > 0 ? splits[2] : "-"}</div><div class="qs-pct">25%</div></div><div class="qs-box"><div class="qs-lbl">T4 - runner</div><div class="qs-val" id="sp3-${p.id}">${qty > 0 ? splits[3] : "-"}</div><div class="qs-pct">17%</div></div></div>`;
@@ -2127,7 +2331,7 @@ function buildCard(p, num) {
     const sug = t._sug ? "Rs " + t._sug : (i === 1 ? "7% target" : "-");
     const pnlTxt = t._pnl != null ? (t._pnl >= 0 ? "+" : "-") + "Rs " + fi(t._pnl) : "-";
     running -= (t.done && t.sq ? t.sq : 0);
-    trimRows += `<tr id="tr-${i}-${p.id}" class="${t.done ? "t-done" : ""}"><td><span class="t-label">T${i + 1}</span><span class="t-pct" style="color:${trimColors[i]}">${trimLabels[i]}</span></td><td><span id="ts${i}-${p.id}" class="${t._sug ? "t-target" : "t-na"}">${sug}</span></td><td><input type="number" class="t-in" placeholder="Rs sell" value="${t.ap != null ? t.ap : ""}" oninput="updTrim('${p.id}',${i},'ap',parseFloat(this.value)||null)"></td><td><input type="number" class="t-in" placeholder="qty" value="${t.sq != null ? t.sq : ""}" oninput="updTrim('${p.id}',${i},'sq',parseInt(this.value)||null)"><span class="t-rem" id="tr${i}-${p.id}">${carriedQty != null ? running + " rem" : ""}</span></td><td><span id="tp${i}-${p.id}" class="${t._pnl != null ? "t-pl " + (t._pnl >= 0 ? "pos" : "neg") : "t-pl"}">${pnlTxt}</span></td><td style="text-align:center"><input type="checkbox" class="t-chk" ${t.done ? "checked" : ""} onchange="updTrim('${p.id}',${i},'done',this.checked)"></td></tr>`;
+    trimRows += `<tr id="tr-${i}-${p.id}" class="${t.done ? "t-done" : ""}"><td><span class="t-label">T${i + 1}</span><span class="t-pct" style="color:${trimColors[i]}">${trimLabels[i]}</span></td><td><input type="date" class="t-in t-date" ${compactTrimStyle} value="${t.dt || ""}" oninput="updTrim('${p.id}',${i},'dt',this.value)"></td><td><span id="ts${i}-${p.id}" class="${t._sug ? "t-target" : "t-na"}">${sug}</span></td><td><input type="number" class="t-in" placeholder="Rs sell" ${compactTrimStyle} value="${t.ap != null ? t.ap : ""}" oninput="updTrim('${p.id}',${i},'ap',parseFloat(this.value)||null)"></td><td><input type="number" class="t-in" placeholder="qty" ${compactTrimStyle} value="${t.sq != null ? t.sq : ""}" oninput="updTrim('${p.id}',${i},'sq',parseInt(this.value)||null)"><span class="t-rem" id="tr${i}-${p.id}">${carriedQty != null ? running + " rem" : ""}</span></td><td><span id="tp${i}-${p.id}" class="${t._pnl != null ? "t-pl " + (t._pnl >= 0 ? "pos" : "neg") : "t-pl"}">${pnlTxt}</span></td><td style="text-align:center"><input type="checkbox" class="t-chk" ${t.done ? "checked" : ""} onchange="updTrim('${p.id}',${i},'done',this.checked)"></td></tr>`;
   });
   const hasTrim = p.trims.some(t => t.done);
   const net = (p._realPnl || 0) + (p._openPnl || 0);
@@ -2163,7 +2367,7 @@ function buildCard(p, num) {
           <div class="field"><div class="flabel">Intraday SL <span style="color:var(--amb);font-size:9px">Rs</span></div><input type="number" class="fin num" placeholder="set on entry" value="${p.intraSL != null ? p.intraSL : ""}" oninput="upd('${p.id}','intraSL',parseFloat(this.value)||null)"></div>
           <div class="field"><div class="flabel">Risk willing <span class="flabel-tag">Rs</span></div><input type="number" class="fin num" placeholder="5000" value="${p.riskAmount != null ? p.riskAmount : ""}" oninput="upd('${p.id}','riskAmount',parseFloat(this.value)||null)"></div>
         </div>
-        <div class="g4" style="margin-top:10px">
+        <div class="g4" style="margin-top:10px;gap:14px;align-items:start;">
           <div class="field"><div class="flabel">Sizing math <span class="flabel-tag">computed</span></div><div class="fin num" id="rps-val-${p.id}" style="color:var(--t2);font-weight:600;cursor:default;">${p._rps ? p._rps : "-"}</div></div>
           <div class="field"><div class="flabel">Planned qty <span class="flabel-tag">computed</span></div><div class="fcomp" id="qty-${p.id}" style="color:${p._qty > 0 ? "var(--green)" : "var(--t3)"};">${p._qty > 0 ? p._qty : "-"}</div></div>
           <div class="field"><div class="flabel">Intraday qty <span class="flabel-tag">manual</span></div><input type="number" class="fin num" placeholder="qty" value="${p.intraQty != null ? p.intraQty : (p._suggestedIntraQty != null ? p._suggestedIntraQty : "")}" oninput="upd('${p.id}','intraQty',parseInt(this.value)||0)"></div>
@@ -2172,22 +2376,23 @@ function buildCard(p, num) {
       </div>
       <div class="div"></div>
         <div class="sec-title">Execution <span class="sec-note">actual filled qty is split 30% intraday SL and 70% original SL</span><button class="btn-sec" type="button" style="padding:3px 8px;font-size:10px" onclick="event.stopPropagation();clearExecutionFields('${p.id}')">Clear exec</button></div>
-        <div class="g4">
-          <div class="field"><div class="flabel">OV QTY</div><input type="number" class="fin num" placeholder="qty" value="${p.overnightQty != null ? p.overnightQty : ""}" oninput="upd('${p.id}','overnightQty',parseInt(this.value)||null)"></div>
-          <div class="field"><div class="flabel">OV PRICE</div><input type="number" class="fin num en-f" placeholder="overnight fill" value="${p.overnightEntry != null ? p.overnightEntry : ""}" oninput="upd('${p.id}','overnightEntry',parseFloat(this.value)||null)"></div>
-          <div class="field"><div class="flabel">QTY</div><input type="number" class="fin num" placeholder="qty" value="${p.actualQty != null ? p.actualQty : ""}" oninput="upd('${p.id}','actualQty',parseInt(this.value)||null)"></div>
-          <div class="field"><div class="flabel">PRICE</div><input type="number" class="fin num en-f" placeholder="same-day fill" value="${p.actualEntry != null ? p.actualEntry : ""}" oninput="upd('${p.id}','actualEntry',parseFloat(this.value)||null)"></div>
+        <div class="g4" style="grid-template-columns:repeat(5,minmax(0,1fr));gap:14px;align-items:start;">
+          <div class="field"><div class="flabel">OV QTY</div><input type="number" class="fin num" ${compactNumStyle} placeholder="qty" value="${p.overnightQty != null ? p.overnightQty : ""}" oninput="upd('${p.id}','overnightQty',parseInt(this.value)||null)"></div>
+          <div class="field"><div class="flabel">OV PRICE</div><input type="number" class="fin num en-f" ${compactNumStyle} placeholder="overnight fill" value="${p.overnightEntry != null ? p.overnightEntry : ""}" oninput="upd('${p.id}','overnightEntry',parseFloat(this.value)||null)"></div>
+          <div class="field"><div class="flabel">OV SL</div><input type="number" class="fin num sl-f" ${compactNumStyle} placeholder="overnight sl" value="${p.overnightSL != null ? p.overnightSL : ""}" oninput="upd('${p.id}','overnightSL',parseFloat(this.value)||null)"></div>
+          <div class="field"><div class="flabel">QTY</div><input type="number" class="fin num" ${compactNumStyle} placeholder="qty" value="${p.actualQty != null ? p.actualQty : ""}" oninput="upd('${p.id}','actualQty',parseInt(this.value)||null)"></div>
+          <div class="field"><div class="flabel">PRICE</div><input type="number" class="fin num en-f" ${compactNumStyle} placeholder="same-day fill" value="${p.actualEntry != null ? p.actualEntry : ""}" oninput="upd('${p.id}','actualEntry',parseFloat(this.value)||null)"></div>
         </div>
-        <div class="g4" style="margin-top:10px">
+        <div class="g4" style="margin-top:10px;gap:14px;align-items:start;">
           <div class="field"><div class="flabel">TOTAL QTY <span class="flabel-tag">computed</span></div><div class="fcomp" id="totq-${p.id}" style="font-size:20px;color:var(--t1);">${getTotalQty(p) != null ? getTotalQty(p) : "-"}</div></div>
           <div class="field"><div class="flabel">ENTRY PRICE <span class="flabel-tag">weighted avg</span></div><div class="fcomp" id="epx-${p.id}" style="font-size:20px;color:var(--t1);">${entry != null ? price2(entry) : "-"}</div></div>
-          <div class="field"><div class="flabel">ENTRY DATE</div><input type="date" class="fin" value="${p.entryDate || ""}" onchange="upd('${p.id}','entryDate',this.value)"></div>
+          <div class="field"><div class="flabel">ENTRY DATE</div><input type="date" class="fin" ${compactTrimStyle} value="${p.entryDate || ""}" onchange="upd('${p.id}','entryDate',this.value)"></div>
           <div class="field"><div class="flabel">EXEC RISK <span class="flabel-tag">qty x sl gap</span></div><div class="fcomp" id="erisk-${p.id}" style="font-size:20px;color:${getExecutionRisk(p) > 0 ? "var(--red)" : "var(--t1)"};">${getExecutionRisk(p) != null ? price2(getExecutionRisk(p)) : "-"}</div></div>
         </div>
         <div style="margin-top:10px;"><div style="font-size:10px;color:var(--t3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">Suggested 4-part split</div>${splitHtml}</div>
       </div>
       <div class="div"></div>
-      <div class="sec"><div class="sec-title">Trim plan &amp; execution <span class="sec-note">enter actual sell Rs + qty after each trim</span></div><table class="ttbl"><thead><tr><th>Trim</th><th>Suggested Rs</th><th>Actual sell Rs</th><th>Qty sold</th><th>P&amp;L</th><th class="c">Done</th></tr></thead><tbody>${trimRows}</tbody></table>${pnlSumHtml}</div>
+      <div class="sec"><div class="sec-title">Trim plan &amp; execution <span class="sec-note">enter trim date, actual sell Rs + qty after each trim</span></div><table class="ttbl"><thead><tr><th>Trim</th><th>Date</th><th>Suggested Rs</th><th>Actual sell Rs</th><th>Qty sold</th><th>P&amp;L</th><th class="c">Done</th></tr></thead><tbody>${trimRows}</tbody></table>${pnlSumHtml}</div>
       <div class="div"></div>
       <div class="trail-box">
         <div class="trail-hdr"><span class="trail-title">Trail stop loss</span><span class="trail-days" id="days-${p.id}">${p._days != null ? "Day " + p._days + " in trade" : ""}</span></div>
@@ -2195,7 +2400,7 @@ function buildCard(p, num) {
           <div><div class="tc-label">Initial SL</div><div class="tc-val sl-c"><strong>Rs ${priceSL(p.planSL)}</strong></div></div>
           <div><div class="tc-label">Current SL</div><div class="tc-val sl-c" id="tsl-${p.id}"><strong>Rs ${priceSL(p._currentSL)}</strong></div></div>
           <div><div class="tc-label">Breakeven</div><div class="tc-val ${p.movedBE ? "ok-c" : ""}" id="bec-${p.id}" style="display:${p.movedBE ? "block" : "none"}">${p.movedBE ? "Rs " + priceSL(entry || p.actualEntry || p.overnightEntry) : ""}</div><div class="tc-val" ${p.movedBE ? 'style="display:none"' : ""}>${(entry || p.actualEntry || p.overnightEntry) ? "Rs " + priceSL(entry || p.actualEntry || p.overnightEntry) : "-"}</div></div>
-          <div><div class="tc-label">Override SL</div><div style="display:flex;gap:6px;align-items:center;margin-top:4px;flex-wrap:wrap"><input type="number" class="t-in" id="toi-${p.id}" style="width:90px" placeholder="manual" value="${p.trailOverride != null ? p.trailOverride : ""}" oninput="upd('${p.id}','trailOverride',parseFloat(this.value)||null)"><button class="be-btn" type="button" onclick="updateTrailSL('${p.id}')">Update SL</button>${slOrderButton}</div></div>
+          <div><div class="tc-label">Override SL</div><div style="display:flex;gap:6px;align-items:center;margin-top:4px;flex-wrap:wrap"><input type="number" class="t-in" id="toi-${p.id}" style="width:92px" placeholder="manual" value="${p.trailOverride != null ? p.trailOverride : ""}" oninput="upd('${p.id}','trailOverride',parseFloat(this.value)||null)"><button class="be-btn" type="button" onclick="updateTrailSL('${p.id}')">Update SL</button>${slOrderButton}</div></div>
         </div>
         <div class="view-note" style="margin-top:8px">${slOrderNote}<br>${publicIpNote}</div>
         ${beBanner}
@@ -2210,6 +2415,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   planDate = todayStr();
   if (e("plan-date")) e("plan-date").value = planDate;
   ensureSimulationNav();
+  ensureStreaksNav();
   ensurePortfolioNav();
   await loadStorageInfo();
   await loadDashboard();
