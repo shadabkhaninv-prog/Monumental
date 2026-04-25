@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Kite Trade Helper Overlay",
+  "version": "1.0.0",
+  "description": "Shows a local helper banner on Kite Zerodha pages.",
+  "permissions": [],
+  "host_permissions": [
+    "https://kite.zerodha.com/*",
+    "http://127.0.0.1:8765/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://kite.zerodha.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

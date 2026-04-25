@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import importlib
 import argparse
 import copy
 import json
 import re
-from datetime import date, datetime
+import urllib.error
+import urllib.request
+from datetime import date, datetime, time as dt_time
 from difflib import get_close_matches
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -24,10 +27,36 @@ DB_CONFIG = {
 }
 
 DEFAULT_HTML_PATH = Path(r"C:\Users\shada\Downloads\trade_plan_1.html")
+PUBLIC_IP_PROBES = (
+    "https://api.ipify.org?format=json",
+    "https://checkip.amazonaws.com",
+)
 
 
 def normalize_symbol(value: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", (value or "").strip().upper())
+
+
+def fetch_public_ip(timeout: float = 4.0) -> Optional[str]:
+    for url in PUBLIC_IP_PROBES:
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as response:
+                raw = response.read().decode("utf-8", errors="ignore").strip()
+            if not raw:
+                continue
+            if raw.startswith("{"):
+                try:
+                    payload = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                ip = str(payload.get("ip") or "").strip()
+            else:
+                ip = raw.splitlines()[0].strip()
+            if ip:
+                return ip
+        except Exception:
+            continue
+    return None
 
 
 def default_checklist_groups() -> List[Dict[str, object]]:
@@ -514,6 +543,7 @@ class TradePlanStore:
         settings = self.load_settings()
 
         open_positions: Dict[str, Dict[str, object]] = {}
+        closed_keys: set[str] = set()
         planning_for_day: List[Dict[str, object]] = []
         exited_today_positions: List[Dict[str, object]] = []
 
@@ -526,12 +556,18 @@ class TradePlanStore:
                         position["entryDate"] = item_date
                     key = self._live_position_key(position, item_date)
                     is_closed = self._remaining_qty(position) == 0 or position.get("_status") == "closed"
+                    # Once a position key has been observed as closed, do not let a later stale snapshot
+                    # reopen it on a future day.
+                    if key in closed_keys and not is_closed:
+                        continue
                     if item_date == plan_date and is_closed:
                         open_positions.pop(key, None)
                         exited_today_positions.append(position)
+                        closed_keys.add(key)
                         continue
                     if is_closed:
                         open_positions.pop(key, None)
+                        closed_keys.add(key)
                         continue
                     open_positions[key] = position
                 elif item_date == plan_date and self._is_meaningful_position(position):
@@ -764,6 +800,279 @@ class TradePlanHandler(BaseHTTPRequestHandler):
     repo: BhavRepository
     store: TradePlanStore
 
+    def _kite_scan_targets(self, body: dict) -> dict:
+        raw_date = str(body.get("date") or "").strip()
+        if raw_date:
+            try:
+                target_date = datetime.strptime(raw_date, "%Y-%m-%d").date()
+            except ValueError as exc:
+                raise ValueError("Missing or invalid date.") from exc
+        else:
+            target_date = datetime.now().date()
+
+        payload = self.store.load_plan(target_date.isoformat())
+        positions = payload.get("positions", []) if isinstance(payload, dict) else []
+        targets: List[Dict[str, object]] = []
+        for position in positions:
+            if not isinstance(position, dict):
+                continue
+            symbol = str(position.get("symbol") or "").strip().upper()
+            status = str(position.get("_status") or "").strip().lower()
+            qty = 0
+            try:
+                qty = int(float(position.get("_rem") if position.get("_rem") is not None else 0))
+            except Exception:
+                qty = 0
+
+            if not symbol:
+                continue
+            if status == "closed":
+                continue
+            is_planned = status in {"planning", "planned"}
+            is_carried = status in {"partial", "active", "overnight"} or qty > 0
+            if not (is_planned or is_carried):
+                continue
+
+            trail = position.get("trailOverride")
+            try:
+                trail_value = float(trail)
+            except (TypeError, ValueError):
+                trail_value = 0.0
+
+            targets.append(
+                {
+                    "symbol": symbol,
+                    "status": status,
+                }
+            )
+
+        return {
+            "ok": True,
+            "date": target_date.isoformat(),
+            "targets": targets,
+        }
+
+    def _opening_bar_guard(self, body: dict) -> dict:
+        kite_mod = importlib.import_module("place_kite_stop_loss_orders")
+
+        raw_date = str(body.get("date") or "").strip()
+        if raw_date:
+            try:
+                target_date = datetime.strptime(raw_date, "%Y-%m-%d").date()
+            except ValueError as exc:
+                raise ValueError("Missing or invalid date.") from exc
+        else:
+            target_date = datetime.now().date()
+
+        raw_token = body.get("instrument_token")
+        try:
+            instrument_token = int(raw_token)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Missing or invalid instrument token.") from exc
+
+        symbol = str(body.get("symbol") or "").strip().upper()
+        interval = str(body.get("interval") or "5minute").strip() or "5minute"
+        threshold = float(body.get("threshold_pct") or 2.0)
+        token_file = Path(body.get("token_file") or kite_mod.DEFAULT_TOKEN_FILE)
+        kite = kite_mod.get_kite_client(token_file)
+
+        from_dt = datetime.combine(target_date, dt_time(9, 15))
+        to_dt = datetime.combine(target_date, dt_time(9, 20))
+        rows = kite.historical_data(
+            instrument_token=instrument_token,
+            from_date=from_dt,
+            to_date=to_dt,
+            interval=interval,
+            continuous=False,
+            oi=False,
+        )
+        if not rows:
+            return {
+                "ok": False,
+                "reason": "no_candles",
+                "symbol": symbol,
+                "instrument_token": instrument_token,
+                "date": target_date.isoformat(),
+                "interval": interval,
+                "threshold_pct": threshold,
+            }
+
+        first = rows[0]
+        candle_time = first.get("date")
+        open_value = float(first.get("open") or 0)
+        high_value = float(first.get("high") or 0)
+        low_value = float(first.get("low") or 0)
+        close_value = float(first.get("close") or 0)
+        if not open_value:
+            raise ValueError("Opening candle has no open price.")
+
+        range_pct = ((high_value - low_value) / open_value) * 100.0
+        body_pct = (abs(close_value - open_value) / open_value) * 100.0
+        session_label = candle_time.isoformat() if hasattr(candle_time, "isoformat") else str(candle_time)
+        return {
+            "ok": True,
+            "symbol": symbol,
+            "instrument_token": instrument_token,
+            "date": target_date.isoformat(),
+            "interval": interval,
+            "threshold_pct": threshold,
+            "opening": {
+                "time": session_label,
+                "open": open_value,
+                "high": high_value,
+                "low": low_value,
+                "close": close_value,
+                "rangePct": round(range_pct, 2),
+                "bodyPct": round(body_pct, 2),
+            },
+        }
+
+    def _place_kite_sl_order(self, body: dict) -> dict:
+        kite_mod = importlib.import_module("place_kite_stop_loss_orders")
+
+        plan_date = self._require_date(str(body.get("date") or ""))
+        if plan_date is None:
+            raise ValueError("Missing or invalid date.")
+
+        position_id = str(body.get("position_id") or body.get("id") or "").strip()
+        if not position_id:
+            raise ValueError("Missing position id.")
+
+        payload = self.store.load_plan(plan_date.isoformat())
+        positions = payload.get("positions", []) if isinstance(payload, dict) else []
+        position = None
+        for item in positions:
+            if isinstance(item, dict) and str(item.get("id") or "").strip() == position_id:
+                position = item
+                break
+        if position is None:
+            raise ValueError("Position not found in saved plan.")
+
+        trail = kite_mod.trailing_stop_value(position)
+        if trail is None:
+            raise ValueError("No trailing stop is set for this position.")
+
+        status = str(position.get("_status") or "").strip().lower()
+        if status == "closed":
+            raise ValueError("This position is already closed.")
+
+        rem = kite_mod.remaining_qty(position)
+        if rem <= 0:
+            raise ValueError("No remaining quantity to protect.")
+
+        symbol = kite_mod.infer_tradingsymbol(str(position.get("symbol") or ""))
+        exchange = kite_mod.infer_exchange(str(position.get("symbol") or ""))
+        tick_size = float(body.get("tick_size") or 0.05)
+        limit_price, trigger_price = kite_mod.stop_limit_prices(float(trail), tick_size)
+        tag_prefix = str(body.get("tag_prefix") or "TP-SL").strip() or "TP-SL"
+        tag = f"{tag_prefix}-{plan_date.isoformat()}-{symbol}"
+        product = str(body.get("product") or "CNC").strip().upper() or "CNC"
+        if product not in {"CNC", "MIS"}:
+            product = "CNC"
+
+        state_file = Path(body.get("state_file") or kite_mod.DEFAULT_STATE_FILE).expanduser().resolve()
+        state = kite_mod.load_state(state_file)
+        remembered = state.setdefault("orders", {})
+
+        if tag in remembered:
+            return {
+                "ok": True,
+                "skipped": True,
+                "reason": "already_processed",
+                "tag": tag,
+                "order_id": remembered[tag].get("order_id", ""),
+                "symbol": symbol,
+                "quantity": rem,
+                "trigger_price": trigger_price,
+                "limit_price": limit_price,
+            }
+
+        token_file = Path(body.get("token_file") or kite_mod.DEFAULT_TOKEN_FILE)
+        kite = kite_mod.get_kite_client(token_file)
+        existing_orders = kite_mod.get_orders_with_tag(kite, tag)
+        if existing_orders:
+            last_order = existing_orders[-1]
+            order_id = str(last_order.get("order_id") or "")
+            status_txt = str(last_order.get("status") or "")
+            remembered[tag] = {
+                "order_id": order_id,
+                "status": status_txt,
+                "symbol": symbol,
+                "plan_date": plan_date.isoformat(),
+                "quantity": rem,
+                "trigger_price": trigger_price,
+                "limit_price": limit_price,
+            }
+            state["last_run"] = {
+                "plan_file": str(self.store.plan_path(plan_date.isoformat())),
+                "plan_date": plan_date.isoformat(),
+                "updated_at": datetime.now().isoformat(timespec="seconds"),
+            }
+            kite_mod.save_state(state_file, state)
+            return {
+                "ok": True,
+                "skipped": True,
+                "reason": "kite_order_exists",
+                "tag": tag,
+                "order_id": order_id,
+                "status": status_txt,
+                "symbol": symbol,
+                "quantity": rem,
+                "trigger_price": trigger_price,
+                "limit_price": limit_price,
+            }
+
+        try:
+            order_id = kite.place_order(
+                variety="regular",
+                exchange=exchange,
+                tradingsymbol=symbol,
+                transaction_type="SELL",
+                quantity=rem,
+                product=product,
+                order_type="SL",
+                validity="DAY",
+                price=limit_price,
+                trigger_price=trigger_price,
+                tag=tag,
+            )
+        except Exception as exc:
+            msg = str(exc) or exc.__class__.__name__
+            lower = msg.lower()
+            if "no ips configured" in lower or "allowed ips" in lower or ("ip" in lower and "configured" in lower):
+                raise ValueError(
+                    "Kite blocked the order because no allowed IPs are configured for this app. "
+                    "Add your current public IP in the Kite developer console, then retry."
+                ) from exc
+            raise
+        remembered[tag] = {
+            "order_id": order_id,
+            "status": "submitted",
+            "symbol": symbol,
+            "plan_date": plan_date.isoformat(),
+            "quantity": rem,
+            "trigger_price": trigger_price,
+            "limit_price": limit_price,
+        }
+        state["last_run"] = {
+            "plan_file": str(self.store.plan_path(plan_date.isoformat())),
+            "plan_date": plan_date.isoformat(),
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        kite_mod.save_state(state_file, state)
+        return {
+            "ok": True,
+            "placed": True,
+            "order_id": order_id,
+            "tag": tag,
+            "symbol": symbol,
+            "exchange": exchange,
+            "quantity": rem,
+            "trigger_price": trigger_price,
+            "limit_price": limit_price,
+        }
+
+
     def end_headers(self) -> None:
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -823,6 +1132,7 @@ class TradePlanHandler(BaseHTTPRequestHandler):
                     "ok": True,
                     "html_path": str(self.store.html_path),
                     "save_dir": str(self.store.save_dir),
+                    "public_ip": fetch_public_ip(),
                 }
             )
 
@@ -863,7 +1173,7 @@ class TradePlanHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path not in {"/api/plan", "/api/settings"}:
+        if parsed.path not in {"/api/plan", "/api/settings", "/api/kite/place-sl-order", "/api/kite/opening-bar", "/api/kite/scan-targets"}:
             return self._send_error_json(HTTPStatus.NOT_FOUND, "Route not found.")
 
         content_length = int(self.headers.get("Content-Length", "0"))
@@ -877,6 +1187,30 @@ class TradePlanHandler(BaseHTTPRequestHandler):
             if not isinstance(body, dict):
                 return self._send_error_json(HTTPStatus.BAD_REQUEST, "Settings body must be an object.")
             return self._send_json(self.store.save_settings(body))
+
+        if parsed.path == "/api/kite/place-sl-order":
+            if not isinstance(body, dict):
+                return self._send_error_json(HTTPStatus.BAD_REQUEST, "Request body must be an object.")
+            try:
+                return self._send_json(self._place_kite_sl_order(body))
+            except Exception as exc:
+                return self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+
+        if parsed.path == "/api/kite/opening-bar":
+            if not isinstance(body, dict):
+                return self._send_error_json(HTTPStatus.BAD_REQUEST, "Request body must be an object.")
+            try:
+                return self._send_json(self._opening_bar_guard(body))
+            except Exception as exc:
+                return self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+
+        if parsed.path == "/api/kite/scan-targets":
+            if not isinstance(body, dict):
+                return self._send_error_json(HTTPStatus.BAD_REQUEST, "Request body must be an object.")
+            try:
+                return self._send_json(self._kite_scan_targets(body))
+            except Exception as exc:
+                return self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
 
         params = parse_qs(parsed.query)
         plan_date = self._require_date(params.get("date", [""])[0])

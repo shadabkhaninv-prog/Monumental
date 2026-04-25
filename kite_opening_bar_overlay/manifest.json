@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Kite Opening Bar Guard",
+  "version": "1.0.0",
+  "description": "Shows the opening 5-minute bar range on Kite chart pages and flags high-range openings.",
+  "permissions": [],
+  "host_permissions": [
+    "https://kite.zerodha.com/*",
+    "http://127.0.0.1:8765/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://kite.zerodha.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

@@ -19,6 +19,7 @@ let settings = {
 };
 let goalTracker = { exposure_items: [], r_progress_items: [], plan_stats_items: [], latest_date: todayStr() };
 let goalTrackerTab = "exposure";
+let kitePublicIp = "";
 const QUIET = new Set(["symbol", "merits", "trailNote", "mgmt.fe", "mgmt.fsl", "mgmt.ft", "mgmt.fbe", "mgmt.note"]);
 
 function todayStr() {
@@ -33,6 +34,26 @@ function normalizeSymbol(v) { return (v || "").toUpperCase().replace(/[^A-Z0-9]/
 function fi(v) { return Math.abs(Number(v || 0)).toLocaleString("en-IN", { maximumFractionDigits: 0 }); }
 function money(v) { return v == null ? "-" : "Rs " + fi(v); }
 function price2(v) { return v == null ? "-" : "Rs " + Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function priceSL(v) {
+  if (v == null || v === "") return "-";
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "-";
+  return n.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+}
+function roundToTick(value, tickSize = 0.05) {
+  const tick = Number(tickSize);
+  const n = Number(value);
+  if (!Number.isFinite(n) || !Number.isFinite(tick) || tick <= 0) return null;
+  return Math.round(Math.round(n / tick) * tick * 100) / 100;
+}
+function stopLimitPreview(triggerPrice, tickSize = 0.05) {
+  const trigger = roundToTick(triggerPrice, tickSize);
+  if (trigger == null) return null;
+  const tick = Number(tickSize);
+  const limit = roundToTick(Math.max(trigger - tick, tick), tick);
+  if (limit == null) return null;
+  return { trigger, limit };
+}
 function pct(v) { return v == null ? "-" : Number(v).toFixed(1) + "%"; }
 function sgn(v) { return v >= 0 ? "+" : "-"; }
 function wait(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
@@ -256,9 +277,11 @@ async function loadStorageInfo() {
     const info = await api("/storage-info");
     storageOnline = true;
     savePath = info.save_dir || "";
+    kitePublicIp = info.public_ip || "";
     if (currentView === "day") setSaveState("Ready", "saved", "Autosave active");
   } catch (err) {
     storageOnline = false;
+    kitePublicIp = "";
     if (currentView === "day") setSaveState("Server offline", "", String(err.message || err));
   }
 }
@@ -488,7 +511,7 @@ function compute(p) {
   p._planRisk = +(p._predRisk + p._intraRisk).toFixed(2);
   const ae = entry || p.planEntry;
   p.trims[0]._sug = ae ? +(ae * 1.03).toFixed(2) : null;
-  p.trims[1]._sug = p.posHigh ? +(p.posHigh * 0.90).toFixed(2) : null;
+  p.trims[1]._sug = ae ? +(ae * 1.07).toFixed(2) : null;
   p.trims[2]._sug = ae ? +(ae * 1.15).toFixed(2) : null;
   p.trims[3]._sug = ae ? +(ae * 1.25).toFixed(2) : null;
   const carriedQty = getTotalQty(p);
@@ -519,6 +542,15 @@ function getTotalQty(p) {
   const actualQty = p.actualQty != null ? Number(p.actualQty) : null;
   if (overnightQty == null && actualQty == null) return null;
   return (overnightQty || 0) + (actualQty || 0);
+}
+function getTrailStopOrderPreview(p, tickSize = 0.05) {
+  const trigger = p.trailOverride != null ? Number(p.trailOverride) : null;
+  const qty = p._rem != null ? Number(p._rem) : getTotalQty(p);
+  const status = String(p._status || "").toLowerCase();
+  if (!(trigger > 0 && qty > 0 && status !== "closed")) return null;
+  const prices = stopLimitPreview(trigger, tickSize);
+  if (!prices) return null;
+  return { qty: Math.max(0, Math.floor(qty)), trigger: prices.trigger, limit: prices.limit };
 }
 
 function getExecutionRisk(p) {
@@ -602,15 +634,15 @@ function getSecondaryBadge(p) {
 function getHeaderMeta(p, bucketKey) {
   const entry = getEffectiveEntry(p);
   const sl = p._currentSL != null ? p._currentSL : p.planSL;
-  const slHtml = sl != null ? `<strong>SL Rs ${fi(sl)}</strong>` : `<strong>SL</strong>`;
+  const slHtml = sl != null ? `<strong>SL Rs ${priceSL(sl)}</strong>` : `<strong>SL</strong>`;
   if (isPositioned(p)) {
     const openQty = p._rem != null ? p._rem : (p.actualQty != null ? p.actualQty : (p.overnightQty || 0));
-    const entryTxt = entry ? `Entry Rs ${entry}` : "";
+    const entryTxt = entry ? `Entry Rs ${priceSL(entry)}` : "";
     if (bucketKey === "overnight") return `${entryTxt} | ${slHtml} | Open qty ${openQty}`;
     if (p._status === "closed") return `${entryTxt} | ${slHtml} | Flat by close`;
     return `${entryTxt} | ${slHtml} | Open qty ${openQty}`;
   }
-  const priceTxt = p.planEntry ? `Buy near Rs ${p.planEntry}` : "Buy price pending";
+  const priceTxt = p.planEntry ? `Buy near Rs ${priceSL(p.planEntry)}` : "Buy price pending";
   const qtyTxt = p._qty > 0 ? `Qty ${p._qty}` : "Qty pending";
   return `${priceTxt} | ${qtyTxt}`;
 }
@@ -828,6 +860,43 @@ function updateTrailSL(id) {
   autoSave();
 }
 
+async function pushStopLossOrder(id) {
+  const p = positions.find(x => x.id === id);
+  if (!p) return;
+  const preview = getTrailStopOrderPreview(p);
+  if (!preview) {
+    alert("Set a trailing stop and keep the position open before pushing the Kite SL order.");
+    return;
+  }
+  const symbol = p.symbol || "this position";
+  const ok = confirm(
+    `Place Kite SL order for ${symbol}?\n\nQty: ${preview.qty}\nTrigger: Rs ${priceSL(preview.trigger)}\nLimit: Rs ${priceSL(preview.limit)}`
+  );
+  if (!ok) return;
+  try {
+    const result = await api("/kite/place-sl-order", {
+      method: "POST",
+      body: JSON.stringify({
+        date: planDate,
+        position_id: id
+      })
+    });
+    const msg = result.placed
+      ? `Placed Kite SL order for ${symbol}.`
+      : `Kite SL order already exists for ${symbol}.`;
+    setSaveState(msg, "saved", result.order_id ? "Order ID " + result.order_id : "Kite SL");
+    alert(
+      `${msg}\n\nQty: ${result.quantity}\nTrigger: Rs ${priceSL(result.trigger_price)}\nLimit: Rs ${priceSL(result.limit_price)}${result.order_id ? `\nOrder ID: ${result.order_id}` : ""}`
+    );
+  } catch (err) {
+    const msg = String(err.message || err || "");
+    const hint = msg.includes("Route not found")
+      ? "\n\nRestart trade_plan_server.py so the new Kite route is loaded."
+      : "";
+    alert("Failed to place Kite SL order: " + msg + hint);
+  }
+}
+
 async function fetchSuggestions(term) {
   const list = e("symbol-suggestions");
   if (!list) return;
@@ -1009,7 +1078,7 @@ function paint(id, p) {
       }
     }
   }
-  set("tsl-" + id, "Rs " + (p._currentSL || "-"));
+  set("tsl-" + id, "Rs " + priceSL(p._currentSL));
   set("days-" + id, p._days != null ? "Day " + p._days + " in trade" : "");
   const beBanner = e("beb-" + id);
   if (beBanner) beBanner.style.display = p._beSug ? "flex" : "none";
@@ -1693,19 +1762,26 @@ function buildCard(p, num) {
   const carriedQty = getTotalQty(p);
   const displayRisk = getDisplayedRisk(p);
   const displayRiskLabel = getDisplayedRiskLabel(p);
+  const slOrder = getTrailStopOrderPreview(p);
+  const publicIpNote = kitePublicIp ? `Kite/public egress IP: ${kitePublicIp}` : "Public IP not detected yet.";
+  const slOrderButton = slOrder
+    ? `<button class="be-btn" type="button" onclick="pushStopLossOrder('${p.id}')">Push SL Order (${slOrder.qty} @ Rs ${priceSL(slOrder.limit)})</button>`
+    : "";
+  const slOrderNote = slOrder
+    ? `Kite order preview: qty ${slOrder.qty}, trigger Rs ${priceSL(slOrder.trigger)}, limit Rs ${priceSL(slOrder.limit)}`
+    : "Set a trail override to enable the Kite SL push button.";
   const qty = carriedQty != null ? carriedQty : (p._qty || 0);
   const splits = [Math.ceil(qty * 0.33), Math.ceil(qty * 0.25), Math.floor(qty * 0.25), Math.floor(qty * 0.17)];
-  const splitHtml = `<div class="qty-splits"><div class="qs-box"><div class="qs-lbl">T1 - lock</div><div class="qs-val" id="sp0-${p.id}">${qty > 0 ? splits[0] : "-"}</div><div class="qs-pct">33%</div></div><div class="qs-box"><div class="qs-lbl">T2 - trail</div><div class="qs-val" id="sp1-${p.id}">${qty > 0 ? splits[1] : "-"}</div><div class="qs-pct">25%</div></div><div class="qs-box"><div class="qs-lbl">T3 - run</div><div class="qs-val" id="sp2-${p.id}">${qty > 0 ? splits[2] : "-"}</div><div class="qs-pct">25%</div></div><div class="qs-box"><div class="qs-lbl">T4 - runner</div><div class="qs-val" id="sp3-${p.id}">${qty > 0 ? splits[3] : "-"}</div><div class="qs-pct">17%</div></div></div>`;
-  const trimLabels = ["+3% lock", "H-10% trail", "+15% run", "+25% runner"];
+  const splitHtml = `<div class="qty-splits"><div class="qs-box"><div class="qs-lbl">T1 - lock</div><div class="qs-val" id="sp0-${p.id}">${qty > 0 ? splits[0] : "-"}</div><div class="qs-pct">33%</div></div><div class="qs-box"><div class="qs-lbl">T2 - target</div><div class="qs-val" id="sp1-${p.id}">${qty > 0 ? splits[1] : "-"}</div><div class="qs-pct">25%</div></div><div class="qs-box"><div class="qs-lbl">T3 - run</div><div class="qs-val" id="sp2-${p.id}">${qty > 0 ? splits[2] : "-"}</div><div class="qs-pct">25%</div></div><div class="qs-box"><div class="qs-lbl">T4 - runner</div><div class="qs-val" id="sp3-${p.id}">${qty > 0 ? splits[3] : "-"}</div><div class="qs-pct">17%</div></div></div>`;
+  const trimLabels = ["+3% lock", "+7% target", "+15% run", "+25% runner"];
   const trimColors = ["var(--amb)", "var(--blu)", "var(--green)", "var(--green)"];
   let running = carriedQty != null ? carriedQty : 0;
   let trimRows = "";
   p.trims.forEach((t, i) => {
-    const sug = t._sug ? "Rs " + t._sug : (i === 1 ? "Enter pos high" : "-");
+    const sug = t._sug ? "Rs " + t._sug : (i === 1 ? "7% target" : "-");
     const pnlTxt = t._pnl != null ? (t._pnl >= 0 ? "+" : "-") + "Rs " + fi(t._pnl) : "-";
     running -= (t.done && t.sq ? t.sq : 0);
-    const posHighRow = i === 1 ? `<div class="hw"><span class="hl">Pos high:</span><input type="number" class="t-in" style="width:70px" placeholder="Rs" value="${p.posHigh != null ? p.posHigh : ""}" oninput="upd('${p.id}','posHigh',parseFloat(this.value)||null)"></div>` : "";
-    trimRows += `<tr id="tr-${i}-${p.id}" class="${t.done ? "t-done" : ""}"><td><span class="t-label">T${i + 1}</span><span class="t-pct" style="color:${trimColors[i]}">${trimLabels[i]}</span></td><td><span id="ts${i}-${p.id}" class="${t._sug ? "t-target" : "t-na"}">${sug}</span>${posHighRow}</td><td><input type="number" class="t-in" placeholder="Rs sell" value="${t.ap != null ? t.ap : ""}" oninput="updTrim('${p.id}',${i},'ap',parseFloat(this.value)||null)"></td><td><input type="number" class="t-in" placeholder="qty" value="${t.sq != null ? t.sq : ""}" oninput="updTrim('${p.id}',${i},'sq',parseInt(this.value)||null)"><span class="t-rem" id="tr${i}-${p.id}">${carriedQty != null ? running + " rem" : ""}</span></td><td><span id="tp${i}-${p.id}" class="${t._pnl != null ? "t-pl " + (t._pnl >= 0 ? "pos" : "neg") : "t-pl"}">${pnlTxt}</span></td><td style="text-align:center"><input type="checkbox" class="t-chk" ${t.done ? "checked" : ""} onchange="updTrim('${p.id}',${i},'done',this.checked)"></td></tr>`;
+    trimRows += `<tr id="tr-${i}-${p.id}" class="${t.done ? "t-done" : ""}"><td><span class="t-label">T${i + 1}</span><span class="t-pct" style="color:${trimColors[i]}">${trimLabels[i]}</span></td><td><span id="ts${i}-${p.id}" class="${t._sug ? "t-target" : "t-na"}">${sug}</span></td><td><input type="number" class="t-in" placeholder="Rs sell" value="${t.ap != null ? t.ap : ""}" oninput="updTrim('${p.id}',${i},'ap',parseFloat(this.value)||null)"></td><td><input type="number" class="t-in" placeholder="qty" value="${t.sq != null ? t.sq : ""}" oninput="updTrim('${p.id}',${i},'sq',parseInt(this.value)||null)"><span class="t-rem" id="tr${i}-${p.id}">${carriedQty != null ? running + " rem" : ""}</span></td><td><span id="tp${i}-${p.id}" class="${t._pnl != null ? "t-pl " + (t._pnl >= 0 ? "pos" : "neg") : "t-pl"}">${pnlTxt}</span></td><td style="text-align:center"><input type="checkbox" class="t-chk" ${t.done ? "checked" : ""} onchange="updTrim('${p.id}',${i},'done',this.checked)"></td></tr>`;
   });
   const hasTrim = p.trims.some(t => t.done);
   const net = (p._realPnl || 0) + (p._openPnl || 0);
@@ -1770,11 +1846,12 @@ function buildCard(p, num) {
       <div class="trail-box">
         <div class="trail-hdr"><span class="trail-title">Trail stop loss</span><span class="trail-days" id="days-${p.id}">${p._days != null ? "Day " + p._days + " in trade" : ""}</span></div>
         <div class="trail-grid">
-          <div><div class="tc-label">Initial SL</div><div class="tc-val sl-c"><strong>Rs ${p.planSL || "-"}</strong></div></div>
-          <div><div class="tc-label">Current SL</div><div class="tc-val sl-c" id="tsl-${p.id}"><strong>Rs ${p._currentSL || "-"}</strong></div></div>
-          <div><div class="tc-label">Breakeven</div><div class="tc-val ${p.movedBE ? "ok-c" : ""}" id="bec-${p.id}" style="display:${p.movedBE ? "block" : "none"}">${p.movedBE ? "Rs " + (entry || p.actualEntry || p.overnightEntry) : ""}</div><div class="tc-val" ${p.movedBE ? 'style="display:none"' : ""}>${(entry || p.actualEntry || p.overnightEntry) ? "Rs " + (entry || p.actualEntry || p.overnightEntry) : "-"}</div></div>
-          <div><div class="tc-label">Override SL</div><div style="display:flex;gap:6px;align-items:center;margin-top:4px"><input type="number" class="t-in" id="toi-${p.id}" style="width:90px" placeholder="manual" value="${p.trailOverride != null ? p.trailOverride : ""}" oninput="upd('${p.id}','trailOverride',parseFloat(this.value)||null)"><button class="be-btn" type="button" onclick="updateTrailSL('${p.id}')">Update SL</button></div></div>
+          <div><div class="tc-label">Initial SL</div><div class="tc-val sl-c"><strong>Rs ${priceSL(p.planSL)}</strong></div></div>
+          <div><div class="tc-label">Current SL</div><div class="tc-val sl-c" id="tsl-${p.id}"><strong>Rs ${priceSL(p._currentSL)}</strong></div></div>
+          <div><div class="tc-label">Breakeven</div><div class="tc-val ${p.movedBE ? "ok-c" : ""}" id="bec-${p.id}" style="display:${p.movedBE ? "block" : "none"}">${p.movedBE ? "Rs " + priceSL(entry || p.actualEntry || p.overnightEntry) : ""}</div><div class="tc-val" ${p.movedBE ? 'style="display:none"' : ""}>${(entry || p.actualEntry || p.overnightEntry) ? "Rs " + priceSL(entry || p.actualEntry || p.overnightEntry) : "-"}</div></div>
+          <div><div class="tc-label">Override SL</div><div style="display:flex;gap:6px;align-items:center;margin-top:4px;flex-wrap:wrap"><input type="number" class="t-in" id="toi-${p.id}" style="width:90px" placeholder="manual" value="${p.trailOverride != null ? p.trailOverride : ""}" oninput="upd('${p.id}','trailOverride',parseFloat(this.value)||null)"><button class="be-btn" type="button" onclick="updateTrailSL('${p.id}')">Update SL</button>${slOrderButton}</div></div>
         </div>
+        <div class="view-note" style="margin-top:8px">${slOrderNote}<br>${publicIpNote}</div>
         ${beBanner}
         <div class="trail-note-wrap"><div class="trail-note-lbl">SL adjustment note</div><input type="text" class="t-note" id="tni-${p.id}" placeholder="e.g. moved SL to EMA20 at Rs 182 - structure holding..." value="${p.trailNote || ""}" oninput="upd('${p.id}','trailNote',this.value)"></div>
       </div>

@@ -95,7 +95,15 @@ def merge_into_yearly_file(yearly_path: Path, today_df: pd.DataFrame) -> tuple[p
     combined = combined.drop_duplicates(subset=["trade_id"], keep="last")
     combined = combined.sort_values(["trade_date", "order_execution_time", "trade_id"], kind="stable")
     added = len(combined) - before
-    combined.to_csv(yearly_path, index=False)
+    try:
+        combined.to_csv(yearly_path, index=False)
+    except PermissionError:
+        tmp_path = yearly_path.with_suffix(".tmp.csv")
+        combined.to_csv(tmp_path, index=False)
+        raise PermissionError(
+            f"Could not overwrite locked file {yearly_path}. "
+            f"Temporary copy written to {tmp_path}."
+        )
     return combined, added
 
 
@@ -122,10 +130,20 @@ def main() -> int:
     account_id = args.client_id.strip().upper() or str(pd.DataFrame(raw)["account_id"].iloc[0]).strip().upper()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     yearly_path = args.output_dir / f"tradebook-{account_id}-{trade_year}.csv"
-    merged_df, added_rows = merge_into_yearly_file(yearly_path, df)
+    try:
+        merged_df, added_rows = merge_into_yearly_file(yearly_path, df)
+        written_path = yearly_path
+    except PermissionError as exc:
+        fallback_path = args.output_dir / f"tradebook-{account_id}-{trade_year}-{trade_day.replace('-', '')}.csv"
+        df.to_csv(fallback_path, index=False)
+        merged_df = df
+        added_rows = len(df)
+        written_path = fallback_path
+        print(str(exc))
+        print(f"Fallback daily snapshot written: {fallback_path}")
 
     print(f"Fetched {len(df)} current-day trade row(s) from Kite API.")
-    print(f"Yearly tradebook updated: {yearly_path}")
+    print(f"Yearly tradebook updated: {written_path}")
     print(f"Rows added/updated in yearly file: {added_rows}")
     print(f"Yearly file row count: {len(merged_df)}")
     print(f"Trade date: {trade_day}")

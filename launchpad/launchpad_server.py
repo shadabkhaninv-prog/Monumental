@@ -38,6 +38,7 @@ DEFAULT_SETTINGS: Dict = {
     "ip_fire_port":    8501,
     "bhav_port":       5000,
     "perf_port":       8502,
+    "screener_port":   5001,
 }
 
 
@@ -276,6 +277,9 @@ HTML = r"""<!doctype html>
       <label>Performance port
         <input id="s_perf_port" type="number" min="1024" max="65535">
       </label>
+      <label>Bhav Screener port
+        <input id="s_screener_port" type="number" min="1024" max="65535">
+      </label>
     </div>
     <div class="save-row">
       <button class="primary" onclick="saveSettings()">Save</button>
@@ -372,6 +376,7 @@ async function loadSettings(){
   document.getElementById('s_ip_port').value   = s.ip_fire_port;
   document.getElementById('s_bhav_port').value = s.bhav_port;
   document.getElementById('s_perf_port').value = s.perf_port;
+  document.getElementById('s_screener_port').value = s.screener_port;
 }
 
 async function saveSettings(){
@@ -381,6 +386,7 @@ async function saveSettings(){
     ip_fire_port:    +document.getElementById('s_ip_port').value,
     bhav_port:       +document.getElementById('s_bhav_port').value,
     perf_port:       +document.getElementById('s_perf_port').value,
+    screener_port:   +document.getElementById('s_screener_port').value,
   };
   try{
     const r = await api('/api/settings', {
@@ -493,4 +499,6 @@ def api_settings():
 if __name__ == "__main__":
     print(f"[launchpad] serving on http://localhost:{LAUNCHPAD_PORT}")
     print(f"[launchpad] project folder: {BASE_DIR}")
+    # Keep the launchpad in a single process so the in-memory process table
+    # stays stable for start/stop/status checks.
     app.run(host="127.0.0.1", port=LAUNCHPAD_PORT, debug=False, use_reloader=False)
