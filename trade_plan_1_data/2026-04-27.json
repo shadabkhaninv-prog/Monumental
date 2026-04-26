@@ -1,0 +1,236 @@
+{
+  "date": "2026-04-27",
+  "saved_at": "2026-04-25T15:28:41",
+  "positions": [
+    {
+      "id": "p1776944248494n9mf",
+      "symbol": "GUJALKALI",
+      "merits": "BIG FUCKING MOVE ON HUGE VOLUMES . TWO TIGHTS ",
+      "conviction": 3,
+      "cmp": 769.45,
+      "planEntry": 742,
+      "planSL": 718.9,
+      "intraSL": null,
+      "intraRiskPct": 30,
+      "riskAmount": 3000,
+      "actualEntry": 740.2,
+      "overnightEntry": 722,
+      "overnightQty": 30,
+      "actualQty": 155,
+      "intraQty": 0,
+      "entryDate": "2026-04-23",
+      "posHigh": null,
+      "trailOverride": null,
+      "trailNote": "",
+      "thoughtTag": "LESSON",
+      "thoughtLog": [
+        {
+          "ts": "2026-04-24T05:44:55.269Z",
+          "tag": "NOTE",
+          "text": "wacky 5 min bar ,dump ed most qty"
+        },
+        {
+          "ts": "2026-04-24T05:45:10.550Z",
+          "tag": "NOTE",
+          "text": "not an ideal trade . the orb was so high for this type of stock"
+        },
+        {
+          "ts": "2026-04-24T08:11:36.206Z",
+          "tag": "NOTE",
+          "text": "hanging on to 60 qty .entry little hasty"
+        },
+        {
+          "ts": "2026-04-24T08:47:51.746Z",
+          "tag": "LESSON",
+          "text": "with such a huge bar 5 min bar in a jitter stock was bad trade 3% open bar fade avoid"
+        },
+        {
+          "ts": "2026-04-24T08:50:06.234Z",
+          "tag": "LESSON",
+          "text": "just patience and sticking to plan makes bad trade good"
+        }
+      ],
+      "movedBE": false,
+      "trims": [
+        {
+          "pct": 3,
+          "type": "fixed",
+          "ap": 731.5,
+          "sq": 125,
+          "done": true,
+          "_sug": 759.37,
+          "_pnl": -1088
+        },
+        {
+          "pct": 10,
+          "type": "trail",
+          "ap": null,
+          "sq": null,
+          "done": false,
+          "_sug": 788.86,
+          "_pnl": null
+        },
+        {
+          "pct": 15,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "done": false,
+          "_sug": 847.84,
+          "_pnl": null
+        },
+        {
+          "pct": 25,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "done": false,
+          "_sug": 921.56,
+          "_pnl": null
+        }
+      ],
+      "mgmt": {
+        "checklist": [
+          [
+            false,
+            false,
+            false
+          ],
+          [
+            false,
+            false,
+            false
+          ],
+          [
+            false,
+            false,
+            false
+          ]
+        ],
+        "note": ""
+      },
+      "collapsed": false,
+      "_coreRps": 23.100000000000023,
+      "_intraRps": 23.100000000000023,
+      "_blendRps": 23.100000000000023,
+      "_rps": "Core Rs 23.10 | Intra Rs 23.10 | Blend Rs 23.10",
+      "_suggestedIntraQty": 39,
+      "_qty": 129,
+      "_intraQty": 0,
+      "_predQty": 129,
+      "_predRisk": 2979.9,
+      "_intraRisk": 0,
+      "_planRisk": 2979.9,
+      "_suggestedQty": 56,
+      "_rem": 60,
+      "_realPnl": -1088,
+      "_openPnl": 1932,
+      "_currentSL": 718.9,
+      "_days": 2,
+      "_beSug": true,
+      "_status": "partial"
+    },
+    {
+      "id": "p17770254578501mo0",
+      "symbol": "BSE",
+      "merits": "",
+      "conviction": 3,
+      "cmp": 3446,
+      "planEntry": 3450,
+      "planSL": 3411.9,
+      "intraSL": null,
+      "intraRiskPct": 30,
+      "riskAmount": 3000,
+      "actualEntry": null,
+      "overnightEntry": 3449,
+      "overnightQty": 25,
+      "actualQty": null,
+      "intraQty": 23,
+      "entryDate": "2026-04-24",
+      "posHigh": null,
+      "trailOverride": null,
+      "trailNote": "",
+      "thoughtTag": "NOTE",
+      "thoughtLog": [],
+      "movedBE": false,
+      "trims": [
+        {
+          "pct": 3,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "done": false,
+          "_sug": 3552.47,
+          "_pnl": null
+        },
+        {
+          "pct": 10,
+          "type": "trail",
+          "ap": null,
+          "sq": null,
+          "done": false,
+          "_sug": 3690.43,
+          "_pnl": null
+        },
+        {
+          "pct": 15,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "done": false,
+          "_sug": 3966.35,
+          "_pnl": null
+        },
+        {
+          "pct": 25,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "done": false,
+          "_sug": 4311.25,
+          "_pnl": null
+        }
+      ],
+      "mgmt": {
+        "checklist": [
+          [
+            false,
+            false,
+            false
+          ],
+          [
+            false,
+            false,
+            false
+          ],
+          [
+            false,
+            false,
+            false
+          ]
+        ],
+        "note": ""
+      },
+      "collapsed": false,
+      "_coreRps": 38.09999999999991,
+      "_intraRps": 38.09999999999991,
+      "_blendRps": 38.09999999999991,
+      "_rps": "Core Rs 38.10 | Intra Rs 38.10 | Blend Rs 38.10",
+      "_suggestedIntraQty": 23,
+      "_qty": 101,
+      "_intraQty": 23,
+      "_predQty": 78,
+      "_predRisk": 2971.8,
+      "_intraRisk": 876.3,
+      "_planRisk": 3848.1,
+      "_suggestedQty": 8,
+      "_rem": 25,
+      "_realPnl": 0,
+      "_openPnl": -75,
+      "_currentSL": 3411.9,
+      "_days": 1,
+      "_beSug": false,
+      "_status": "active"
+    }
+  ]
+}

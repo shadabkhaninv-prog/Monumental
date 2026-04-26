@@ -29,7 +29,7 @@ DB_CONFIG = {
     "database": "bhav",
 }
 
-DEFAULT_HTML_PATH = Path(r"C:\Users\shada\Downloads\trade_plan_1.html")
+DEFAULT_HTML_PATH = Path(__file__).resolve().parent / "trade_plan_1.html"
 PUBLIC_IP_PROBES = (
     "https://api.ipify.org?format=json",
     "https://checkip.amazonaws.com",
@@ -472,7 +472,7 @@ class BhavRepository:
 class TradePlanStore:
     def __init__(self, html_path: Path) -> None:
         self.html_path = html_path.resolve()
-        self.save_dir = self.html_path.with_name(f"{self.html_path.stem}_data")
+        self.save_dir = Path(__file__).resolve().parent / "trade_plan_1_data"
         self.save_dir.mkdir(parents=True, exist_ok=True)
         self.base_dir = Path(__file__).resolve().parent
         self.debug_log_path = self.base_dir / "logs" / "trade_plan_server.log"
@@ -480,6 +480,7 @@ class TradePlanStore:
         self.settings_path = self.save_dir / "settings.json"
         self._kite_token_maps: Optional[Tuple[Dict[str, int], Dict[str, int]]] = None
         self._kite_client = None
+        self._trim_date_hints_cache: Optional[Dict[str, Dict[int, date]]] = None
 
     def _log_debug(self, message: str) -> None:
         stamp = datetime.now().isoformat(timespec="seconds")
@@ -489,6 +490,82 @@ class TradePlanStore:
                 fh.write(line)
         except Exception:
             pass
+
+    def _trim_position_key(self, position: dict) -> str:
+        pid = str(position.get("id") or "").strip()
+        if pid:
+            return pid
+        return "|".join(
+            [
+                normalize_symbol(str(position.get("symbol") or "")),
+                str(position.get("entryDate") or ""),
+                str(position.get("actualEntry") or ""),
+                str(position.get("overnightEntry") or ""),
+                str(position.get("planSL") or ""),
+                str(position.get("trailOverride") or ""),
+            ]
+        )
+
+    def _parse_trim_date(self, value: object) -> Optional[date]:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            return datetime.strptime(text, "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+    def _collect_trim_date_hints(self) -> Dict[str, Dict[int, date]]:
+        if self._trim_date_hints_cache is not None:
+            return self._trim_date_hints_cache
+        hints: Dict[str, Dict[int, date]] = {}
+        for plan_date in self.list_plan_dates():
+            payload = self.load_plan_raw(plan_date)
+            positions = payload.get("positions", []) if isinstance(payload, dict) else []
+            if not isinstance(positions, list):
+                continue
+            for raw_position in positions:
+                if not isinstance(raw_position, dict):
+                    continue
+                pid = self._trim_position_key(raw_position)
+                trims = raw_position.get("trims") if isinstance(raw_position.get("trims"), list) else []
+                if not pid or not isinstance(trims, list):
+                    continue
+                trim_map = hints.setdefault(pid, {})
+                for trim_idx, trim in enumerate(trims):
+                    if not isinstance(trim, dict) or not trim.get("done"):
+                        continue
+                    trim_day = self._parse_trim_date(trim.get("dt"))
+                    if trim_day is None:
+                        continue
+                    existing = trim_map.get(trim_idx)
+                    if existing is None or trim_day > existing:
+                        trim_map[trim_idx] = trim_day
+        self._trim_date_hints_cache = hints
+        return hints
+
+    def _apply_trim_date_hints(self, positions: Sequence[dict]) -> List[dict]:
+        hints = self._collect_trim_date_hints()
+        normalized_positions: List[dict] = []
+        for raw_position in positions:
+            if not isinstance(raw_position, dict):
+                continue
+            position = copy.deepcopy(raw_position)
+            pid = self._trim_position_key(position)
+            trim_hints = hints.get(pid, {})
+            trims = position.get("trims") if isinstance(position.get("trims"), list) else []
+            if isinstance(trims, list):
+                for trim_idx, trim in enumerate(trims):
+                    if not isinstance(trim, dict) or not trim.get("done"):
+                        continue
+                    hint_day = trim_hints.get(trim_idx)
+                    current_day = self._parse_trim_date(trim.get("dt"))
+                    if hint_day is None:
+                        continue
+                    if current_day is None or hint_day > current_day:
+                        trim["dt"] = hint_day.isoformat()
+            normalized_positions.append(position)
+        return normalized_positions
 
     def plan_path(self, plan_date: str) -> Path:
         return self.save_dir / f"{plan_date}.json"
@@ -1255,6 +1332,8 @@ class TradePlanStore:
 
         first_seen: Dict[str, Dict[str, object]] = {}
         last_seen: Dict[str, Dict[str, object]] = {}
+        trim_done_dates: Dict[str, Dict[int, date]] = {}
+        trim_done_dates: Dict[str, Dict[int, date]] = {}
         latest_plan_date = history_start_date
 
         for plan_date in plan_dates:
@@ -1574,20 +1653,22 @@ class TradePlanStore:
             "note": "Real-life stop-loss honoring is measured on saved trade-plan snapshots from the tracked history window. The entry date comes from the plan snapshot, and the stop path is evaluated from that plan against real market data using the plan's stored stop level.",
         }
 
-    def _build_snapshot_streaks(self, history_start_date: date) -> Dict[str, object]:
+    def _build_snapshot_streaks(self, repo: BhavRepository, history_trade_count: int = 20) -> Dict[str, object]:
         settings = self.load_settings()
         default_stop_loss_pct = self._as_float(settings.get("stop_loss_pct"))
         if default_stop_loss_pct <= 0:
             default_stop_loss_pct = 2.0
 
-        plan_dates = [
-            d for d in self.list_plan_dates()
-            if history_start_date.isoformat() <= d
-        ]
-        if not plan_dates:
+        plan_dates = sorted(self.list_plan_dates())
+        limit = max(int(history_trade_count or 0), 1)
+        selected_dates = plan_dates[-limit:]
+        history_window_label = f"Last {limit} trades"
+        if not selected_dates:
             return {
                 "ok": True,
-                "history_start_date": history_start_date.isoformat(),
+                "history_start_date": "",
+                "history_window_label": history_window_label,
+                "history_window_count": 0,
                 "latest_trade_date": "",
                 "stop_loss_pct": round(default_stop_loss_pct, 2),
                 "summary": {
@@ -1595,6 +1676,9 @@ class TradePlanStore:
                     "open_campaigns": 0,
                     "honored_campaigns": 0,
                     "violated_campaigns": 0,
+                    "all_time_honored_count": 0,
+                    "all_time_trade_count": 0,
+                    "all_time_honor_rate": None,
                     "stop_touched_campaigns": 0,
                     "breach_count": 0,
                     "honor_rate": None,
@@ -1625,16 +1709,104 @@ class TradePlanStore:
                 "campaigns": [],
                 "closed_campaigns": [],
                 "open_campaigns_list": [],
-                "note": "No saved trade-plan snapshots were found in the tracked history window.",
+                "note": "No saved trade-plan snapshots were found in the rolling last-trades window.",
                 "debug_log_path": str(self.debug_log_path),
             }
 
         first_seen: Dict[str, Dict[str, object]] = {}
         last_seen: Dict[str, Dict[str, object]] = {}
-        latest_plan_date = history_start_date
+        trim_done_dates: Dict[str, Dict[int, date]] = {}
+        latest_plan_date = datetime.strptime(selected_dates[-1], "%Y-%m-%d").date()
+        latest_market_day = repo.latest_market_date() or latest_plan_date
 
-        for plan_date in plan_dates:
-            latest_plan_date = max(latest_plan_date, datetime.strptime(plan_date, "%Y-%m-%d").date())
+        def _count_honored_trades(date_list: List[str]) -> Tuple[int, int]:
+            seen_first: Dict[str, Dict[str, object]] = {}
+            seen_last: Dict[str, Dict[str, object]] = {}
+            for plan_date in date_list:
+                payload = self.load_plan(plan_date)
+                if not isinstance(payload, dict):
+                    continue
+                positions = payload.get("positions", [])
+                if not isinstance(positions, list):
+                    continue
+                for raw_position in positions:
+                    if not isinstance(raw_position, dict):
+                        continue
+                    position = copy.deepcopy(raw_position)
+                    if self._entry_value(position) is None:
+                        continue
+                    symbol = normalize_symbol(str(position.get("symbol") or ""))
+                    if not symbol:
+                        continue
+                    pid = str(position.get("id") or "").strip()
+                    if not pid:
+                        pid = "|".join(
+                            [
+                                symbol,
+                                str(position.get("entryDate") or ""),
+                                str(position.get("actualEntry") or ""),
+                                str(position.get("overnightEntry") or ""),
+                                str(position.get("planSL") or ""),
+                                str(position.get("trailOverride") or ""),
+                            ]
+                        )
+                    if pid not in seen_first:
+                        seen_first[pid] = {"position": position, "plan_date": plan_date}
+                    seen_last[pid] = {"position": position, "plan_date": plan_date}
+            honored = 0
+            total = 0
+            for pid, first_item in seen_first.items():
+                first_pos = first_item["position"]
+                last_pos = seen_last.get(pid, first_item)["position"]
+                entry_price = self._entry_value(first_pos)
+                if entry_price is None or entry_price <= 0:
+                    continue
+                exec_summary = self._execution_summary(last_pos)
+                total_qty = exec_summary.get("total_qty") or self._total_qty(first_pos)
+                if total_qty is None or total_qty <= 0:
+                    continue
+                realized_qty = self._as_float(exec_summary.get("realized_qty"))
+                realized_value = self._as_float(exec_summary.get("realized_value"))
+                executed_sell_price = self._as_float(exec_summary.get("last_sell_price"))
+                if executed_sell_price <= 0:
+                    executed_sell_price = self._as_float(exec_summary.get("sell_price"))
+                snapshot_cmp = self._as_float(last_pos.get("cmp"))
+                remaining_qty = self._as_float(last_pos.get("_rem"))
+                status_raw = str(last_pos.get("_status") or "").strip().lower()
+                initial_sl = self._as_float(first_pos.get("planSL"))
+                trail_sl = self._as_float(last_pos.get("_currentSL"))
+                plan_days = int(self._as_float(last_pos.get("_days")))
+                moved_be = bool(last_pos.get("movedBE"))
+                trail_override = self._as_float(last_pos.get("trailOverride"))
+                trail_active = (
+                    trail_sl > 0
+                    and trail_sl > initial_sl + 0.01
+                    and (plan_days >= 2 or moved_be or trail_override > 0)
+                )
+                plan_sl = trail_sl if trail_active else initial_sl
+                if plan_sl <= 0:
+                    plan_sl = self._as_float(first_pos.get("_currentSL"))
+                if plan_sl <= 0:
+                    continue
+                is_honored = False
+                if status_raw == "closed" and remaining_qty <= 0:
+                    if executed_sell_price is not None and executed_sell_price > 0 and plan_sl > 0:
+                        is_honored = executed_sell_price <= plan_sl + 0.01
+                    elif realized_qty > 0 and realized_value > 0 and plan_sl > 0:
+                        avg_exit = realized_value / realized_qty if realized_qty > 0 else 0.0
+                        is_honored = avg_exit <= plan_sl + 0.01
+                elif remaining_qty > 0 and snapshot_cmp > 0 and plan_sl > 0:
+                    is_honored = snapshot_cmp <= plan_sl + 0.01
+                total += 1
+                if is_honored:
+                    honored += 1
+            return honored, total
+
+        for plan_date in selected_dates:
+            try:
+                plan_day = datetime.strptime(plan_date, "%Y-%m-%d").date()
+            except ValueError:
+                continue
             payload = self.load_plan(plan_date)
             if not isinstance(payload, dict):
                 continue
@@ -1665,6 +1837,23 @@ class TradePlanStore:
                 if pid not in first_seen:
                     first_seen[pid] = {"position": position, "plan_date": plan_date}
                 last_seen[pid] = {"position": position, "plan_date": plan_date}
+                trims = position.get("trims") if isinstance(position.get("trims"), list) else []
+                if isinstance(trims, list):
+                    trim_dates = trim_done_dates.setdefault(pid, {})
+                    for trim_idx, trim in enumerate(trims):
+                        if not isinstance(trim, dict) or not trim.get("done"):
+                            continue
+                        trim_dt_raw = str(trim.get("dt") or "").strip()
+                        trim_dt = None
+                        if trim_dt_raw:
+                            try:
+                                trim_dt = datetime.strptime(trim_dt_raw, "%Y-%m-%d").date()
+                            except ValueError:
+                                trim_dt = None
+                        effective_trim_day = trim_dt or plan_day
+                        existing_day = trim_dates.get(trim_idx)
+                        if existing_day is None or effective_trim_day < existing_day:
+                            trim_dates[trim_idx] = effective_trim_day
 
         campaigns: List[Dict[str, object]] = []
         for pid, first_item in first_seen.items():
@@ -1727,6 +1916,64 @@ class TradePlanStore:
             if plan_sl <= 0:
                 plan_sl = round(entry_price * (1.0 - (default_stop_loss_pct / 100.0)), 2)
 
+            actual_pnl = round(actual_value - invested, 2)
+            stop_value = round(float(total_qty) * float(plan_sl), 2) if plan_sl > 0 else None
+            stop_pnl = round(stop_value - invested, 2) if stop_value is not None else None
+            stop_return_pct = round(((stop_value / invested) - 1.0) * 100.0, 2) if stop_value is not None and invested else None
+            pnl_delta = round((stop_pnl - actual_pnl), 2) if stop_pnl is not None else None
+
+            trims = last_pos.get("trims") if isinstance(last_pos.get("trims"), list) else first_pos.get("trims")
+            completed_trims = [trim for trim in trims if isinstance(trim, dict) and trim.get("done")] if isinstance(trims, list) else []
+            planned_trim_pnl = 0.0
+            target_hit_cache: Dict[Tuple[str, str, str, float], bool] = {}
+
+            def trim_target_was_hit(trim_target: float) -> bool:
+                if trim_target <= 0:
+                    return False
+                cache_key = (symbol, entry_day.isoformat(), latest_market_day.isoformat(), round(float(trim_target), 2))
+                if cache_key in target_hit_cache:
+                    return target_hit_cache[cache_key]
+                try:
+                    bars = repo.fetch_daily_bars(symbol, entry_day, latest_market_day)
+                except Exception as exc:
+                    self._log_debug(f"target-hit lookup failed for {symbol} {entry_day.isoformat()}->{latest_market_day.isoformat()} target={trim_target:.2f}: {exc}")
+                    target_hit_cache[cache_key] = False
+                    return False
+                hit = any(self._as_float(bar.get("high")) >= float(trim_target) - 0.01 for bar in bars)
+                target_hit_cache[cache_key] = hit
+                return hit
+
+            planned_trim_qtys = [
+                float(max(0, math.ceil(total_qty * 0.33))),
+                float(max(0, math.ceil(total_qty * 0.25))),
+                float(max(0, math.floor(total_qty * 0.25))),
+                float(max(0, math.floor(total_qty * 0.17))),
+            ]
+            latest_cmp_for_plan = snapshot_cmp if snapshot_cmp > 0 else entry_price
+            if completed_trims:
+                for trim_idx, trim in enumerate(trims):
+                    if not isinstance(trim, dict):
+                        continue
+                    planned_exit = self._as_float(trim.get("_sug"))
+                    planned_qty = planned_trim_qtys[trim_idx] if trim_idx < len(planned_trim_qtys) else self._as_float(trim.get("sq"))
+                    if planned_qty <= 0 or planned_exit <= 0:
+                        continue
+                    if trim_target_was_hit(planned_exit):
+                        planned_trim_pnl += planned_qty * planned_exit
+                    elif latest_cmp_for_plan > 0:
+                        planned_trim_pnl += planned_qty * latest_cmp_for_plan
+            completed_trim_count = len(completed_trims)
+            if not completed_trims:
+                planned_pnl = 0.0
+                target_miss_pnl = 0.0
+                target_pnl = 0.0
+            else:
+                if planned_trim_pnl <= 0 and latest_cmp_for_plan > 0:
+                    planned_trim_pnl = float(total_qty) * latest_cmp_for_plan
+                planned_pnl = round(planned_trim_pnl - invested, 2)
+                target_miss_pnl = round(planned_pnl - actual_pnl, 2)
+                target_pnl = round(actual_pnl + target_miss_pnl, 2)
+
             stop_basis = "trailing stop" if trail_active else "initial stop"
             honored = False
             violated = False
@@ -1770,11 +2017,19 @@ class TradePlanStore:
                     "current_cmp": snapshot_cmp if snapshot_cmp > 0 else None,
                     "actual_value": actual_value,
                     "stop_price": round(plan_sl, 2),
+                    "stop_value": stop_value,
+                    "stop_pnl": stop_pnl,
+                    "stop_return_pct": stop_return_pct,
+                    "pnl_delta": pnl_delta,
                     "stop_touch_price": None,
                     "price_date": str(last_item["plan_date"]) if isinstance((last_item := last_seen.get(pid, first_item)), dict) else "",
                     "sell_qty": round(float(realized_qty), 6),
                     "actual_return_pct": round(actual_return_pct, 2) if actual_return_pct is not None else None,
                     "return_pct": round(actual_return_pct, 2) if actual_return_pct is not None else None,
+                    "actual_pnl": actual_pnl,
+                    "target_pnl": target_pnl,
+                    "target_miss_pnl": target_miss_pnl,
+                    "completed_trim_count": completed_trim_count,
                     "honored": honored,
                     "stop_touched": not honored,
                     "counterfactual_return_pct": None,
@@ -1821,6 +2076,10 @@ class TradePlanStore:
         actual_gain_returns = [float(item.get("actual_return_pct")) for item in resolved_campaigns if item.get("actual_return_pct") is not None and float(item.get("actual_return_pct")) >= 0]
         actual_loss_returns = [float(item.get("actual_return_pct")) for item in resolved_campaigns if item.get("actual_return_pct") is not None and float(item.get("actual_return_pct")) < 0]
         actual_breakeven_returns = [float(item.get("actual_return_pct")) for item in resolved_campaigns if item.get("actual_return_pct") is not None and round(float(item.get("actual_return_pct")), 2) == 0.0]
+        actual_pnl_total = round(sum(float(item.get("actual_pnl") or 0.0) for item in resolved_campaigns), 2)
+        planned_pnl_total = round(sum(float(item.get("target_pnl") or item.get("actual_pnl") or 0.0) for item in resolved_campaigns), 2)
+        money_left_on_table = round(planned_pnl_total - actual_pnl_total, 2)
+        stop_pnl_total = round(sum(float(item.get("stop_pnl") or 0.0) for item in resolved_campaigns), 2)
 
         current_streak = 0
         longest_streak = 0
@@ -1836,17 +2095,23 @@ class TradePlanStore:
         closed_count = len(resolved_campaigns)
         honored_count = len(honored_campaigns)
         violated_count = len(violated_campaigns)
+        all_time_honored_count, all_time_trade_count = _count_honored_trades(plan_dates)
         return {
             "ok": True,
             "tradebook_path": "",
             "latest_trade_date": latest_plan_date.isoformat(),
-            "history_start_date": history_start_date.isoformat(),
+            "history_start_date": selected_dates[0] if selected_dates else "",
+            "history_window_label": history_window_label,
+            "history_window_count": len(selected_dates),
             "stop_loss_pct": round(default_stop_loss_pct, 2),
             "summary": {
                 "closed_campaigns": len(resolved_campaigns),
                 "open_campaigns": len(open_campaigns),
                 "honored_campaigns": honored_count,
                 "violated_campaigns": violated_count,
+                "all_time_honored_count": all_time_honored_count,
+                "all_time_trade_count": all_time_trade_count,
+                "all_time_honor_rate": round((all_time_honored_count / all_time_trade_count) * 100.0, 1) if all_time_trade_count else None,
                 "stop_touched_campaigns": violated_count,
                 "breach_count": violated_count,
                 "honor_rate": round((honored_count / len(resolved_campaigns)) * 100.0, 1) if resolved_campaigns else None,
@@ -1863,6 +2128,10 @@ class TradePlanStore:
                 "actual_avg_loss_pct": round(sum(actual_loss_returns) / len(actual_loss_returns), 2) if actual_loss_returns else None,
                 "actual_breakeven_count": len(actual_breakeven_returns),
                 "actual_breakeven_rate": round((len(actual_breakeven_returns) / closed_count) * 100.0, 1) if closed_count else None,
+                "actual_pnl_total": actual_pnl_total,
+                "planned_pnl_total": planned_pnl_total,
+                "stop_pnl_total": stop_pnl_total,
+                "money_left_on_table": money_left_on_table,
                 "counterfactual_win_rate": None,
                 "counterfactual_loss_rate": None,
                 "counterfactual_avg_gain_pct": None,
@@ -1877,7 +2146,7 @@ class TradePlanStore:
             "campaigns": campaigns,
             "closed_campaigns": honored_campaigns + violated_campaigns,
             "open_campaigns_list": open_campaigns,
-            "note": "Real-life streaks are measured from saved trade-plan snapshots only. HONORED means a long trade exited at or below the applicable stop (trailing stop if active, otherwise the initial SL). VIOLATED means it exited above the stop or remained open below it. OPEN means the trade is still above stop and not yet resolved. No Kite or CSV lookup is used.",
+            "note": "HONORED means the trade exited at or below the active stop. VIOLATED means it exited above the active stop or stayed open without respecting it. OPEN means the trade is still unresolved.",
             "debug_log_path": str(self.debug_log_path),
         }
 
@@ -2847,13 +3116,23 @@ class TradePlanStore:
         }
 
     def load_plan(self, plan_date: str) -> Dict[str, object]:
+        payload = self.load_plan_raw(plan_date)
+        path = self.plan_path(plan_date)
+        if not isinstance(payload, dict):
+            payload = {"positions": []}
+        payload["positions"] = self._apply_trim_date_hints(self._dedupe_positions(payload.get("positions", [])))
+        payload["date"] = plan_date
+        payload["path"] = str(path)
+        payload["exists"] = True
+        return payload
+
+    def load_plan_raw(self, plan_date: str) -> Dict[str, object]:
         path = self.plan_path(plan_date)
         if not path.exists():
             return {"date": plan_date, "positions": [], "path": str(path), "exists": False}
         payload = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
             payload = {"positions": []}
-        payload["positions"] = self._dedupe_positions(payload.get("positions", []))
         payload["date"] = plan_date
         payload["path"] = str(path)
         payload["exists"] = True
@@ -2861,7 +3140,7 @@ class TradePlanStore:
 
     def save_plan(self, plan_date: str, positions: Sequence[dict]) -> Dict[str, object]:
         path = self.plan_path(plan_date)
-        cleaned_positions = [position for position in positions if self._is_meaningful_position(position)]
+        cleaned_positions = [position for position in self._apply_trim_date_hints(positions) if self._is_meaningful_position(position)]
         cleaned_positions = self._dedupe_positions(cleaned_positions)
         payload = {
             "date": plan_date,
@@ -2869,6 +3148,7 @@ class TradePlanStore:
             "positions": cleaned_positions,
         }
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        self._trim_date_hints_cache = None
         return {"ok": True, "date": plan_date, "path": str(path), "saved_at": payload["saved_at"]}
 
     def _dedupe_positions(self, positions: Sequence[dict]) -> List[dict]:
@@ -3270,7 +3550,7 @@ class TradePlanHandler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
             try:
-                return self._send_json(self.store._build_snapshot_streaks(date(2026, 4, 17)))
+                return self._send_json(self.store._build_snapshot_streaks(self.repo, 20))
             except Exception as exc:
                 if getattr(self.store, "_log_debug", None):
                     try:

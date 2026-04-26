@@ -2088,20 +2088,25 @@ async function loadPlanStreakReport() {
 }
 
 function renderExecutionRibbon(campaigns) {
-  const items = Array.isArray(campaigns) ? campaigns.slice(-10) : [];
+  const items = Array.isArray(campaigns)
+    ? campaigns
+        .filter(item => {
+          const status = String(item.status || "").toUpperCase();
+          return status === "HONORED" || status === "VIOLATED";
+        })
+        .slice(-10)
+    : [];
   if (!items.length) return "";
   const meta = {
     HONORED: { fg: "#22c55e", bg: "rgba(34,197,94,.12)", ring: "rgba(34,197,94,.28)" },
-    VIOLATED: { fg: "#ef4444", bg: "rgba(239,68,68,.12)", ring: "rgba(239,68,68,.28)" },
-    OPEN: { fg: "#f59e0b", bg: "rgba(245,158,11,.12)", ring: "rgba(245,158,11,.28)" }
+    VIOLATED: { fg: "#ef4444", bg: "rgba(239,68,68,.12)", ring: "rgba(239,68,68,.28)" }
   };
   const total = items.length;
   const honored = items.filter(item => String(item.status || "").toUpperCase() === "HONORED").length;
   const violated = items.filter(item => String(item.status || "").toUpperCase() === "VIOLATED").length;
-  const open = items.filter(item => String(item.status || "").toUpperCase() === "OPEN").length;
   const chips = items.map(item => {
     const status = String(item.status || "OPEN").toUpperCase();
-    const m = meta[status] || meta.OPEN;
+    const m = meta[status] || meta.HONORED;
     const label = escHtml(status);
     const symbol = escHtml(item.symbol || "-");
     const date = escHtml(fmtDateLabel(item.entry_date || item.price_date || ""));
@@ -2119,18 +2124,163 @@ function renderExecutionRibbon(campaigns) {
     <div class="streak-rail" style="margin-top:14px;padding:14px 14px 12px;border-radius:18px;border:1px solid rgba(148,163,184,.16);background:linear-gradient(180deg,rgba(10,14,25,.92),rgba(12,16,28,.72));box-shadow:inset 0 1px 0 rgba(255,255,255,.03)">
       <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:14px;flex-wrap:wrap">
         <div>
-          <div class="sec-title" style="margin:0 0 4px 0;border:none;padding:0">Execution ribbon</div>
-          <div class="view-note" style="margin:0">Latest saved outcomes only. Green = honored, red = violated, amber = still open.</div>
+          <div class="sec-title" style="margin:0 0 4px 0;border:none;padding:0">Trade ribbon</div>
+          <div class="view-note" style="margin:0">Only honored and violated trades are shown.</div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <span class="badge" style="background:rgba(34,197,94,.12);color:#22c55e;border:1px solid rgba(34,197,94,.25)">HONORED ${honored}</span>
           <span class="badge" style="background:rgba(239,68,68,.12);color:#ef4444;border:1px solid rgba(239,68,68,.25)">VIOLATED ${violated}</span>
-          <span class="badge" style="background:rgba(245,158,11,.12);color:#f59e0b;border:1px solid rgba(245,158,11,.25)">OPEN ${open}</span>
           <span class="badge" style="background:rgba(148,163,184,.10);color:#cbd5e1;border:1px solid rgba(148,163,184,.16)">TRACKED ${total}</span>
         </div>
       </div>
       <div style="display:flex;gap:10px;overflow:auto;margin-top:12px;padding-bottom:2px">
         ${chips}
+      </div>
+    </div>
+  `;
+}
+
+function getStreakAffirmation(summary) {
+  const honored = Number(summary?.honored_campaigns || 0);
+  const violated = Number(summary?.violated_campaigns || 0);
+  const open = Number(summary?.open_campaigns || 0);
+  const current = Number(summary?.current_honor_streak || 0);
+  const best = Number(summary?.longest_honor_streak || 0);
+  const total = honored + violated;
+  const rate = total > 0 ? (honored / total) * 100 : null;
+  if (total === 0) return { lead: "Start the chain.", body: "One honored stop starts momentum." };
+  if (open > 0 && current > 0) return { lead: "Guard the live trade.", body: `${current} clean reps in a row. Don't hand back the edge.` };
+  if (violated > honored) return { lead: "Reset fast.", body: "Tight stops. Clean exits. No excuses." };
+  if (current >= 3 || best >= 5 || (rate != null && rate >= 75)) return { lead: "You're in control.", body: "Clean trades are stacking. Keep the promise." };
+  return { lead: "Stay sharp.", body: "Respect the stop and let the streak compound." };
+}
+
+// STREAK FRAME: habit-style execution progress block for the Streaks tab.
+function renderStreakFrame(campaigns, summary) {
+  const items = Array.isArray(campaigns)
+    ? [...campaigns]
+        .sort((a, b) => String(b.entry_date || b.price_date || "").localeCompare(String(a.entry_date || a.price_date || "")))
+        .filter(item => {
+          const status = String(item.status || "").toUpperCase();
+          return status === "HONORED" || status === "VIOLATED";
+        })
+        .slice(0, 14)
+    : [];
+  if (!items.length) return "";
+  const current = Number(summary?.current_honor_streak || 0);
+  const best = Number(summary?.longest_honor_streak || 0);
+  const honoredCount = Number(summary?.honored_campaigns || 0);
+  const violatedCount = Number(summary?.violated_campaigns || 0);
+  const recent = items.slice(0, 6);
+  const recentHonored = recent.filter(item => String(item.status || "").toUpperCase() === "HONORED").length;
+  const recentTotal = recent.length;
+  const recentViolated = Math.max(0, recentTotal - recentHonored);
+  const recentLead = recentTotal
+    ? `${recentHonored} of the last ${recentTotal} trades honored your stop.`
+    : "Build the first clean rep.";
+  const recentBody = recentTotal
+    ? (recentHonored >= recentViolated
+      ? "Small wins. Strong habits. Big edge."
+      : "Reset fast. Tight stops. Clean execution.")
+    : "One honored stop starts momentum.";
+  const actualPnlTotal = summary?.actual_pnl_total != null ? Number(summary.actual_pnl_total) : null;
+  const plannedPnlTotal = summary?.planned_pnl_total != null ? Number(summary.planned_pnl_total) : null;
+  const stopPnlTotal = summary?.stop_pnl_total != null ? Number(summary.stop_pnl_total) : null;
+  const moneyLeftOnTable = summary?.money_left_on_table != null ? Number(summary.money_left_on_table) : null;
+  const allTimeHonoredCount = summary?.all_time_honored_count != null ? Number(summary.all_time_honored_count) : null;
+  const allTimeTradeCount = summary?.all_time_trade_count != null ? Number(summary.all_time_trade_count) : null;
+  const allTimeHonorRate = summary?.all_time_honor_rate != null ? Number(summary.all_time_honor_rate) : null;
+  const statusMeta = {
+    HONORED: { fg: "#4ade80", bg: "rgba(34,197,94,.16)", ring: "rgba(34,197,94,.30)", icon: "&#10003;" },
+    VIOLATED: { fg: "#ef4444", bg: "rgba(239,68,68,.16)", ring: "rgba(239,68,68,.30)", icon: "&#215;" }
+  };
+  const iconByStatus = status => status === "HONORED" ? "&#10003;" : "&#215;";
+  const detailFor = item => {
+    const status = String(item.status || "").toUpperCase();
+    const isTrail = Number(item.plan_trail_override || 0) > 0 || Number(item.plan_current_sl || 0) > Number(item.buy_price || 0) * 0.985 + 0.01 || /trail/i.test(String(item.status_reason || ""));
+    if (status === "HONORED") {
+      return isTrail
+        ? { headline: "Trailing stop hit", body: "Discipline protects." }
+        : { headline: "Initial stop hit", body: "Plan. Protect. Perform." };
+    }
+    return { headline: "Exited above stop", body: "Review. Improve. Repeat." };
+  };
+  const tiles = items.map(item => {
+    const status = String(item.status || "HONORED").toUpperCase();
+    const meta = statusMeta[status] || statusMeta.HONORED;
+    const label = escHtml(item.symbol || "-");
+    const date = escHtml(fmtDateLabel(item.entry_date || item.price_date || ""));
+    const detail = detailFor(item);
+    const leftOnTable = Number(item.target_miss_pnl != null ? item.target_miss_pnl : 0);
+    const statusRow = status === "VIOLATED" && Number.isFinite(leftOnTable) && leftOnTable > 1000
+      ? `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px"><div style="display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border-radius:999px;border:1px solid ${meta.ring};background:${meta.bg};color:${meta.fg};font-size:10px;font-weight:900;letter-spacing:.02em">${status}</div><div style="display:inline-flex;align-items:center;padding:2px 10px;border-radius:999px;border:1px solid rgba(245,158,11,.38);background:linear-gradient(180deg,rgba(245,158,11,.26),rgba(245,158,11,.14));color:#ffd875;font-size:10px;font-weight:950;letter-spacing:.02em;text-shadow:0 0 10px rgba(255,191,64,.28)">${pricePlain(leftOnTable)}</div></div>`
+      : "";
+    return `
+        <div style="min-width:176px;flex:0 0 auto;padding:12px 12px 10px;border-radius:16px;border:1px solid ${meta.ring};background:linear-gradient(180deg,rgba(16,20,30,.94),rgba(10,14,24,.86));box-shadow:inset 0 1px 0 rgba(255,255,255,.03);text-align:left">
+          <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
+            <div style="font-size:13px;font-weight:900;letter-spacing:.01em;color:#f8fafc">${label}</div>
+            <div style="font-size:10px;color:#cbd5e1">${date}</div>
+          </div>
+          ${statusRow || `<div style="display:inline-flex;align-items:center;gap:6px;margin-top:8px;padding:2px 9px;border-radius:999px;border:1px solid ${meta.ring};background:${meta.bg};color:${meta.fg};font-size:10px;font-weight:900;letter-spacing:.02em">${status}</div>`}
+          <div style="display:flex;align-items:center;justify-content:center;margin:12px 0 8px 0">
+            <div style="width:58px;height:58px;border-radius:999px;border:1px solid ${meta.ring};background:rgba(255,255,255,.03);display:flex;align-items:center;justify-content:center;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)">
+              <div style="font-size:30px;line-height:1;color:${meta.fg};font-weight:900">${iconByStatus(status)}</div>
+            </div>
+          </div>
+          <div style="height:3px;border-radius:999px;background:${status === "HONORED" ? "linear-gradient(90deg, rgba(34,197,94,.92), rgba(74,222,128,.72))" : "linear-gradient(90deg, rgba(239,68,68,.92), rgba(248,113,113,.72))"};box-shadow:0 0 0 1px ${meta.ring} inset"></div>
+          <div style="margin-top:10px;font-size:13px;line-height:1.2;font-weight:800;color:#f8fafc">${detail.headline}</div>
+          <div style="margin-top:3px;font-size:11px;line-height:1.3;color:#b8c4d6">${detail.body}</div>
+        </div>
+      `;
+  }).join("");
+  return `
+    <div style="margin-top:14px;padding:14px;border-radius:20px;border:1px solid rgba(148,163,184,.16);background:linear-gradient(180deg,rgba(10,14,25,.96),rgba(12,16,28,.78));box-shadow:0 18px 50px rgba(0,0,0,.26),inset 0 1px 0 rgba(255,255,255,.03)">
+      <div style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;flex-wrap:wrap;margin-bottom:12px">
+        <div style="font-size:20px;line-height:1.05;font-weight:950;letter-spacing:.02em;color:#f8fafc">HONOR THY STOP</div>
+        <div style="max-width:520px;text-align:right;font-size:12px;line-height:1.35;font-weight:800;color:#ffd875;letter-spacing:.01em">STOPLOSS IS A PROMISE . WHAT GOOD IS A MAN WHO DOES NOT KEEP HIS PROMISE</div>
+      </div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:stretch">
+        <div style="flex:1;min-width:190px;padding:14px 16px;border-radius:16px;border:1px solid rgba(148,163,184,.12);background:rgba(255,255,255,.02)">
+          <div class="dash-k" style="margin-bottom:6px;color:#43d17c">CURRENT STREAK</div>
+          <div style="display:flex;align-items:flex-end;gap:12px">
+            <div style="font-size:50px;line-height:0.9;font-weight:950;color:#5ee38d">${current}</div>
+            <div style="font-size:28px;line-height:1;color:#5ee38d">&#128293;</div>
+          </div>
+          <div style="margin-top:6px;font-size:14px;color:#f8fafc">${current === 1 ? "execution honored" : "executions honored"}</div>
+        </div>
+        <div style="flex:1;min-width:190px;padding:14px 16px;border-radius:16px;border:1px solid rgba(148,163,184,.12);background:rgba(255,255,255,.02)">
+          <div class="dash-k" style="margin-bottom:6px;color:#cbd5e1">BEST STREAK</div>
+          <div style="display:flex;align-items:flex-end;gap:12px">
+            <div style="font-size:50px;line-height:0.9;font-weight:950;color:#f8fafc">${best}</div>
+            <div style="font-size:28px;line-height:1;color:#5ee38d">&#9734;</div>
+          </div>
+          <div style="margin-top:6px;font-size:14px;color:#cbd5e1">in this window</div>
+        </div>
+        <div style="flex:1;min-width:190px;padding:14px 16px;border-radius:16px;border:1px solid rgba(148,163,184,.12);background:rgba(255,255,255,.02)">
+          <div class="dash-k" style="margin-bottom:6px;color:#cbd5e1">TOTAL HONORED</div>
+          <div style="display:flex;align-items:flex-end;gap:10px">
+            <div style="font-size:50px;line-height:0.9;font-weight:950;color:#f8fafc">${allTimeHonoredCount != null ? allTimeHonoredCount : "-"}</div>
+            <div style="font-size:18px;line-height:1;color:#cbd5e1">/ ${allTimeTradeCount != null ? allTimeTradeCount : "-"}</div>
+          </div>
+          <div style="margin-top:6px;font-size:14px;color:#cbd5e1">${allTimeHonorRate != null ? `${allTimeHonorRate.toFixed(1)}% honored to date` : "all trades to date"}</div>
+        </div>
+        <div style="flex:1.1;min-width:220px;padding:14px 16px;border-radius:16px;border:1px solid rgba(148,163,184,.12);background:rgba(255,255,255,.02)">
+          <div class="dash-k" style="margin-bottom:6px;color:#f0f4ff">MONEY LEFT ON THE TABLE</div>
+          <div style="font-size:24px;line-height:1.05;font-weight:950;color:${moneyLeftOnTable != null && moneyLeftOnTable >= 0 ? "#5ee38d" : "#ef4444"}">${moneyLeftOnTable != null ? `${moneyLeftOnTable >= 0 ? "+" : "-"}${pricePlain(Math.abs(moneyLeftOnTable))}` : "-"}</div>
+          <div class="view-note" style="margin-top:6px;font-size:12px;line-height:1.35">If every target had been hit: ${plannedPnlTotal != null ? `${plannedPnlTotal >= 0 ? "+" : "-"}${pricePlain(Math.abs(plannedPnlTotal))}` : "-"} vs actual ${actualPnlTotal != null ? `${actualPnlTotal >= 0 ? "+" : "-"}${pricePlain(Math.abs(actualPnlTotal))}` : "-"}</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+            <span class="badge" style="background:rgba(34,197,94,.14);color:#22c55e;border:1px solid rgba(34,197,94,.25)">HONORED ${honoredCount}</span>
+            <span class="badge" style="background:rgba(239,68,68,.14);color:#ef4444;border:1px solid rgba(239,68,68,.25)">VIOLATED ${violatedCount}</span>
+          </div>
+        </div>
+      </div>
+      <div style="margin:6px 0 10px 0;font-size:16px;line-height:1.2;font-weight:900;color:#5ee38d">${escHtml(recentLead)}</div>
+      <div style="margin:-4px 0 10px 0;font-size:12px;line-height:1.35;color:#94a3b8">${escHtml(recentBody)}</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:18px;margin-bottom:12px">
+        <div style="font-size:16px;font-weight:900;color:#f8fafc">Recent executions <span style="margin-left:8px;padding:2px 10px;border-radius:999px;border:1px solid rgba(148,163,184,.16);background:rgba(255,255,255,.04);font-size:11px;color:#cbd5e1">${recent.length}</span></div>
+      </div>
+      <div style="display:flex;gap:14px;overflow:auto;padding-bottom:6px">
+        ${tiles}
       </div>
     </div>
   `;
@@ -2163,9 +2313,10 @@ function renderStreakView() {
     const fmtPct = v => v == null ? "-" : `${Number(v).toFixed(2)}%`;
   const tradebookName = String(activeReport.tradebook_path || "").split(/[\\/]/).pop() || "not found";
   const sourceName = isPlanMode ? "saved trade-plan snapshots" : tradebookName;
-  const historyStart = activeReport.history_start_date ? fmtDateLabel(activeReport.history_start_date) : "17-04-2026";
   const reportAlert = activeReport.ok === false && activeReport.message ? `<div class="view-note" style="margin-top:10px;color:#ffb4b4">${escHtml(activeReport.message)}${activeReport.debug_log_path ? ` Debug log: ${escHtml(activeReport.debug_log_path)}` : ""}</div>` : "";
-  const ribbonHtml = isPlanMode ? renderExecutionRibbon([...open, ...closed]) : "";
+  const frameHtml = isPlanMode ? renderStreakFrame(activeReport.campaigns || [...closed, ...open], summary) : "";
+  const closedVisual = isPlanMode ? [...closed].sort((a, b) => String(b.entry_date || b.price_date || "").localeCompare(String(a.entry_date || a.price_date || ""))) : closed;
+  const openVisual = isPlanMode ? [...open].sort((a, b) => String(b.entry_date || b.price_date || "").localeCompare(String(a.entry_date || a.price_date || ""))) : open;
   const rowHtml = (arr, emptyMsg) => {
     const rows = [];
     let totalQty = 0;
@@ -2181,6 +2332,8 @@ function renderStreakView() {
       const buyPrice = item.buy_price != null
         ? Number(item.buy_price)
         : (item.entry_price != null ? Number(item.entry_price) : null);
+      const stopPrice = item.stop_price != null ? Number(item.stop_price) : null;
+      const completedTrimCount = isPlanMode ? Number(item.completed_trim_count || 0) : 0;
       const sellPrice = isPlanMode
         ? (item.executed_sell_price != null ? Number(item.executed_sell_price) : (item.current_cmp != null ? Number(item.current_cmp) : null))
         : (item.simulated_exit_price != null ? Number(item.simulated_exit_price) : null);
@@ -2188,6 +2341,9 @@ function renderStreakView() {
         ? (item.actual_value != null ? Number(item.actual_value) : null)
         : (item.sim_value != null ? Number(item.sim_value) : null);
       const actualPct = item.actual_return_pct != null ? Number(item.actual_return_pct) : (item.return_pct != null ? Number(item.return_pct) : null);
+      const stopPnl = isPlanMode && item.target_pnl != null
+        ? Number(item.target_pnl)
+        : (isPlanMode && completedTrimCount > 0 && qty != null && buyPrice != null && stopPrice != null ? (qty * (stopPrice - buyPrice)) : null);
       const simPct = item.counterfactual_return_pct != null ? Number(item.counterfactual_return_pct) : null;
       const statusValue = String(item.status || item.plan_status || (isPlanMode ? "" : (item.stop_touched ? "closed" : "open"))).toLowerCase();
       const statusLabel = statusValue ? statusValue.toUpperCase() : (isPlanMode ? "OPEN" : (!Boolean(item.stop_touched) ? "OPEN" : "CLOSED"));
@@ -2211,66 +2367,63 @@ function renderStreakView() {
         simReturnCount += 1;
       }
       const sellTxt = sellPrice != null ? pricePlain(sellPrice) : "-";
+      const stopPnlTxt = stopPnl != null ? (Math.abs(stopPnl) < 0.005 ? "0.00" : `${stopPnl >= 0 ? "+" : "-"}${pricePlain(Math.abs(stopPnl))}`) : "-";
+      const leftOnTable = isPlanMode && item.target_miss_pnl != null
+        ? Number(item.target_miss_pnl)
+        : (isPlanMode && completedTrimCount > 0 && stopPnl != null && pnl != null ? (stopPnl - pnl) : null);
+      const leftOnTableTxt = leftOnTable != null ? (Math.abs(leftOnTable) < 0.005 ? "0.00" : `${leftOnTable >= 0 ? "+" : "-"}${pricePlain(Math.abs(leftOnTable))}`) : "-";
       const valueTxt = value != null ? pricePlain(value) : "-";
       const pnlTxt = pnl != null ? `${pnl >= 0 ? "+" : "-"}${pricePlain(Math.abs(pnl))}` : "-";
       const pctCell = isPlanMode
         ? `<td class="t-pl ${actualPct != null && actualPct >= 0 ? "pos" : "neg"}">${actualPct != null ? `${actualPct >= 0 ? "+" : ""}${actualPct.toFixed(2)}%` : "-"}</td>`
         : `<td class="t-pl ${actualPct != null && actualPct >= 0 ? "pos" : "neg"}">${actualPct != null ? `${actualPct >= 0 ? "+" : ""}${actualPct.toFixed(2)}%` : "-"}</td><td class="t-pl ${simPct != null && simPct >= 0 ? "pos" : "neg"}">${simPct != null ? `${simPct >= 0 ? "+" : ""}${simPct.toFixed(2)}%` : "-"}</td>`;
-      rows.push(`<tr><td>${rows.length + 1}</td><td><strong>${escHtml(item.symbol || "-")}</strong></td><td>${escHtml(fmtDateLabel(item.entry_date || item.start_time || ""))}</td><td>${qty != null ? qty : "-"}</td><td>${buyPrice != null ? pricePlain(buyPrice) : "-"}</td><td>${sellTxt}</td><td>${valueTxt}</td><td class="t-pl ${pnl != null && pnl >= 0 ? "pos" : "neg"}">${pnlTxt}</td>${pctCell}<td>${statusBadge}</td></tr>`);
+      rows.push(`<tr><td>${rows.length + 1}</td><td><strong>${escHtml(item.symbol || "-")}</strong></td><td>${escHtml(fmtDateLabel(item.entry_date || item.start_time || ""))}</td><td>${qty != null ? qty : "-"}</td><td>${buyPrice != null ? pricePlain(buyPrice) : "-"}</td><td>${sellTxt}</td><td class="t-pl ${stopPnl != null && stopPnl >= 0 ? "pos" : "neg"}">${stopPnlTxt}</td><td class="t-pl ${leftOnTable != null && leftOnTable >= 0 ? "pos" : "neg"}">${leftOnTableTxt}</td><td>${valueTxt}</td><td class="t-pl ${pnl != null && pnl >= 0 ? "pos" : "neg"}">${pnlTxt}</td>${pctCell}<td>${statusBadge}</td></tr>`);
     }
     const totalSimAvg = simReturnCount ? totalSimReturn / simReturnCount : null;
     const totalPnlTxt = `${totalPnl >= 0 ? "+" : "-"}${pricePlain(Math.abs(totalPnl))}`;
     const totalRow = rows.length
       ? isPlanMode
-        ? `<tr class="total-row"><td></td><td><strong>TOTAL</strong></td><td></td><td>${totalQty || "-"}</td><td>${totalInvested ? pricePlain(totalInvested / Math.max(totalQty, 1)) : "-"}</td><td></td><td>${pricePlain(totalValue)}</td><td class="t-pl ${totalPnl >= 0 ? "pos" : "neg"}">${totalPnlTxt}</td><td></td><td></td></tr>`
+        ? `<tr class="total-row"><td></td><td><strong>TOTAL</strong></td><td></td><td>${totalQty || "-"}</td><td>${totalInvested ? pricePlain(totalInvested / Math.max(totalQty, 1)) : "-"}</td><td></td><td class="t-pl ${summary?.planned_pnl_total != null && Number(summary.planned_pnl_total) >= 0 ? "pos" : "neg"}">${summary?.planned_pnl_total != null ? `${Number(summary.planned_pnl_total) >= 0 ? "+" : "-"}${pricePlain(Math.abs(Number(summary.planned_pnl_total)))}` : "-"}</td><td class="t-pl ${summary?.money_left_on_table != null && Number(summary.money_left_on_table) >= 0 ? "pos" : "neg"}">${summary?.money_left_on_table != null ? `${Number(summary.money_left_on_table) >= 0 ? "+" : "-"}${pricePlain(Math.abs(Number(summary.money_left_on_table)))}` : "-"}</td><td>${pricePlain(totalValue)}</td><td class="t-pl ${totalPnl >= 0 ? "pos" : "neg"}">${totalPnlTxt}</td><td></td><td></td></tr>`
         : `<tr class="total-row"><td></td><td><strong>TOTAL</strong></td><td></td><td>${totalQty || "-"}</td><td>${totalInvested ? pricePlain(totalInvested / Math.max(totalQty, 1)) : "-"}</td><td></td><td>${pricePlain(totalValue)}</td><td class="t-pl ${totalPnl >= 0 ? "pos" : "neg"}">${totalPnlTxt}</td><td></td><td class="t-pl ${totalSimAvg != null && totalSimAvg >= 0 ? "pos" : "neg"}">${totalSimAvg != null ? `${totalSimAvg >= 0 ? "+" : ""}${totalSimAvg.toFixed(2)}%` : "-"}</td><td></td></tr>`
       : "";
     return { body: rows.join(""), totalRow };
   };
-  const closedEmptyMsg = isPlanMode ? "No honored campaigns were found in the saved trade-plan history window." : "No closed campaigns found in the latest tradebook.";
-  const openEmptyMsg = isPlanMode ? "No violated campaigns were present in the saved trade-plan history window." : "No open campaigns were present in the latest tradebook.";
-  const closedTable = rowHtml(closed, closedEmptyMsg);
-  const openTable = rowHtml(open, openEmptyMsg);
-  const tableCols = isPlanMode ? 10 : 11;
-  const tableHeader = isPlanMode
-    ? "<tr><th>#</th><th>Symbol</th><th>Entry</th><th>Qty</th><th>Buy</th><th>Sell / CMP</th><th>Value</th><th>P/L</th><th>Actual %</th><th>Status</th></tr>"
-    : "<tr><th>#</th><th>Symbol</th><th>Entry</th><th>Sim qty</th><th>Buy</th><th>Sim sell / CMP</th><th>Sim value</th><th>P/L</th><th>Actual %</th><th>Sim %</th><th>Status</th></tr>";
+  const closedEmptyMsg = isPlanMode ? "No honored trades were found in the history window." : "No closed campaigns found in the latest tradebook.";
+  const openEmptyMsg = isPlanMode ? "No violated trades were present in the history window." : "No open campaigns were present in the latest tradebook.";
+  const closedTable = rowHtml(closedVisual, closedEmptyMsg);
+  const openTable = rowHtml(openVisual, openEmptyMsg);
+   const tableCols = isPlanMode ? 12 : 11;
+   const tableHeader = isPlanMode
+     ? "<tr><th>#</th><th>Symbol</th><th>Entry</th><th>Qty</th><th>Buy</th><th>Sell / CMP</th><th>Target P/L</th><th>Money left on table</th><th>Value</th><th>P/L</th><th>Actual %</th><th>Status</th></tr>"
+     : "<tr><th>#</th><th>Symbol</th><th>Entry</th><th>Sim qty</th><th>Buy</th><th>Sim sell / CMP</th><th>Sim value</th><th>P/L</th><th>Actual %</th><th>Sim %</th><th>Status</th></tr>";
   main.innerHTML = `
+    ${isPlanMode ? "" : `
     <section class="hero">
-      <h2>${isPlanMode ? "Streaks" : "Simulation"}</h2>
-      <p>${isPlanMode ? "Tracks real-life stop-loss honoring from your saved execution snapshots only. This is local, fast, and uses the entries already stored on your machine." : "Measures whether each closed campaign stayed inside your selected stop loss. This is percentage-only and focuses on discipline, not rupees."}</p>
-    </section>
-    <section class="settings-card">
-      <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">${isPlanMode ? "Latest execution snapshot" : "Latest snapshot"}</div>
-        <div class="view-note">${isPlanMode ? `History window: ${escHtml(historyStart)} onward. Latest snapshot date: ${escHtml(activeReport.latest_trade_date || "")}. The table compares stored execution fields only. No Kite or CSV lookup is used here.` : `Stop loss used for this analysis: ${pct(stop)}. Latest tradebook: ${escHtml(tradebookName)}. The table compares actual live return with the stop-plan path: day 1 checks intraday after the actual buy time, day 2 checks the daily chart close against the original 2% stop, and from day 3 onward the stop trails to breakeven or the prior 5-day EMA, whichever is higher.`}</div>
-      ${reportAlert}
-      ${ribbonHtml}
-      <div class="tracker-grid" style="margin-top:14px">
-        <div class="metric-card"><div class="dash-k">${isPlanMode ? "Tracked executions" : "Closed campaigns"}</div><div class="metric-big">${totalClosed || 0}</div><div class="metric-copy">${isPlanMode ? "Saved execution campaigns found in the history window." : "Round-trip trades closed in the latest tradebook."}</div></div>
-        <div class="metric-card"><div class="dash-k">${isPlanMode ? "Honored" : `Stop held at ${pct(stop)}`}</div><div class="metric-big">${summary.honored_campaigns || 0}</div><div class="metric-copy">${isPlanMode ? `${fmtRate(honorRate)} honored, ${fmtRate(violationRate)} violated.` : `${fmtRate(honorRate)} of closed campaigns never touched the stop intraday.`}</div></div>
-          <div class="metric-card"><div class="dash-k">${isPlanMode ? "Longest honoring streak" : "Longest simulation streak"}</div><div class="metric-big">${summary.longest_honor_streak || 0}</div><div class="metric-copy">Longest consecutive run of trades that never touched the stop.</div></div>
-          <div class="metric-card"><div class="dash-k">${isPlanMode ? "Current honoring streak" : "Current simulation streak"}</div><div class="metric-big">${summary.current_honor_streak || 0}</div><div class="metric-copy">Current run remains intact if the latest live marks stay above the stop.</div></div>
-          <div class="metric-card"><div class="dash-k">${isPlanMode ? "Execution win / loss" : "Actual win / loss"}</div><div class="metric-big">${fmtRate(actualWinRate)} / ${fmtRate(actualLossRate)}</div><div class="metric-copy">${summary.actual_win_count || 0} wins, ${summary.actual_loss_count || 0} losses, ${actualBeCount} breakevens.</div></div>
-          <div class="metric-card"><div class="dash-k">${isPlanMode ? "Violations" : "If stop held"}</div><div class="metric-big">${isPlanMode ? (summary.violated_campaigns || 0) : `${fmtRate(counterWinRate)} / ${fmtRate(counterLossRate)}`}</div><div class="metric-copy">${isPlanMode ? `${summary.violated_campaigns || 0} campaigns are still not honored in the saved snapshots.` : `${summary.stop_touched_campaigns || 0} campaigns touched the stop in this sample, ${counterBeCount} ended at breakeven.`}</div></div>
-          <div class="metric-card"><div class="dash-k">${isPlanMode ? "Execution avg gain / loss" : "Avg gain / loss"}</div><div class="metric-big">${fmtPct(actualAvgGain)} / ${fmtPct(actualAvgLoss)}</div><div class="metric-copy">Based on the saved execution snapshots.</div></div>
-          <div class="metric-card"><div class="dash-k">${isPlanMode ? "Best / worst" : "Sim avg gain / loss"}</div><div class="metric-big">${isPlanMode ? `${fmtPct(summary.best_return_pct)} / ${fmtPct(summary.worst_return_pct)}` : `${fmtPct(counterAvgGain)} / ${fmtPct(counterAvgLoss)}`}</div><div class="metric-copy">${isPlanMode ? "Based on the latest stored execution values." : "Closed campaigns only, based on the simulated stop-plan exits."}</div></div>
-        </div>
-      <div class="view-note" style="margin-top:12px">${escHtml(activeReport.note || "No additional note.")}</div>
-    </section>
+      <h2>Simulation</h2>
+      <p>Measures whether each closed campaign stayed inside your selected stop loss. This is percentage-only and focuses on discipline, not rupees.</p>
+    </section>`}
+    ${isPlanMode
+      ? `<div style="margin-top:0">${reportAlert}${frameHtml}</div>`
+      : `<section class="settings-card">
+          <div class="sec-title" style="margin-bottom:12px;border:none;padding-bottom:0">Latest snapshot</div>
+          <div class="view-note">Stop loss used for this analysis: ${pct(stop)}. Latest tradebook: ${escHtml(tradebookName)}. The table compares actual live return with the stop-plan path: day 1 checks intraday after the actual buy time, day 2 checks the daily chart close against the original 2% stop, and from day 3 onward the stop trails to breakeven or the prior 5-day EMA, whichever is higher.</div>
+          ${reportAlert}
+          ${frameHtml}
+          <div class="view-note" style="margin-top:12px">${escHtml(activeReport.note || "No additional note.")}</div>
+        </section>`}
       <section class="settings-card" style="margin-top:14px">
-        <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">${isPlanMode ? "Open campaigns" : "Open campaigns"}</div>
-        <div class="view-note">${isPlanMode ? "These saved snapshots are still open. The table shows the latest stored execution state only." : "These are still open in the latest tradebook. Their return is marked to the latest bhav close when available."}</div>
+        <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">${isPlanMode ? "Open trades" : "Open trades"}</div>
+         <div class="view-note">${isPlanMode ? "These trades are still open. The table shows the latest state only." : "These are still open in the latest tradebook. Their return is marked to the latest bhav close when available."}</div>
         <div style="overflow:auto;margin-top:12px">
             <table class="ttbl">
             <thead>${tableHeader}</thead>
             <tbody>${openTable.body || `<tr><td colspan="${tableCols}"><div class="view-note">${escHtml(openEmptyMsg)}</div></td></tr>`}</tbody>
-            ${openTable.totalRow ? `<tfoot>${openTable.totalRow}</tfoot>` : ""}
             </table>
           </div>
       </section>
       <section class="settings-card" style="margin-top:14px">
-        <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">${isPlanMode ? "Honored campaigns" : "Closed campaigns"}</div>
-        <div class="view-note">${isPlanMode ? "Each row is one saved execution campaign from the history window. HONORED means the exit was at or below the active stop; VIOLATED means it exited above the stop." : "Each row is one round-trip campaign grouped by symbol and execution order. Actual return is the live trade outcome; the stop-plan column shows what the trade would have returned if your stop plan had been followed against real market data after the buy."}</div>
+        <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">${isPlanMode ? "Closed trades" : "Closed campaigns"}</div>
+         <div class="view-note">${isPlanMode ? "Each row shows actual P&L, target P&L, and the gap between them using only the saved snapshot. HONORED means the exit was at or below the active stop; VIOLATED means it exited above the stop." : "Each row is one round-trip campaign grouped by symbol and execution order. Actual return is the live trade outcome; the stop-plan column shows what the trade would have returned if your stop plan had been followed against real market data after the buy."}</div>
         <div style="overflow:auto;margin-top:12px">
           <table class="ttbl">
             <thead>${tableHeader}</thead>
