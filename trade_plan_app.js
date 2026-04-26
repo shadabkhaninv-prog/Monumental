@@ -1,4 +1,4 @@
-const API_BASE = "http://127.0.0.1:8765/api";
+﻿const API_BASE = "http://127.0.0.1:8765/api";
 let positions = [];
 let planDate = todayStr();
 let saveTimer = null;
@@ -64,6 +64,18 @@ function pkey(d) { return "tp_v3_" + d; }
 function normalizeSymbol(v) { return (v || "").toUpperCase().replace(/[^A-Z0-9]/g, ""); }
 function fi(v) { return Math.abs(Number(v || 0)).toLocaleString("en-IN", { maximumFractionDigits: 0 }); }
 function money(v) { return v == null ? "-" : "Rs " + fi(v); }
+function compactMoney(v) {
+  if (v == null) return "-";
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "-";
+  const abs = Math.abs(n);
+  if (abs >= 100000) {
+    const lakh = n / 100000;
+    const places = Math.abs(Math.round(lakh) - lakh) < 0.05 ? 0 : 1;
+    return `Rs ${lakh.toFixed(places)}L`;
+  }
+  return money(n);
+}
 function price2(v) { return v == null ? "-" : "Rs " + Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function pricePlain(v) { return v == null ? "-" : Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function priceSL(v) {
@@ -1284,6 +1296,427 @@ function trackerBars(items, options) {
   }).join("");
 }
 
+function buildSizingAnalytics(campaigns, capital, targetAmount) {
+  const safeCapital = Number(capital || 0);
+  const safeTarget = Number(targetAmount || 0);
+  const byDate = new Map();
+  const trades = [];
+
+  for (const item of Array.isArray(campaigns) ? campaigns : []) {
+    const qty = Number(item?.actual_qty ?? item?.buy_qty ?? 0);
+    const price = Number(item?.buy_price ?? item?.entry_price ?? 0);
+    const deployed = qty > 0 && price > 0 ? qty * price : null;
+    const date = String(item?.entry_date || item?.start_time || "").slice(0, 10);
+    if (!date || deployed == null) continue;
+    const pctOfCapital = safeCapital > 0 ? (deployed / safeCapital) * 100 : null;
+    const hit = safeTarget > 0 ? deployed >= safeTarget : false;
+    const record = {
+      date,
+      symbol: normalizeSymbol(item?.symbol || ""),
+      deployed,
+      pct: pctOfCapital,
+      hit
+    };
+    trades.push(record);
+    const bucket = byDate.get(date) || { date, deployed: 0, pctSum: 0, count: 0, hitCount: 0, max: 0 };
+    bucket.deployed += deployed;
+    bucket.pctSum += pctOfCapital || 0;
+    bucket.count += 1;
+    bucket.hitCount += hit ? 1 : 0;
+    bucket.max = Math.max(bucket.max, deployed);
+    byDate.set(date, bucket);
+  }
+
+  trades.sort((a, b) => a.date.localeCompare(b.date) || a.symbol.localeCompare(b.symbol));
+  const daily = Array.from(byDate.values())
+    .map(item => ({
+      date: item.date,
+      deployed: roundToTick(item.deployed, 1),
+      avg_deployed: item.count ? +(item.deployed / item.count).toFixed(2) : 0,
+      avg_pct: item.count ? +(item.pctSum / item.count).toFixed(2) : null,
+      hit_rate: item.count ? +(item.hitCount / item.count * 100).toFixed(1) : null,
+      count: item.count,
+      max: roundToTick(item.max, 1)
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  const tradeValues = trades.map(item => item.deployed);
+  const avgDeployment = tradeValues.length ? tradeValues.reduce((sum, value) => sum + value, 0) / tradeValues.length : 0;
+  const avgPct = safeCapital > 0 ? (avgDeployment / safeCapital) * 100 : null;
+  const targetPct = safeCapital > 0 && safeTarget > 0 ? (safeTarget / safeCapital) * 100 : null;
+  const hitTrades = trades.filter(item => item.hit);
+  const bestDeployment = tradeValues.length ? Math.max(...tradeValues) : 0;
+  const currentStreak = (() => {
+    let streak = 0;
+    for (let i = trades.length - 1; i >= 0; i -= 1) {
+      if (!trades[i].hit) break;
+      streak += 1;
+    }
+    return streak;
+  })();
+  const bestStreak = (() => {
+    let streak = 0;
+    let best = 0;
+    for (const trade of trades) {
+      if (trade.hit) {
+        streak += 1;
+        best = Math.max(best, streak);
+      } else {
+        streak = 0;
+      }
+    }
+    return best;
+  })();
+
+  return {
+    capital: safeCapital,
+    targetAmount: safeTarget,
+    targetPct,
+    avgDeployment,
+    avgPct,
+    bestDeployment,
+    bestPct: safeCapital > 0 ? (bestDeployment / safeCapital) * 100 : null,
+    hitTrades,
+    trades,
+    daily,
+    currentStreak,
+    bestStreak,
+    totalTrades: trades.length,
+    hitCount: hitTrades.length
+  };
+}
+
+function renderSizingFrame(campaigns, summary) {
+  const capital = Number(settings.available_capital || 0);
+  const targetAmount = capital > 0 ? capital * 0.10 : 300000;
+  const sizing = buildSizingAnalytics(campaigns, capital, targetAmount);
+  const latestDate = sizing.daily[sizing.daily.length - 1]?.date || "";
+  const currentPct = sizing.avgPct != null ? sizing.avgPct : 0;
+  const targetPct = sizing.targetPct != null ? sizing.targetPct : 10;
+  const targetLabel = sizing.targetAmount ? compactMoney(sizing.targetAmount) : "Rs 3L";
+  const gapPct = targetPct - currentPct;
+  const gapAmt = Math.max(0, sizing.targetAmount - sizing.avgDeployment);
+  const recentChips = sizing.trades.slice(-5).reverse();
+  const bars = trackerBars(sizing.daily.slice(-8), {
+    valueKey: "avg_deployed",
+    pctKey: "avg_pct",
+    currentDate: latestDate,
+    label: item => item.avg_pct != null ? pct(item.avg_pct) : compactMoney(item.avg_deployed),
+    fillClass: "",
+    emptyText: "Sizing history appears once the saved trade-plan snapshots include executed entries."
+  });
+  const gaugeProgress = Math.max(0, Math.min(100, currentPct / Math.max(targetPct, 0.01) * 100));
+  const circumference = 314;
+  const offset = circumference - (circumference * Math.min(gaugeProgress, 100)) / 100;
+  const statusCopy = sizing.totalTrades
+    ? `${sizing.hitCount}/${sizing.totalTrades} trades have met the ${targetLabel} target.`
+    : "No executed sizing data found in the tracked window yet.";
+  return `
+    <section class="settings-card sizing-frame" style="margin-top:14px">
+      <div class="size-layout">
+        <div>
+          <div class="size-kicker">Quest 2 Â· Right-size the position</div>
+          <div class="size-headline">Hit <span class="accent">${targetLabel}</span> per trade x 5 in a row. Cycle is hot, so sizing must match conviction.</div>
+          <div class="size-copy">Capital ${compactMoney(capital)} Â· target ${targetPct.toFixed(1)}% per trade. Current avg ${currentPct.toFixed(1)}% ${gapAmt > 0 ? `- leaves ${compactMoney(gapAmt)} per trade on the bench.` : "- meets the intended target."}</div>
+          <div class="size-chip-row">
+            ${recentChips.length ? recentChips.map(item => `
+              <div class="size-chip ${item.hit ? "hit" : "miss"} ${item.date === latestDate ? "current" : ""}" style="background:var(--s2);border-color:${item.date === latestDate ? "rgba(85,153,255,.26)" : item.hit ? "rgba(0,200,122,.24)" : "var(--b1)"};box-shadow:none">
+                <div class="pct">${item.pct != null ? pct(item.pct) : "-"}</div>
+                <div class="sym">${escHtml(item.symbol || "TRADE")}</div>
+              </div>
+            `).join("") : `<div class="view-note">No executed trades to size yet.</div>`}
+          </div>
+          <div class="size-actions">
+            <button class="size-btn primary" type="button" onclick="goDay()">Calculate today's size â†’</button>
+            <button class="size-btn secondary" type="button" onclick="goSettings()">Sizing rules</button>
+          </div>
+        </div>
+        <div class="size-gauge">
+          <div class="size-gauge-top">Avg deployment</div>
+          <svg class="size-gauge-svg" viewBox="0 0 240 160" aria-label="Average position sizing gauge">
+            <defs>
+              <linearGradient id="sizeGaugeStroke" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stop-color="#4cc9ff"/>
+                <stop offset="100%" stop-color="#7cf0c7"/>
+              </linearGradient>
+            </defs>
+            <circle cx="120" cy="120" r="50" fill="none" stroke="rgba(255,255,255,.07)" stroke-width="12" stroke-linecap="round" stroke-dasharray="${circumference}" stroke-dashoffset="0" transform="rotate(-180 120 120)"/>
+            <circle cx="120" cy="120" r="50" fill="none" stroke="url(#sizeGaugeStroke)" stroke-width="12" stroke-linecap="round" stroke-dasharray="${circumference}" stroke-dashoffset="${offset}" transform="rotate(-180 120 120)"/>
+            <text x="120" y="112" text-anchor="middle" fill="#dff8ff" font-family="JetBrains Mono, monospace" font-size="28" font-weight="700">${currentPct.toFixed(1)}%</text>
+            <text x="120" y="132" text-anchor="middle" fill="rgba(183,184,209,.86)" font-size="11">Gap ${gapPct >= 0 ? "-" : "+"}${Math.abs(gapPct).toFixed(1)} pts</text>
+          </svg>
+          <div class="size-gauge-note">${statusCopy}</div>
+          <div class="prog-track" style="margin-top:12px"><div class="prog-fill" style="width:${Math.max(0, Math.min(100, gaugeProgress))}%"></div></div>
+          <div class="size-split">
+            <div><div class="dash-k">Hits</div><div class="dash-v small">${sizing.hitCount}/${sizing.totalTrades || 0}</div></div>
+            <div><div class="dash-k">Best</div><div class="dash-v small">${sizing.bestPct != null ? pct(sizing.bestPct) : "-"}</div></div>
+            <div><div class="dash-k">Streak</div><div class="dash-v small">${sizing.currentStreak}/5</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="size-bars-wrap">
+        <div class="size-mini-note">Daily deployment history from the saved trade-plan snapshots.</div>
+        <div class="exp-bars">${bars}</div>
+      </div>
+      <section class="tracker-grid" style="margin-top:10px">
+        <div class="metric-card"><div class="dash-k">Average deployment</div><div class="metric-big">${compactMoney(sizing.avgDeployment)}</div><div class="metric-copy">Across ${sizing.totalTrades || 0} executed positions in the current cycle.</div></div>
+        <div class="metric-card"><div class="dash-k">Target deployment</div><div class="metric-big">${targetLabel}</div><div class="metric-copy">This is the size you want to commit when the cycle is hot.</div></div>
+        <div class="metric-card"><div class="dash-k">Average shortfall</div><div class="metric-big">${compactMoney(gapAmt)}</div><div class="metric-copy">What the average trade is leaving un-deployed versus the intended ticket size.</div></div>
+        <div class="metric-card"><div class="dash-k">Best deployment</div><div class="metric-big">${compactMoney(sizing.bestDeployment)}</div><div class="metric-copy">Largest actual ticket size in the tracked window.</div></div>
+      </section>
+    </section>
+  `;
+}
+
+function renderSizingFrameV2(campaigns, summary) {
+  const capital = Number(settings.available_capital || 0);
+  const targetAmount = capital > 0 ? capital * 0.10 : 300000;
+  const sizing = buildSizingAnalytics(campaigns, capital, targetAmount);
+  const latestDate = sizing.daily[sizing.daily.length - 1]?.date || "";
+  const currentPct = sizing.avgPct != null ? sizing.avgPct : 0;
+  const targetPct = sizing.targetPct != null ? sizing.targetPct : 10;
+  const targetLabel = sizing.targetAmount ? compactMoney(sizing.targetAmount) : "Rs 3L";
+  const gapAmt = Math.max(0, sizing.targetAmount - sizing.avgDeployment);
+  const recentChips = sizing.trades.slice(-5).reverse();
+  const bars = trackerBars(sizing.daily.slice(-8), {
+    valueKey: "avg_deployed",
+    pctKey: "avg_pct",
+    currentDate: latestDate,
+    label: item => item.avg_pct != null ? pct(item.avg_pct) : compactMoney(item.avg_deployed),
+    fillClass: "",
+    emptyText: "Sizing history appears once the saved trade-plan snapshots include executed entries."
+  });
+  const gaugeProgress = Math.max(0, Math.min(100, currentPct / Math.max(targetPct, 0.01) * 100));
+  const hitRate = sizing.hitRate != null ? pct(sizing.hitRate) : "-";
+  const windowLabel = sizing.daily.length
+    ? `${fmtDateLabel(sizing.daily[0].date)} to ${fmtDateLabel(latestDate)}`
+    : "No executed sizing history yet";
+  const statusCopy = sizing.totalTrades
+    ? `${sizing.hitCount}/${sizing.totalTrades} trades reached the ${targetLabel} target.`
+    : "No executed sizing data found in the tracked window yet.";
+  const gapToTarget = targetPct - currentPct;
+  const gapLabel = gapToTarget > 0
+    ? `-${gapToTarget.toFixed(1)} pts`
+    : gapToTarget < 0
+    ? `+${Math.abs(gapToTarget).toFixed(1)} pts`
+    : "0.0 pts";
+  return `
+    <section class="settings-card" style="margin-top:14px;border-left:3px solid rgba(85,153,255,.30)">
+      <div class="sec-title" style="margin-bottom:10px;border-bottom:none;padding-bottom:0">Position Sizing <span class="sec-note">cycle deployment tracker</span></div>
+      <div class="view-note">Use the Day screen for live ticket sizing. This panel only tracks whether your deployment is keeping pace with the cycle.</div>
+      <div class="exp-graph" style="margin-top:14px">
+        <div>
+          <div class="size-kicker" style="color:var(--green);font-size:11px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;margin-bottom:10px">Sizing discipline</div>
+          <div class="size-headline" style="font-size:22px;line-height:1.35;max-width:760px">Average ticket size ${compactMoney(sizing.avgDeployment)} against a ${targetLabel} target.</div>
+          <div class="size-copy" style="font-size:12px;max-width:760px">Capital ${compactMoney(capital)} Â· target ${targetPct.toFixed(1)}% per trade. Current average is ${currentPct.toFixed(1)}% of capital ${gapAmt > 0 ? `and still leaves ${compactMoney(gapAmt)} on the table.` : "and is already at or above the target."}</div>
+          <div class="size-chip-row">
+            ${recentChips.length ? recentChips.map(item => `
+              <div class="size-chip ${item.hit ? "hit" : "miss"} ${item.date === latestDate ? "current" : ""}">
+                <div class="pct">${item.pct != null ? pct(item.pct) : "-"}</div>
+                <div class="sym">${escHtml(item.symbol || "TRADE")}</div>
+              </div>
+            `).join("") : `<div class="view-note">No executed trades to size yet.</div>`}
+          </div>
+          <div class="view-note" style="margin-top:12px">Saved window: ${windowLabel}</div>
+        </div>
+        <div class="goal-card" style="background:var(--s1);border-color:rgba(85,153,255,.18)">
+          <div class="sec-title" style="margin-bottom:10px;border-bottom:none;padding-bottom:0">Deployment snapshot</div>
+          <div class="goal-big">${currentPct.toFixed(1)}%</div>
+          <div class="goal-copy">${statusCopy}</div>
+          <div class="prog-track"><div class="prog-fill" style="width:${gaugeProgress}%"></div></div>
+          <div class="goal-meta">
+            <div><div class="dash-k">Target</div><div class="dash-v small">${targetLabel}</div></div>
+            <div><div class="dash-k">Average</div><div class="dash-v small">${compactMoney(sizing.avgDeployment)}</div></div>
+            <div><div class="dash-k">Shortfall</div><div class="dash-v small">${compactMoney(gapAmt)}</div></div>
+            <div><div class="dash-k">Hit rate</div><div class="dash-v small">${hitRate}</div></div>
+          </div>
+          <div class="view-note" style="margin-top:10px">Gap ${gapLabel} Â· streak ${sizing.currentStreak}/5 Â· best ${sizing.bestPct != null ? pct(sizing.bestPct) : "-"}</div>
+        </div>
+      </div>
+      <div class="size-bars-wrap" style="margin-top:16px">
+        <div class="size-mini-note">Daily deployment history from the saved trade-plan snapshots.</div>
+        <div class="exp-bars">${bars}</div>
+      </div>
+      <section class="tracker-grid" style="margin-top:10px">
+        <div class="metric-card"><div class="dash-k">Average deployment</div><div class="metric-big">${compactMoney(sizing.avgDeployment)}</div><div class="metric-copy">Across ${sizing.totalTrades || 0} executed positions in the current cycle.</div></div>
+        <div class="metric-card"><div class="dash-k">Best deployment</div><div class="metric-big">${compactMoney(sizing.bestDeployment)}</div><div class="metric-copy">Largest actual ticket size in the tracked window.</div></div>
+        <div class="metric-card"><div class="dash-k">Average shortfall</div><div class="metric-big">${compactMoney(gapAmt)}</div><div class="metric-copy">What the average trade is leaving un-deployed versus the intended ticket size.</div></div>
+        <div class="metric-card"><div class="dash-k">Hit rate</div><div class="metric-big">${hitRate}</div><div class="metric-copy">Trades that reached the intended deployment target.</div></div>
+      </section>
+    </section>
+  `;
+}
+
+function renderSizingFrameV4(campaigns, summary = {}) {
+  const capital = Number(settings.available_capital || 0);
+  const targetAmount = capital > 0 ? capital * 0.10 : 300000;
+  const sizing = buildSizingAnalytics(campaigns, capital, targetAmount);
+  const items = Array.isArray(sizing.trades) ? sizing.trades.slice().reverse() : [];
+  const recent = items.slice(0, 6);
+  const currentStreak = Number(sizing.currentStreak || 0);
+  const bestStreak = Number(sizing.bestStreak || 0);
+  const hitCount = Number(sizing.hitCount || 0);
+  const totalTrades = Number(sizing.totalTrades || 0);
+  const hitRate = sizing.hitRate != null ? Number(sizing.hitRate) : null;
+  const avgDeployment = Number(sizing.avgDeployment || 0);
+  const shortfall = Math.max(0, Number(sizing.targetAmount || 0) - avgDeployment);
+  const recentHit = recent.filter(item => item.hit).length;
+  const recentMiss = Math.max(0, recent.length - recentHit);
+  const recentLead = recent.length
+    ? `${recentHit} of the last ${recent.length} trades sized right.`
+    : "Build the first clean rep.";
+  const recentBody = recent.length
+    ? (recentHit >= recentMiss ? "Commitment matched the setup." : "Undersized tickets leak edge.")
+    : "One disciplined ticket starts the streak.";
+  const tiles = recent.map(item => {
+    const hit = Boolean(item.hit);
+    const meta = hit
+      ? { fg: "#4ade80", bg: "rgba(34,197,94,.16)", ring: "rgba(34,197,94,.30)", icon: "&#10003;", headline: "Right sized", body: "Touches target goal." }
+      : { fg: "#ef4444", bg: "rgba(239,68,68,.16)", ring: "rgba(239,68,68,.30)", icon: "&#215;", headline: "Undersized", body: "Below target goal." };
+    const amount = compactMoney(Number(item.deployed || 0));
+    const pctLabel = item.pct != null ? pct(item.pct) : "-";
+    return `
+      <div style="min-width:176px;flex:0 0 auto;padding:12px 12px 10px;border-radius:16px;border:1px solid ${meta.ring};background:linear-gradient(180deg,rgba(16,20,30,.94),rgba(10,14,24,.86));box-shadow:inset 0 1px 0 rgba(255,255,255,.03);text-align:left">
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
+          <div style="font-size:13px;font-weight:900;letter-spacing:.01em;color:#f8fafc">${escHtml(item.symbol || "-")}</div>
+          <div style="font-size:10px;color:#cbd5e1">${escHtml(fmtDateLabel(item.date || ""))}</div>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:8px">
+          <div style="display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border-radius:999px;border:1px solid ${meta.ring};background:${meta.bg};color:${meta.fg};font-size:10px;font-weight:900;letter-spacing:.02em">${hit ? "Right sized" : "Undersized"}</div>
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+            <div style="padding:2px 9px;border-radius:999px;border:1px solid rgba(148,163,184,.18);background:rgba(255,255,255,.04);color:#f8fafc;font-size:10px;font-weight:900;letter-spacing:.02em">${amount}</div>
+            <div style="padding:2px 9px;border-radius:999px;border:1px solid rgba(148,163,184,.18);background:rgba(255,255,255,.04);color:#cbd5e1;font-size:10px;font-weight:900;letter-spacing:.02em">${pctLabel}</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:center;margin:12px 0 8px 0">
+          <div style="width:58px;height:58px;border-radius:999px;border:1px solid ${meta.ring};background:rgba(255,255,255,.03);display:flex;align-items:center;justify-content:center;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)">
+            <div style="font-size:30px;line-height:1;color:${meta.fg};font-weight:900">${meta.icon}</div>
+          </div>
+        </div>
+        <div style="height:3px;border-radius:999px;background:${hit ? "linear-gradient(90deg, rgba(34,197,94,.92), rgba(74,222,128,.72))" : "linear-gradient(90deg, rgba(239,68,68,.92), rgba(248,113,113,.72))"};box-shadow:0 0 0 1px ${meta.ring} inset"></div>
+        <div style="margin-top:10px;font-size:13px;line-height:1.2;font-weight:800;color:#f8fafc">${meta.headline}</div>
+        <div style="margin-top:3px;font-size:11px;line-height:1.3;color:#b8c4d6">${meta.body}</div>
+      </div>
+    `;
+  }).join("");
+  const stopCurrent = Number(summary?.current_honor_streak || 0);
+  const stopBest = Number(summary?.longest_honor_streak || 0);
+  const stopHonored = Number(summary?.all_time_honored_count != null ? summary.all_time_honored_count : (summary?.honored_campaigns || 0));
+  const stopTotalTrades = Number(summary?.all_time_trade_count != null ? summary.all_time_trade_count : ((summary?.honored_campaigns || 0) + (summary?.violated_campaigns || 0)));
+  const stopHonorRate = summary?.all_time_honor_rate != null
+    ? Number(summary.all_time_honor_rate)
+    : (stopTotalTrades > 0 ? (stopHonored / stopTotalTrades) * 100 : null);
+  const moneyLeftOnTable = summary?.money_left_on_table != null ? Number(summary.money_left_on_table) : null;
+  const plannedPnlTotal = summary?.planned_pnl_total != null ? Number(summary.planned_pnl_total) : null;
+  const actualPnlTotal = summary?.actual_pnl_total != null ? Number(summary.actual_pnl_total) : null;
+  const sizeCurrent = Number(sizing.currentStreak || 0);
+  const sizeBest = Number(sizing.bestStreak || 0);
+  const sizeHitCount = Number(sizing.hitCount || 0);
+  const sizeTotalTrades = Number(sizing.totalTrades || 0);
+  const sizeHitRate = sizing.hitRate != null ? Number(sizing.hitRate) : null;
+  const tileBase = "min-width:122px;flex:0 0 auto;padding:8px 8px 7px;border-radius:13px;border:1px solid rgba(148,163,184,.14);background:linear-gradient(180deg,rgba(16,20,30,.94),rgba(10,14,24,.86));box-shadow:inset 0 1px 0 rgba(255,255,255,.03);text-align:left";
+  const miniTile = ({ tag, title, value, valueStyle = "", sub = "", badge = "", icon = "", accent = "rgba(148,163,184,.18)" }) => `
+    <div style="${tileBase};border-color:${accent}">
+      <div style="font-size:8px;font-weight:900;letter-spacing:.05em;color:#aab6c8">${escHtml(tag)}</div>
+      <div style="margin-top:3px;font-size:11px;line-height:1.08;font-weight:900;color:#f8fafc">${escHtml(title)}</div>
+      <div style="display:flex;align-items:flex-end;gap:6px;margin-top:6px">
+        <div style="font-size:30px;line-height:0.92;font-weight:950;color:#f8fafc;${valueStyle}">${value}</div>
+        ${icon ? `<div style="font-size:18px;line-height:1;color:${accent};font-weight:900">${icon}</div>` : ""}
+      </div>
+      ${sub ? `<div style="margin-top:4px;font-size:10px;line-height:1.2;color:#cbd5e1">${sub}</div>` : ""}
+      ${badge ? `<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px">${badge}</div>` : ""}
+    </div>
+  `;
+  const streakTiles = [
+    miniTile({
+      tag: "STOP LOSS",
+      title: "Current streak",
+      value: stopCurrent,
+      valueStyle: "color:#5ee38d",
+      sub: stopCurrent === 1 ? "execution honored" : "executions honored",
+      icon: "&#128293;",
+      accent: "#5ee38d"
+    }),
+    miniTile({
+      tag: "STOP LOSS",
+      title: "Best streak",
+      value: stopBest,
+      valueStyle: "color:#f8fafc",
+      sub: "in this window",
+      icon: "&#9734;",
+      accent: "#f7b84f"
+    }),
+    miniTile({
+      tag: "STOP LOSS",
+      title: "Total honored",
+      value: `${stopHonored}${stopTotalTrades ? ` <span style=\"font-size:16px;line-height:1;color:#cbd5e1\">/ ${stopTotalTrades}</span>` : ""}`,
+      valueStyle: "display:flex;align-items:flex-end;gap:4px",
+      sub: stopHonorRate != null ? `${stopHonorRate.toFixed(1)}% honored to date` : "honored to date",
+      accent: "#22c55e"
+    }),
+    miniTile({
+      tag: "STOP LOSS",
+      title: "Money left on the table",
+      value: moneyLeftOnTable != null ? `${moneyLeftOnTable >= 0 ? "+" : "-"}${pricePlain(Math.abs(moneyLeftOnTable))}` : "-",
+      valueStyle: `color:${moneyLeftOnTable != null && moneyLeftOnTable >= 0 ? "#5ee38d" : "#ef4444"}`,
+      sub: plannedPnlTotal != null && actualPnlTotal != null ? `If every target had been hit: ${plannedPnlTotal >= 0 ? "+" : "-"}${pricePlain(Math.abs(plannedPnlTotal))} vs actual ${actualPnlTotal >= 0 ? "+" : "-"}${pricePlain(Math.abs(actualPnlTotal))}` : "",
+      badge: [
+        `<span class="badge" style="background:rgba(34,197,94,.14);color:#22c55e;border:1px solid rgba(34,197,94,.25)">HONORED ${stopHonored}</span>`,
+        `<span class="badge" style="background:rgba(239,68,68,.14);color:#ef4444;border:1px solid rgba(239,68,68,.25)">VIOLATED ${Math.max(0, stopTotalTrades - stopHonored)}</span>`
+      ].join(""),
+      accent: "#5ee38d"
+    }),
+    `<div style="flex:0 0 24px"></div>`,
+    miniTile({
+      tag: "POSITION SIZING",
+      title: "Current streak",
+      value: sizeCurrent,
+      valueStyle: "color:#5ee38d",
+      sub: sizeCurrent === 1 ? "trade sized right" : "trades sized right",
+      icon: "&#128170;",
+      accent: "#5ee38d"
+    }),
+    miniTile({
+      tag: "POSITION SIZING",
+      title: "Best streak",
+      value: sizeBest,
+      valueStyle: "color:#f8fafc",
+      sub: "in this window",
+      icon: "&#9734;",
+      accent: "#f7b84f"
+    }),
+    miniTile({
+      tag: "POSITION SIZING",
+      title: "Total sized",
+      value: `${sizeHitCount}${sizeTotalTrades ? ` <span style=\"font-size:14px;line-height:1;color:#cbd5e1\">/ ${sizeTotalTrades}</span>` : ""}`,
+      valueStyle: "display:flex;align-items:flex-end;gap:3px",
+      sub: sizeHitRate != null ? `${sizeHitRate.toFixed(1)}% sized right to date` : "all trades to date",
+      accent: "#22c55e"
+    })
+  ].join("");
+  return `
+    <div style="margin-top:14px;padding:14px 14px 12px;border-radius:18px;border:1px solid rgba(148,163,184,.16);background:linear-gradient(180deg,rgba(10,14,25,.96),rgba(12,16,28,.78));box-shadow:inset 0 1px 0 rgba(255,255,255,.03)">
+      <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:14px;flex-wrap:wrap">
+        <div style="font-size:20px;line-height:1.05;font-weight:950;letter-spacing:.02em;color:#f8fafc">RIGHT SIZE THE POSITION</div>
+        <div style="max-width:520px;text-align:right;font-size:12px;line-height:1.35;font-weight:800;color:#ffd875;letter-spacing:.01em">SIZE IS A PROMISE . WHAT GOOD IS CONVICTION WITHOUT COMMITMENT</div>
+      </div>
+      <div style="margin:6px 0 10px 0;font-size:16px;line-height:1.2;font-weight:900;color:#5ee38d">${escHtml(recentLead)}</div>
+      <div style="margin:-4px 0 0 0;font-size:12px;line-height:1.35;color:#94a3b8">${escHtml(recentBody)}</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:18px;margin-bottom:12px">
+        <div style="font-size:16px;font-weight:900;color:#f8fafc">Recent sizing</div>
+        <div style="font-size:11px;color:#94a3b8;border:1px solid rgba(148,163,184,.18);border-radius:999px;padding:3px 9px">${totalTrades || 0}</div>
+      </div>
+      <div style="display:flex;gap:14px;overflow:auto;padding-bottom:6px">
+        ${tiles}
+      </div>
+      <section class="settings-card" style="margin-top:10px;border:1px solid rgba(148,163,184,.16);background:linear-gradient(180deg,rgba(10,14,25,.96),rgba(12,16,28,.78));box-shadow:inset 0 1px 0 rgba(255,255,255,.03)">
+        <div class="sec-title" style="margin-bottom:12px;border:none;padding-bottom:0">Streaks</div>
+        <div style="display:flex;gap:8px;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;padding-bottom:4px;align-items:stretch">${streakTiles}</div>
+      </section>
+    </div>
+  `;
+}
+
 function renderWormChart(items, options) {
   const cfg = Object.assign({
     title: "Daily Worm Graph",
@@ -2239,41 +2672,6 @@ function renderStreakFrame(campaigns, summary) {
         <div style="font-size:20px;line-height:1.05;font-weight:950;letter-spacing:.02em;color:#f8fafc">HONOR THY STOP</div>
         <div style="max-width:520px;text-align:right;font-size:12px;line-height:1.35;font-weight:800;color:#ffd875;letter-spacing:.01em">STOPLOSS IS A PROMISE . WHAT GOOD IS A MAN WHO DOES NOT KEEP HIS PROMISE</div>
       </div>
-      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:stretch">
-        <div style="flex:1;min-width:190px;padding:14px 16px;border-radius:16px;border:1px solid rgba(148,163,184,.12);background:rgba(255,255,255,.02)">
-          <div class="dash-k" style="margin-bottom:6px;color:#43d17c">CURRENT STREAK</div>
-          <div style="display:flex;align-items:flex-end;gap:12px">
-            <div style="font-size:50px;line-height:0.9;font-weight:950;color:#5ee38d">${current}</div>
-            <div style="font-size:28px;line-height:1;color:#5ee38d">&#128293;</div>
-          </div>
-          <div style="margin-top:6px;font-size:14px;color:#f8fafc">${current === 1 ? "execution honored" : "executions honored"}</div>
-        </div>
-        <div style="flex:1;min-width:190px;padding:14px 16px;border-radius:16px;border:1px solid rgba(148,163,184,.12);background:rgba(255,255,255,.02)">
-          <div class="dash-k" style="margin-bottom:6px;color:#cbd5e1">BEST STREAK</div>
-          <div style="display:flex;align-items:flex-end;gap:12px">
-            <div style="font-size:50px;line-height:0.9;font-weight:950;color:#f8fafc">${best}</div>
-            <div style="font-size:28px;line-height:1;color:#5ee38d">&#9734;</div>
-          </div>
-          <div style="margin-top:6px;font-size:14px;color:#cbd5e1">in this window</div>
-        </div>
-        <div style="flex:1;min-width:190px;padding:14px 16px;border-radius:16px;border:1px solid rgba(148,163,184,.12);background:rgba(255,255,255,.02)">
-          <div class="dash-k" style="margin-bottom:6px;color:#cbd5e1">TOTAL HONORED</div>
-          <div style="display:flex;align-items:flex-end;gap:10px">
-            <div style="font-size:50px;line-height:0.9;font-weight:950;color:#f8fafc">${allTimeHonoredCount != null ? allTimeHonoredCount : "-"}</div>
-            <div style="font-size:18px;line-height:1;color:#cbd5e1">/ ${allTimeTradeCount != null ? allTimeTradeCount : "-"}</div>
-          </div>
-          <div style="margin-top:6px;font-size:14px;color:#cbd5e1">${allTimeHonorRate != null ? `${allTimeHonorRate.toFixed(1)}% honored to date` : "all trades to date"}</div>
-        </div>
-        <div style="flex:1.1;min-width:220px;padding:14px 16px;border-radius:16px;border:1px solid rgba(148,163,184,.12);background:rgba(255,255,255,.02)">
-          <div class="dash-k" style="margin-bottom:6px;color:#f0f4ff">MONEY LEFT ON THE TABLE</div>
-          <div style="font-size:24px;line-height:1.05;font-weight:950;color:${moneyLeftOnTable != null && moneyLeftOnTable >= 0 ? "#5ee38d" : "#ef4444"}">${moneyLeftOnTable != null ? `${moneyLeftOnTable >= 0 ? "+" : "-"}${pricePlain(Math.abs(moneyLeftOnTable))}` : "-"}</div>
-          <div class="view-note" style="margin-top:6px;font-size:12px;line-height:1.35">If every target had been hit: ${plannedPnlTotal != null ? `${plannedPnlTotal >= 0 ? "+" : "-"}${pricePlain(Math.abs(plannedPnlTotal))}` : "-"} vs actual ${actualPnlTotal != null ? `${actualPnlTotal >= 0 ? "+" : "-"}${pricePlain(Math.abs(actualPnlTotal))}` : "-"}</div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
-            <span class="badge" style="background:rgba(34,197,94,.14);color:#22c55e;border:1px solid rgba(34,197,94,.25)">HONORED ${honoredCount}</span>
-            <span class="badge" style="background:rgba(239,68,68,.14);color:#ef4444;border:1px solid rgba(239,68,68,.25)">VIOLATED ${violatedCount}</span>
-          </div>
-        </div>
-      </div>
       <div style="margin:6px 0 10px 0;font-size:16px;line-height:1.2;font-weight:900;color:#5ee38d">${escHtml(recentLead)}</div>
       <div style="margin:-4px 0 10px 0;font-size:12px;line-height:1.35;color:#94a3b8">${escHtml(recentBody)}</div>
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:18px;margin-bottom:12px">
@@ -2315,6 +2713,7 @@ function renderStreakView() {
   const sourceName = isPlanMode ? "saved trade-plan snapshots" : tradebookName;
   const reportAlert = activeReport.ok === false && activeReport.message ? `<div class="view-note" style="margin-top:10px;color:#ffb4b4">${escHtml(activeReport.message)}${activeReport.debug_log_path ? ` Debug log: ${escHtml(activeReport.debug_log_path)}` : ""}</div>` : "";
   const frameHtml = isPlanMode ? renderStreakFrame(activeReport.campaigns || [...closed, ...open], summary) : "";
+  const sizingHtml = isPlanMode ? renderSizingFrameV4(activeReport.campaigns || [...closed, ...open], summary) : "";
   const closedVisual = isPlanMode ? [...closed].sort((a, b) => String(b.entry_date || b.price_date || "").localeCompare(String(a.entry_date || a.price_date || ""))) : closed;
   const openVisual = isPlanMode ? [...open].sort((a, b) => String(b.entry_date || b.price_date || "").localeCompare(String(a.entry_date || a.price_date || ""))) : open;
   const rowHtml = (arr, emptyMsg) => {
@@ -2403,7 +2802,7 @@ function renderStreakView() {
       <p>Measures whether each closed campaign stayed inside your selected stop loss. This is percentage-only and focuses on discipline, not rupees.</p>
     </section>`}
     ${isPlanMode
-      ? `<div style="margin-top:0">${reportAlert}${frameHtml}</div>`
+      ? `<div style="margin-top:0">${reportAlert}${frameHtml}${sizingHtml}</div>`
       : `<section class="settings-card">
           <div class="sec-title" style="margin-bottom:12px;border:none;padding-bottom:0">Latest snapshot</div>
           <div class="view-note">Stop loss used for this analysis: ${pct(stop)}. Latest tradebook: ${escHtml(tradebookName)}. The table compares actual live return with the stop-plan path: day 1 checks intraday after the actual buy time, day 2 checks the daily chart close against the original 2% stop, and from day 3 onward the stop trails to breakeven or the prior 5-day EMA, whichever is higher.</div>
@@ -2574,4 +2973,5 @@ document.addEventListener("DOMContentLoaded", async () => {
   await loadDashboard();
   renderApp();
 });
+
 
