@@ -260,16 +260,18 @@ function newPos() {
     symbol: "",
     merits: "",
     conviction: 3,
-    cmp: null,
-    planEntry: null,
-    planSL: null,
-    intraSL: null,
+      cmp: null,
+      planEntry: null,
+      planSL: null,
+      intraEntry: null,
+      intraSL: null,
     intraRiskPct: 30,
     riskAmount: settings.per_position_risk != null ? Number(settings.per_position_risk) : null,
     actualEntry: null,
     overnightEntry: null,
     overnightQty: null,
     overnightSL: null,
+    daySL: null,
     actualQty: null,
     intraQty: null,
     entryDate: "",
@@ -616,8 +618,8 @@ async function shiftDate(delta) {
 
 function compute(p) {
   const totalRisk = Number(p.riskAmount || 0);
-  const coreRps = (p.planEntry && p.planSL) ? (p.planEntry - p.planSL) : null;
-  const intraRps = (p.planEntry && p.intraSL) ? (p.planEntry - p.intraSL) : coreRps;
+  const coreRps = (p.planEntry != null && p.planSL != null) ? (p.planEntry - p.planSL) : null;
+  const intraRps = (p.planEntry != null && p.intraSL != null) ? (p.planEntry - p.intraSL) : coreRps;
   const blendRps = (coreRps && intraRps) ? (coreRps * 0.70 + intraRps * 0.30) : coreRps;
   const entry = getEffectiveEntry(p);
   p._coreRps = coreRps;
@@ -634,11 +636,17 @@ function compute(p) {
   const totalQty = coreQty + effectiveIntraQty;
   p._qty = totalQty;
   p._intraQty = effectiveIntraQty;
-  p._predQty = coreQty;
-  p._predRisk = p._predQty > 0 && coreRps ? +(p._predQty * coreRps).toFixed(2) : 0;
-  p._intraRisk = p._intraQty > 0 && intraRps ? +(p._intraQty * intraRps).toFixed(2) : 0;
-  p._planRisk = +(p._predRisk + p._intraRisk).toFixed(2);
-  const ae = entry || p.planEntry;
+    p._predQty = coreQty;
+    p._predRisk = p._predQty > 0 && coreRps ? +(p._predQty * coreRps).toFixed(2) : 0;
+    p._intraRisk = p._intraQty > 0 && intraRps ? +(p._intraQty * intraRps).toFixed(2) : 0;
+    p._planRisk = +(p._predRisk + p._intraRisk).toFixed(2);
+    const planAvgQty = [];
+    if (p.planEntry != null && p._predQty > 0) planAvgQty.push({ qty: p._predQty, price: Number(p.planEntry) });
+    if (p.intraEntry != null && p._intraQty > 0) planAvgQty.push({ qty: p._intraQty, price: Number(p.intraEntry) });
+    p._avgPlanEntry = planAvgQty.length
+      ? +(planAvgQty.reduce((s, leg) => s + (leg.qty * leg.price), 0) / planAvgQty.reduce((s, leg) => s + leg.qty, 0)).toFixed(2)
+      : null;
+    const ae = entry || p.planEntry;
   p.trims[0]._sug = ae ? +(ae * 1.03).toFixed(2) : null;
   p.trims[1]._sug = ae ? +(ae * 1.07).toFixed(2) : null;
   p.trims[2]._sug = ae ? +(ae * 1.15).toFixed(2) : null;
@@ -683,22 +691,11 @@ function getTrailStopOrderPreview(p, tickSize = 0.05) {
 }
 
 function getExecutionRisk(p) {
-  const planSL = p.planSL != null ? Number(p.planSL) : null;
-  const intraSL = p.intraSL != null ? Number(p.intraSL) : null;
-  const overnightSL = p.overnightSL != null ? Number(p.overnightSL) : null;
   const totalQty = getTotalQty(p);
   const entry = getEffectiveEntry(p);
-  if (!(totalQty > 0 && entry > 0 && planSL > 0)) return null;
-  const intraQty = Math.max(0, Math.round(totalQty * 0.30));
-  const ovQty = Math.max(0, Number(p.overnightQty || 0));
-  const actualQty = Math.max(0, Number(p.actualQty || 0));
-  const coreQty = Math.max(0, totalQty - intraQty);
-  const overnightPortion = ovQty > 0 ? Math.min(coreQty, ovQty) : 0;
-  const actualPortion = Math.max(0, coreQty - overnightPortion);
-  const overnightRisk = Math.max(0, (entry - (overnightSL > 0 ? overnightSL : planSL)) * overnightPortion);
-  const coreRisk = Math.max(0, (entry - planSL) * actualPortion);
-  const intraRisk = Math.max(0, (entry - (intraSL > 0 ? intraSL : planSL)) * intraQty);
-  return +(overnightRisk + coreRisk + intraRisk).toFixed(2);
+  const avgSL = getAverageExecutionSL(p);
+  if (!(totalQty > 0 && entry > 0 && avgSL > 0)) return null;
+  return +Math.max(0, (entry - avgSL) * totalQty).toFixed(2);
 }
 
 function getPlannedRisk(p) {
@@ -708,7 +705,10 @@ function getPlannedRisk(p) {
 
 function getLiveRisk(p) {
   const entry = getEffectiveEntry(p);
-  const sl = p._currentSL != null ? Number(p._currentSL) : (p.planSL != null ? Number(p.planSL) : null);
+  const avgSL = getAverageExecutionSL(p);
+  const sl = avgSL != null
+    ? Number(avgSL)
+    : (p._currentSL != null ? Number(p._currentSL) : (p.planSL != null ? Number(p.planSL) : null));
   const remainingQty = p._rem != null ? Number(p._rem) : getTotalQty(p);
   if (!(entry > 0 && sl > 0 && remainingQty > 0)) return null;
   return +Math.max(0, (entry - sl) * remainingQty).toFixed(2);
@@ -750,6 +750,26 @@ function getEffectiveEntry(p) {
     return +legs[0].price.toFixed(2);
   }
   return actualEntry != null ? actualEntry : (overnightEntry != null ? overnightEntry : null);
+}
+
+function getAverageExecutionSL(p) {
+  const legs = [];
+  const overnightQty = p.overnightQty != null ? Number(p.overnightQty) : null;
+  const overnightSL = p.overnightSL != null ? Number(p.overnightSL) : null;
+  const dayQty = p.actualQty != null ? Number(p.actualQty) : null;
+  const daySL = p.daySL != null ? Number(p.daySL) : null;
+  if (overnightQty != null && overnightQty > 0 && overnightSL != null && overnightSL > 0) {
+    legs.push({ qty: overnightQty, sl: overnightSL });
+  }
+  if (dayQty != null && dayQty > 0 && daySL != null && daySL > 0) {
+    legs.push({ qty: dayQty, sl: daySL });
+  }
+  if (!legs.length) return null;
+  if (legs.length === 1) return +legs[0].sl.toFixed(2);
+  const totalQty = legs[0].qty + legs[1].qty;
+  if (!(totalQty > 0)) return null;
+  const weighted = ((legs[0].qty * legs[0].sl) + (legs[1].qty * legs[1].sl)) / totalQty;
+  return +weighted.toFixed(2);
 }
 function isPositioned(p) { return !!getEffectiveEntry(p); }
 function isOpenPosition(p) { return p._status === "active" || p._status === "partial"; }
@@ -1120,8 +1140,9 @@ function paint(id, p) {
     if (text != null) node.textContent = text;
     if (cls != null) node.className = cls;
   };
-  const cmpInput = e("cmp-" + id);
-  const symInput = e("sym-" + id);
+    const cmpInput = e("cmp-" + id);
+    const cmpQtyEl = e("cmp-" + id);
+    const symInput = e("sym-" + id);
   if (symInput && symInput.value !== p.symbol) symInput.value = p.symbol || "";
   if (cmpInput) cmpInput.value = p.cmp != null ? p.cmp : "";
   const card = e("card-" + id);
@@ -1157,12 +1178,18 @@ function paint(id, p) {
   }
   const hm = e("hmeta-" + id);
   if (hm) hm.innerHTML = getHeaderMeta(p, getBucketKey(p));
-  const qtyEl = e("qty-" + id);
-  if (qtyEl) {
-    qtyEl.textContent = p._qty > 0 ? p._qty : "-";
-    qtyEl.style.color = p._qty > 0 ? "var(--green)" : "var(--t3)";
-    qtyEl.style.fontSize = p._qty > 0 ? "22px" : "16px";
-  }
+    const qtyEl = e("qty-" + id);
+    const planTotalQty = (Number(p._predQty || 0) + Number(p._intraQty || 0));
+    if (cmpQtyEl) {
+      cmpQtyEl.textContent = p._predQty > 0 ? p._predQty : "-";
+      cmpQtyEl.style.color = p._predQty > 0 ? "var(--green)" : "var(--t3)";
+      cmpQtyEl.style.fontSize = p._predQty > 0 ? "22px" : "16px";
+    }
+    if (qtyEl) {
+      qtyEl.textContent = planTotalQty > 0 ? planTotalQty : "-";
+      qtyEl.style.color = planTotalQty > 0 ? "var(--green)" : "var(--t3)";
+      qtyEl.style.fontSize = planTotalQty > 0 ? "22px" : "16px";
+    }
   set("rps-val-" + id, p._rps ? p._rps : "-");
   set("prisk-" + id, p._planRisk != null && p._planRisk > 0 ? price2(p._planRisk) : "-");
   const carriedQty = getTotalQty(p);
@@ -1552,7 +1579,7 @@ function renderSizingFrameV4(campaigns, summary = {}) {
   const targetAmount = capital > 0 ? capital * 0.10 : 300000;
   const sizing = buildSizingAnalytics(campaigns, capital, targetAmount);
   const items = Array.isArray(sizing.trades) ? sizing.trades.slice().reverse() : [];
-  const recent = items.slice(0, 6);
+  const recent = items.slice(0, 10);
   const currentStreak = Number(sizing.currentStreak || 0);
   const bestStreak = Number(sizing.bestStreak || 0);
   const hitCount = Number(sizing.hitCount || 0);
@@ -1568,37 +1595,46 @@ function renderSizingFrameV4(campaigns, summary = {}) {
   const recentBody = recent.length
     ? (recentHit >= recentMiss ? "Commitment matched the setup." : "Undersized tickets leak edge.")
     : "One disciplined ticket starts the streak.";
-  const tiles = recent.map(item => {
-    const hit = Boolean(item.hit);
-    const meta = hit
-      ? { fg: "#4ade80", bg: "rgba(34,197,94,.16)", ring: "rgba(34,197,94,.30)", icon: "&#10003;", headline: "Right sized", body: "Touches target goal." }
-      : { fg: "#ef4444", bg: "rgba(239,68,68,.16)", ring: "rgba(239,68,68,.30)", icon: "&#215;", headline: "Undersized", body: "Below target goal." };
-    const amount = compactMoney(Number(item.deployed || 0));
-    const pctLabel = item.pct != null ? pct(item.pct) : "-";
-    return `
-      <div style="min-width:176px;flex:0 0 auto;padding:12px 12px 10px;border-radius:16px;border:1px solid ${meta.ring};background:linear-gradient(180deg,rgba(16,20,30,.94),rgba(10,14,24,.86));box-shadow:inset 0 1px 0 rgba(255,255,255,.03);text-align:left">
-        <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
-          <div style="font-size:13px;font-weight:900;letter-spacing:.01em;color:#f8fafc">${escHtml(item.symbol || "-")}</div>
-          <div style="font-size:10px;color:#cbd5e1">${escHtml(fmtDateLabel(item.date || ""))}</div>
-        </div>
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:8px">
-          <div style="display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border-radius:999px;border:1px solid ${meta.ring};background:${meta.bg};color:${meta.fg};font-size:10px;font-weight:900;letter-spacing:.02em">${hit ? "Right sized" : "Undersized"}</div>
-          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end">
-            <div style="padding:2px 9px;border-radius:999px;border:1px solid rgba(148,163,184,.18);background:rgba(255,255,255,.04);color:#f8fafc;font-size:10px;font-weight:900;letter-spacing:.02em">${amount}</div>
-            <div style="padding:2px 9px;border-radius:999px;border:1px solid rgba(148,163,184,.18);background:rgba(255,255,255,.04);color:#cbd5e1;font-size:10px;font-weight:900;letter-spacing:.02em">${pctLabel}</div>
+  const targetLabel = compactMoney(targetAmount).replace(/^Rs\s*/i, "₹");
+  const sizingRows = recent.length
+    ? recent.map((item, index) => {
+        const deployed = Number(item.deployed || 0);
+        const pctNum = item.pct != null ? Number(item.pct) : null;
+        const hit = deployed > 0 && deployed >= targetAmount;
+        const status = deployed <= 0 ? "NO FILL" : hit ? "AT TGT" : "UNDER";
+        const statusTone = deployed <= 0
+          ? { fg: "#94a3b8", bg: "rgba(148,163,184,.08)", ring: "rgba(148,163,184,.18)" }
+          : hit
+            ? { fg: "#22e1a4", bg: "rgba(34,197,94,.16)", ring: "rgba(34,197,94,.30)" }
+            : { fg: "#ff6b81", bg: "rgba(239,68,68,.16)", ring: "rgba(239,68,68,.28)" };
+        const fillPct = targetAmount > 0 ? Math.max(0, Math.min(100, (deployed / targetAmount) * 100)) : 0;
+        const trackPct = deployed <= 0 ? 0 : Math.max(4, Math.min(100, fillPct));
+        const rowFill = deployed <= 0
+          ? "linear-gradient(90deg, rgba(148,163,184,.12), rgba(148,163,184,.18))"
+          : hit
+            ? "linear-gradient(90deg, rgba(16,185,129,.85), rgba(45,212,191,.95))"
+            : "linear-gradient(90deg, rgba(244,114,182,.76), rgba(248,113,113,.88))";
+        const markerLeft = `${Math.min(100, Math.max(0, fillPct))}%`;
+        return `
+          <div style="display:grid;grid-template-columns:72px 92px minmax(0,1fr) 104px 82px;gap:12px;align-items:center;padding:8px 14px;border-top:1px solid rgba(148,163,184,.10);${index === 0 ? "border-top:none;" : ""}">
+            <div style="font-size:13px;font-weight:900;letter-spacing:.01em;color:#f8fafc">${escHtml(item.symbol || "-")}</div>
+            <div style="font-size:11px;color:#9fb0c7">${escHtml(fmtDateLabel(item.date || ""))}</div>
+            <div>
+              <div style="position:relative;height:20px;border-radius:999px;background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02));border:1px solid rgba(148,163,184,.12);overflow:hidden">
+                <div style="position:absolute;left:0;top:0;bottom:0;width:${trackPct}%;background:${rowFill};box-shadow:${hit ? "0 0 14px rgba(34,197,94,.45)" : "0 0 12px rgba(239,68,68,.20)"}"></div>
+                <div style="position:absolute;left:10px;top:50%;transform:translateY(-50%);font-size:12px;font-weight:900;line-height:1;color:#f8fafc;letter-spacing:.01em;pointer-events:none;white-space:nowrap;text-shadow:0 1px 1px rgba(0,0,0,.45)">${compactMoney(deployed)}</div>
+                <div style="position:absolute;left:${markerLeft};top:-4px;bottom:-4px;width:2px;background:#18f0a7;box-shadow:0 0 10px rgba(24,240,167,.65)"></div>
+                <div style="position:absolute;right:8px;top:-15px;font-size:9px;font-weight:900;letter-spacing:.04em;color:#22e1a4">${targetLabel}</div>
+              </div>
+            </div>
+            <div style="display:flex;justify-content:flex-end;align-items:center;gap:8px;font-size:12px;font-weight:900;color:${hit ? "#5ee38d" : "#ff6377"}">
+              <span>${pctNum != null ? pct(pctNum) : "-"}</span>
+            </div>
+            <div style="justify-self:end;padding:5px 10px;border-radius:999px;border:1px solid ${statusTone.ring};background:${statusTone.bg};color:${statusTone.fg};font-size:10px;font-weight:900;letter-spacing:.03em">${status}</div>
           </div>
-        </div>
-        <div style="display:flex;align-items:center;justify-content:center;margin:12px 0 8px 0">
-          <div style="width:58px;height:58px;border-radius:999px;border:1px solid ${meta.ring};background:rgba(255,255,255,.03);display:flex;align-items:center;justify-content:center;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)">
-            <div style="font-size:30px;line-height:1;color:${meta.fg};font-weight:900">${meta.icon}</div>
-          </div>
-        </div>
-        <div style="height:3px;border-radius:999px;background:${hit ? "linear-gradient(90deg, rgba(34,197,94,.92), rgba(74,222,128,.72))" : "linear-gradient(90deg, rgba(239,68,68,.92), rgba(248,113,113,.72))"};box-shadow:0 0 0 1px ${meta.ring} inset"></div>
-        <div style="margin-top:10px;font-size:13px;line-height:1.2;font-weight:800;color:#f8fafc">${meta.headline}</div>
-        <div style="margin-top:3px;font-size:11px;line-height:1.3;color:#b8c4d6">${meta.body}</div>
-      </div>
-    `;
-  }).join("");
+        `;
+      }).join("")
+    : `<div style="padding:20px 14px;color:#94a3b8;font-size:12px">No sizing trades yet. Build the first disciplined rep.</div>`;
   const stopCurrent = Number(summary?.current_honor_streak || 0);
   const stopBest = Number(summary?.longest_honor_streak || 0);
   const stopHonored = Number(summary?.all_time_honored_count != null ? summary.all_time_honored_count : (summary?.honored_campaigns || 0));
@@ -1695,23 +1731,28 @@ function renderSizingFrameV4(campaigns, summary = {}) {
     })
   ].join("");
   return `
-    <div style="margin-top:14px;padding:14px 14px 12px;border-radius:18px;border:1px solid rgba(148,163,184,.16);background:linear-gradient(180deg,rgba(10,14,25,.96),rgba(12,16,28,.78));box-shadow:inset 0 1px 0 rgba(255,255,255,.03)">
-      <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:14px;flex-wrap:wrap">
-        <div style="font-size:20px;line-height:1.05;font-weight:950;letter-spacing:.02em;color:#f8fafc">RIGHT SIZE THE POSITION</div>
-        <div style="max-width:520px;text-align:right;font-size:12px;line-height:1.35;font-weight:800;color:#ffd875;letter-spacing:.01em">SIZE IS A PROMISE . WHAT GOOD IS CONVICTION WITHOUT COMMITMENT</div>
+    <div style="margin-top:8px;padding:10px 12px 10px;border-radius:18px;border:1px solid rgba(148,163,184,.16);background:linear-gradient(180deg,rgba(10,14,25,.96),rgba(12,16,28,.78));box-shadow:inset 0 1px 0 rgba(255,255,255,.03)">
+      <div style="display:flex;justify-content:space-between;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+        <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
+          <div style="font-size:18px;line-height:1.05;font-weight:950;letter-spacing:.02em;color:#f8fafc">RIGHT SIZE THE POSITION</div>
+          <div style="font-size:12px;line-height:1.2;font-weight:800;color:#8ea0b8;letter-spacing:.01em">· last ${recent.length} positions</div>
+        </div>
+        <div style="max-width:520px;text-align:center;font-size:12px;line-height:1.35;font-weight:900;color:#5ee38d;letter-spacing:.01em">${escHtml(recentLead)} · ${escHtml(recentBody)}</div>
+        <div style="max-width:520px;text-align:right;font-size:12px;line-height:1.35;font-weight:800;color:#ffd875;letter-spacing:.01em">SIZE IS A COMMITMENT</div>
       </div>
-      <div style="margin:6px 0 10px 0;font-size:16px;line-height:1.2;font-weight:900;color:#5ee38d">${escHtml(recentLead)}</div>
-      <div style="margin:-4px 0 0 0;font-size:12px;line-height:1.35;color:#94a3b8">${escHtml(recentBody)}</div>
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:18px;margin-bottom:12px">
-        <div style="font-size:16px;font-weight:900;color:#f8fafc">Recent sizing</div>
-        <div style="font-size:11px;color:#94a3b8;border:1px solid rgba(148,163,184,.18);border-radius:999px;padding:3px 9px">${totalTrades || 0}</div>
+      <div style="margin-top:6px;border-radius:14px;border:1px solid rgba(148,163,184,.16);overflow:hidden;background:linear-gradient(180deg,rgba(7,11,20,.94),rgba(11,15,25,.84))">
+        <div style="display:grid;grid-template-columns:72px 92px minmax(0,1fr) 104px 82px;gap:12px;align-items:center;padding:7px 14px;border-bottom:1px solid rgba(148,163,184,.14);background:rgba(255,255,255,.02);font-size:10px;font-weight:900;letter-spacing:.1em;text-transform:uppercase;color:#8ea0b8">
+          <div>Symbol</div>
+          <div>Date</div>
+          <div>Position Size - ${targetLabel} Target →</div>
+          <div style="text-align:right">% Capital</div>
+          <div style="text-align:right">Status</div>
+        </div>
+        ${sizingRows}
       </div>
-      <div style="display:flex;gap:14px;overflow:auto;padding-bottom:6px">
-        ${tiles}
-      </div>
-      <section class="settings-card" style="margin-top:10px;border:1px solid rgba(148,163,184,.16);background:linear-gradient(180deg,rgba(10,14,25,.96),rgba(12,16,28,.78));box-shadow:inset 0 1px 0 rgba(255,255,255,.03)">
-        <div class="sec-title" style="margin-bottom:12px;border:none;padding-bottom:0">Streaks</div>
-        <div style="display:flex;gap:8px;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;padding-bottom:4px;align-items:stretch">${streakTiles}</div>
+      <section class="settings-card" style="margin-top:0;border:1px solid rgba(148,163,184,.16);background:linear-gradient(180deg,rgba(10,14,25,.96),rgba(12,16,28,.78));box-shadow:inset 0 1px 0 rgba(255,255,255,.03)">
+        <div class="sec-title" style="margin-bottom:8px;border:none;padding-bottom:0">Streaks</div>
+        <div style="display:flex;gap:8px;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;padding-bottom:2px;align-items:stretch">${streakTiles}</div>
       </section>
     </div>
   `;
@@ -2036,6 +2077,7 @@ function clearPlanFields(id) {
   if (!confirm("Clear the plan-level fields for this position?")) return;
   p.planEntry = null;
   p.planSL = null;
+  p.intraEntry = null;
   p.intraSL = null;
   p.riskAmount = null;
   p.intraQty = null;
@@ -2051,6 +2093,7 @@ function clearExecutionFields(id) {
   p.overnightEntry = null;
   p.overnightQty = null;
   p.overnightSL = null;
+  p.daySL = null;
   p.actualQty = null;
   p.entryDate = "";
   p.posHigh = null;
@@ -2604,17 +2647,16 @@ function renderStreakFrame(campaigns, summary) {
   const best = Number(summary?.longest_honor_streak || 0);
   const honoredCount = Number(summary?.honored_campaigns || 0);
   const violatedCount = Number(summary?.violated_campaigns || 0);
-  const recent = items.slice(0, 6);
-  const recentHonored = recent.filter(item => String(item.status || "").toUpperCase() === "HONORED").length;
-  const recentTotal = recent.length;
+  const recent = items.slice(0, 9);
+  const recentSix = items.slice(0, 6);
+  const recentHonored = recentSix.filter(item => String(item.status || "").toUpperCase() === "HONORED").length;
+  const recentTotal = recentSix.length;
   const recentViolated = Math.max(0, recentTotal - recentHonored);
   const recentLead = recentTotal
-    ? `${recentHonored} of the last ${recentTotal} trades honored your stop.`
+    ? `${recentHonored} of last ${recentTotal} trades honored`
     : "Build the first clean rep.";
   const recentBody = recentTotal
-    ? (recentHonored >= recentViolated
-      ? "Small wins. Strong habits. Big edge."
-      : "Reset fast. Tight stops. Clean execution.")
+    ? (recentHonored >= recentViolated ? "keep the chain clean." : "reset fast, run clean.")
     : "One honored stop starts momentum.";
   const actualPnlTotal = summary?.actual_pnl_total != null ? Number(summary.actual_pnl_total) : null;
   const plannedPnlTotal = summary?.planned_pnl_total != null ? Number(summary.planned_pnl_total) : null;
@@ -2649,33 +2691,32 @@ function renderStreakFrame(campaigns, summary) {
       ? `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px"><div style="display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border-radius:999px;border:1px solid ${meta.ring};background:${meta.bg};color:${meta.fg};font-size:10px;font-weight:900;letter-spacing:.02em">${status}</div><div style="display:inline-flex;align-items:center;padding:2px 10px;border-radius:999px;border:1px solid rgba(245,158,11,.38);background:linear-gradient(180deg,rgba(245,158,11,.26),rgba(245,158,11,.14));color:#ffd875;font-size:10px;font-weight:950;letter-spacing:.02em;text-shadow:0 0 10px rgba(255,191,64,.28)">${pricePlain(leftOnTable)}</div></div>`
       : "";
     return `
-        <div style="min-width:176px;flex:0 0 auto;padding:12px 12px 10px;border-radius:16px;border:1px solid ${meta.ring};background:linear-gradient(180deg,rgba(16,20,30,.94),rgba(10,14,24,.86));box-shadow:inset 0 1px 0 rgba(255,255,255,.03);text-align:left">
+        <div style="min-width:176px;flex:0 0 auto;padding:10px 12px 9px;border-radius:16px;border:1px solid ${meta.ring};background:linear-gradient(180deg,rgba(16,20,30,.94),rgba(10,14,24,.86));box-shadow:inset 0 1px 0 rgba(255,255,255,.03);text-align:left">
           <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
             <div style="font-size:13px;font-weight:900;letter-spacing:.01em;color:#f8fafc">${label}</div>
             <div style="font-size:10px;color:#cbd5e1">${date}</div>
           </div>
           ${statusRow || `<div style="display:inline-flex;align-items:center;gap:6px;margin-top:8px;padding:2px 9px;border-radius:999px;border:1px solid ${meta.ring};background:${meta.bg};color:${meta.fg};font-size:10px;font-weight:900;letter-spacing:.02em">${status}</div>`}
-          <div style="display:flex;align-items:center;justify-content:center;margin:12px 0 8px 0">
-            <div style="width:58px;height:58px;border-radius:999px;border:1px solid ${meta.ring};background:rgba(255,255,255,.03);display:flex;align-items:center;justify-content:center;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)">
-              <div style="font-size:30px;line-height:1;color:${meta.fg};font-weight:900">${iconByStatus(status)}</div>
+          <div style="display:flex;align-items:center;justify-content:center;margin:10px 0 6px 0">
+            <div style="width:50px;height:50px;border-radius:999px;border:1px solid ${meta.ring};background:rgba(255,255,255,.03);display:flex;align-items:center;justify-content:center;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)">
+              <div style="font-size:26px;line-height:1;color:${meta.fg};font-weight:900">${iconByStatus(status)}</div>
             </div>
           </div>
           <div style="height:3px;border-radius:999px;background:${status === "HONORED" ? "linear-gradient(90deg, rgba(34,197,94,.92), rgba(74,222,128,.72))" : "linear-gradient(90deg, rgba(239,68,68,.92), rgba(248,113,113,.72))"};box-shadow:0 0 0 1px ${meta.ring} inset"></div>
-          <div style="margin-top:10px;font-size:13px;line-height:1.2;font-weight:800;color:#f8fafc">${detail.headline}</div>
-          <div style="margin-top:3px;font-size:11px;line-height:1.3;color:#b8c4d6">${detail.body}</div>
+          <div style="margin-top:8px;font-size:12px;line-height:1.2;font-weight:800;color:#f8fafc">${detail.headline}</div>
+          <div style="margin-top:2px;font-size:10px;line-height:1.25;color:#b8c4d6">${detail.body}</div>
         </div>
       `;
   }).join("");
   return `
-    <div style="margin-top:14px;padding:14px;border-radius:20px;border:1px solid rgba(148,163,184,.16);background:linear-gradient(180deg,rgba(10,14,25,.96),rgba(12,16,28,.78));box-shadow:0 18px 50px rgba(0,0,0,.26),inset 0 1px 0 rgba(255,255,255,.03)">
-      <div style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;flex-wrap:wrap;margin-bottom:12px">
-        <div style="font-size:20px;line-height:1.05;font-weight:950;letter-spacing:.02em;color:#f8fafc">HONOR THY STOP</div>
-        <div style="max-width:520px;text-align:right;font-size:12px;line-height:1.35;font-weight:800;color:#ffd875;letter-spacing:.01em">STOPLOSS IS A PROMISE . WHAT GOOD IS A MAN WHO DOES NOT KEEP HIS PROMISE</div>
-      </div>
-      <div style="margin:6px 0 10px 0;font-size:16px;line-height:1.2;font-weight:900;color:#5ee38d">${escHtml(recentLead)}</div>
-      <div style="margin:-4px 0 10px 0;font-size:12px;line-height:1.35;color:#94a3b8">${escHtml(recentBody)}</div>
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:18px;margin-bottom:12px">
-        <div style="font-size:16px;font-weight:900;color:#f8fafc">Recent executions <span style="margin-left:8px;padding:2px 10px;border-radius:999px;border:1px solid rgba(148,163,184,.16);background:rgba(255,255,255,.04);font-size:11px;color:#cbd5e1">${recent.length}</span></div>
+    <div style="margin-top:8px;padding:10px 12px 10px;border-radius:20px;border:1px solid rgba(148,163,184,.16);background:linear-gradient(180deg,rgba(10,14,25,.96),rgba(12,16,28,.78));box-shadow:0 18px 50px rgba(0,0,0,.26),inset 0 1px 0 rgba(255,255,255,.03)">
+      <div style="display:flex;justify-content:space-between;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+        <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
+          <div style="font-size:18px;line-height:1.05;font-weight:950;letter-spacing:.02em;color:#f8fafc">HONOR THY STOP</div>
+          <div style="font-size:12px;line-height:1.2;font-weight:800;color:#8ea0b8;letter-spacing:.01em">· last ${recent.length} executions</div>
+        </div>
+        <div style="flex:1 1 260px;text-align:center;font-size:12px;line-height:1.35;font-weight:900;color:#5ee38d;letter-spacing:.01em">${escHtml(recentLead)} · ${escHtml(recentBody)}</div>
+        <div style="max-width:520px;text-align:right;font-size:12px;line-height:1.35;font-weight:800;color:#ffd875;letter-spacing:.01em">STOPLOSS IS A PROMISE</div>
       </div>
       <div style="display:flex;gap:14px;overflow:auto;padding-bottom:6px">
         ${tiles}
@@ -2711,7 +2752,7 @@ function renderStreakView() {
     const fmtPct = v => v == null ? "-" : `${Number(v).toFixed(2)}%`;
   const tradebookName = String(activeReport.tradebook_path || "").split(/[\\/]/).pop() || "not found";
   const sourceName = isPlanMode ? "saved trade-plan snapshots" : tradebookName;
-  const reportAlert = activeReport.ok === false && activeReport.message ? `<div class="view-note" style="margin-top:10px;color:#ffb4b4">${escHtml(activeReport.message)}${activeReport.debug_log_path ? ` Debug log: ${escHtml(activeReport.debug_log_path)}` : ""}</div>` : "";
+   const reportAlert = activeReport.ok === false && activeReport.message ? `<div class="view-note" style="margin-top:6px;color:#ffb4b4">${escHtml(activeReport.message)}${activeReport.debug_log_path ? ` Debug log: ${escHtml(activeReport.debug_log_path)}` : ""}</div>` : "";
   const frameHtml = isPlanMode ? renderStreakFrame(activeReport.campaigns || [...closed, ...open], summary) : "";
   const sizingHtml = isPlanMode ? renderSizingFrameV4(activeReport.campaigns || [...closed, ...open], summary) : "";
   const closedVisual = isPlanMode ? [...closed].sort((a, b) => String(b.entry_date || b.price_date || "").localeCompare(String(a.entry_date || a.price_date || ""))) : closed;
@@ -2810,20 +2851,20 @@ function renderStreakView() {
           ${frameHtml}
           <div class="view-note" style="margin-top:12px">${escHtml(activeReport.note || "No additional note.")}</div>
         </section>`}
-      <section class="settings-card" style="margin-top:14px">
-        <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">${isPlanMode ? "Open trades" : "Open trades"}</div>
-         <div class="view-note">${isPlanMode ? "These trades are still open. The table shows the latest state only." : "These are still open in the latest tradebook. Their return is marked to the latest bhav close when available."}</div>
-        <div style="overflow:auto;margin-top:12px">
+       <section class="settings-card" style="margin-top:8px">
+         <div class="sec-title" style="margin-bottom:8px;border-bottom:none;padding-bottom:0">${isPlanMode ? "Open trades" : "Open trades"}</div>
+          <div class="view-note">${isPlanMode ? "These trades are still open. The table shows the latest state only." : "These are still open in the latest tradebook. Their return is marked to the latest bhav close when available."}</div>
+        <div style="overflow:auto;margin-top:8px">
             <table class="ttbl">
             <thead>${tableHeader}</thead>
             <tbody>${openTable.body || `<tr><td colspan="${tableCols}"><div class="view-note">${escHtml(openEmptyMsg)}</div></td></tr>`}</tbody>
             </table>
           </div>
       </section>
-      <section class="settings-card" style="margin-top:14px">
-        <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">${isPlanMode ? "Closed trades" : "Closed campaigns"}</div>
-         <div class="view-note">${isPlanMode ? "Each row shows actual P&L, target P&L, and the gap between them using only the saved snapshot. HONORED means the exit was at or below the active stop; VIOLATED means it exited above the stop." : "Each row is one round-trip campaign grouped by symbol and execution order. Actual return is the live trade outcome; the stop-plan column shows what the trade would have returned if your stop plan had been followed against real market data after the buy."}</div>
-        <div style="overflow:auto;margin-top:12px">
+       <section class="settings-card" style="margin-top:8px">
+         <div class="sec-title" style="margin-bottom:8px;border-bottom:none;padding-bottom:0">${isPlanMode ? "Closed trades" : "Closed campaigns"}</div>
+          <div class="view-note">${isPlanMode ? "Each row shows actual P&L, target P&L, and the gap between them using only the saved snapshot. HONORED means the exit was at or below the active stop; VIOLATED means it exited above the stop." : "Each row is one round-trip campaign grouped by symbol and execution order. Actual return is the live trade outcome; the stop-plan column shows what the trade would have returned if your stop plan had been followed against real market data after the buy."}</div>
+        <div style="overflow:auto;margin-top:8px">
           <table class="ttbl">
             <thead>${tableHeader}</thead>
             <tbody>${closedTable.body || `<tr><td colspan="${tableCols}"><div class="view-note">${escHtml(closedEmptyMsg)}</div></td></tr>`}</tbody>
@@ -2862,6 +2903,9 @@ function buildCard(p, num) {
   const carriedQty = getTotalQty(p);
   const displayRisk = getDisplayedRisk(p);
   const displayRiskLabel = getDisplayedRiskLabel(p);
+    const cmpChip = p.cmp != null
+      ? `<span style="display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:999px;border:1px solid rgba(85,153,255,.35);background:linear-gradient(180deg, rgba(85,153,255,.18), rgba(85,153,255,.08));color:#9cc4ff;font-family:var(--mono);font-size:12px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;box-shadow:0 0 0 1px rgba(11,18,34,.4) inset">CMP Rs ${priceSL(p.cmp)}</span>`
+      : "";
   const slOrder = getTrailStopOrderPreview(p);
   const publicIpNote = kitePublicIp ? `Kite/public egress IP: ${kitePublicIp}` : "Public IP not detected yet.";
   const slOrderButton = slOrder
@@ -2870,8 +2914,10 @@ function buildCard(p, num) {
   const slOrderNote = slOrder
     ? `Kite order preview: qty ${slOrder.qty}, trigger Rs ${priceSL(slOrder.trigger)}, limit Rs ${priceSL(slOrder.limit)}`
     : "Set a trail override to enable the Kite SL push button.";
-  const compactNumStyle = 'style="max-width:118px;width:100%"';
-  const compactTrimStyle = 'style="max-width:148px;width:100%"';
+   const compactNumStyle = 'style="width:100%;min-width:0"';
+   const compactTrimStyle = 'style="width:100%;min-width:0"';
+  const avgExecSL = getAverageExecutionSL(p);
+  const execRisk = getExecutionRisk(p);
   const qty = carriedQty != null ? carriedQty : (p._qty || 0);
   const splits = [Math.ceil(qty * 0.33), Math.ceil(qty * 0.25), Math.floor(qty * 0.25), Math.floor(qty * 0.17)];
   const splitHtml = `<div class="qty-splits"><div class="qs-box"><div class="qs-lbl">T1 - lock</div><div class="qs-val" id="sp0-${p.id}">${qty > 0 ? splits[0] : "-"}</div><div class="qs-pct">33%</div></div><div class="qs-box"><div class="qs-lbl">T2 - target</div><div class="qs-val" id="sp1-${p.id}">${qty > 0 ? splits[1] : "-"}</div><div class="qs-pct">25%</div></div><div class="qs-box"><div class="qs-lbl">T3 - run</div><div class="qs-val" id="sp2-${p.id}">${qty > 0 ? splits[2] : "-"}</div><div class="qs-pct">25%</div></div><div class="qs-box"><div class="qs-lbl">T4 - runner</div><div class="qs-val" id="sp3-${p.id}">${qty > 0 ? splits[3] : "-"}</div><div class="qs-pct">17%</div></div></div>`;
@@ -2895,7 +2941,10 @@ function buildCard(p, num) {
       <div class="phead-l">
         <div class="pos-num">${num}</div>
         <div class="phead-core">
-          <input type="text" class="sym-in" id="sym-${p.id}" list="symbol-suggestions" placeholder="SYMBOL" value="${p.symbol}" oninput="handleSymbolInput('${p.id}',this)" onblur="commitSymbol('${p.id}',this)" onclick="event.stopPropagation()">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <input type="text" class="sym-in" id="sym-${p.id}" list="symbol-suggestions" placeholder="SYMBOL" value="${p.symbol}" oninput="handleSymbolInput('${p.id}',this)" onblur="commitSymbol('${p.id}',this)" onclick="event.stopPropagation()">
+            ${cmpChip}
+          </div>
           <div class="hmeta" id="hmeta-${p.id}">${headerMeta}</div>
         </div>
         <span class="badge badge-${primaryBadge}" id="pbadge-${p.id}">${primaryBadge.toUpperCase()}</span>
@@ -2911,42 +2960,98 @@ function buildCard(p, num) {
     <div class="pbody ${p.collapsed ? "hide" : ""}" id="pb-${p.id}">
       <div class="sec"><div class="sec-title">Merits &amp; thesis</div><textarea class="fin" rows="2" placeholder="Why this stock? RS rank, catalyst, setup pattern..." oninput="upd('${p.id}','merits',this.value)">${p.merits || ""}</textarea></div>
       <div class="sec">
-        <div class="sec-title">Plan <span class="sec-note">core qty uses planned SL, tactical qty is set manually</span><button class="btn-sec" type="button" style="padding:3px 8px;font-size:10px" onclick="event.stopPropagation();clearPlanFields('${p.id}')">Clear plan</button></div>
-        <div class="g5">
-          <div class="field"><div class="flabel">CMP <span class="flabel-tag">bhav close</span></div><input type="number" class="fin num" id="cmp-${p.id}" placeholder="auto" value="${p.cmp != null ? p.cmp : ""}" readonly></div>
-          <div class="field"><div class="flabel">Plan entry <span style="color:var(--blu);font-size:9px">Rs</span></div><input type="number" class="fin num en-f" placeholder="0.00" value="${p.planEntry != null ? p.planEntry : ""}" oninput="upd('${p.id}','planEntry',parseFloat(this.value)||null)"></div>
-          <div class="field"><div class="flabel">Predetermined SL <span style="color:var(--red);font-size:9px">Rs</span></div><input type="number" class="fin num sl-f" placeholder="0.00" value="${p.planSL != null ? p.planSL : ""}" oninput="upd('${p.id}','planSL',parseFloat(this.value)||null)"></div>
-          <div class="field"><div class="flabel">Intraday SL <span style="color:var(--amb);font-size:9px">Rs</span></div><input type="number" class="fin num" placeholder="set on entry" value="${p.intraSL != null ? p.intraSL : ""}" oninput="upd('${p.id}','intraSL',parseFloat(this.value)||null)"></div>
-          <div class="field"><div class="flabel">Risk willing <span class="flabel-tag">Rs</span></div><input type="number" class="fin num" placeholder="5000" value="${p.riskAmount != null ? p.riskAmount : ""}" oninput="upd('${p.id}','riskAmount',parseFloat(this.value)||null)"></div>
+        <div class="sec-title" style="gap:10px;flex-wrap:wrap">
+          <span>Plan</span>
+          <span class="sec-note">core qty uses planned SL, tactical qty is set manually</span>
+          <span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span style="font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--blu)">Risk willing</span>
+            <input type="number" class="fin num" style="width:110px;height:28px;padding-top:5px;padding-bottom:5px" placeholder="5000" value="${p.riskAmount != null ? p.riskAmount : ""}" oninput="upd('${p.id}','riskAmount',parseFloat(this.value)||null)">
+            <button class="btn-sec" type="button" style="padding:3px 8px;font-size:10px" onclick="event.stopPropagation();clearPlanFields('${p.id}')">Clear plan</button>
+          </span>
         </div>
-        <div class="g4" style="margin-top:10px;gap:14px;align-items:start;">
-          <div class="field"><div class="flabel">Sizing math <span class="flabel-tag">computed</span></div><div class="fin num" id="rps-val-${p.id}" style="color:var(--t2);font-weight:600;cursor:default;">${p._rps ? p._rps : "-"}</div></div>
-          <div class="field"><div class="flabel">Planned qty <span class="flabel-tag">computed</span></div><div class="fcomp" id="qty-${p.id}" style="color:${p._qty > 0 ? "var(--green)" : "var(--t3)"};">${p._qty > 0 ? p._qty : "-"}</div></div>
-          <div class="field"><div class="flabel">Intraday qty <span class="flabel-tag">manual</span></div><input type="number" class="fin num" placeholder="qty" value="${p.intraQty != null ? p.intraQty : (p._suggestedIntraQty != null ? p._suggestedIntraQty : "")}" oninput="upd('${p.id}','intraQty',parseInt(this.value)||0)"></div>
-          <div class="field"><div class="flabel">Planned risk <span class="flabel-tag">computed</span></div><div class="fcomp" id="prisk-${p.id}" style="color:var(--amb)">${p._planRisk != null && p._planRisk > 0 ? price2(p._planRisk) : "-"}</div></div>
+        <div style="border:1px solid var(--line);border-radius:12px;overflow:hidden;background:rgba(15,19,33,.7);margin-top:4px">
+          <div style="display:grid;grid-template-columns:140px 96px 1fr 1fr;gap:0;padding:8px 12px;border-bottom:1px solid var(--line);font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--blu)">
+            <div>STAGE</div><div>QTY</div><div>PLAN ENTRY</div><div>STOP-LOSS</div>
+          </div>
+          <div style="display:grid;grid-template-columns:140px 96px 1fr 1fr;gap:0;align-items:center;border-bottom:1px solid var(--line)">
+            <div style="padding:8px 12px;font-size:12px;font-weight:900;color:#7ea0ff;background:rgba(34,57,120,.14);border-right:1px solid var(--line)">PLANNED</div>
+              <div style="padding:6px 8px;border-right:1px solid var(--line)"><div id="cmp-${p.id}" class="fcomp" style="font-size:17px;line-height:1.05;color:${p._predQty > 0 ? "var(--green)" : "var(--t3)"};margin-top:2px">${p._predQty > 0 ? Math.floor(Number(p._predQty)) : "-"}</div></div>
+              <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" class="fin num en-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="0.00" value="${p.planEntry != null ? p.planEntry : ""}" oninput="upd('${p.id}','planEntry',parseFloat(this.value)||null)"></div>
+              <div style="padding:6px 8px"><input type="number" class="fin num sl-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="0.00" value="${p.planSL != null ? p.planSL : ""}" oninput="upd('${p.id}','planSL',parseFloat(this.value)||null)"></div>
+            </div>
+            <div style="display:grid;grid-template-columns:140px 96px 1fr 1fr;gap:0;align-items:center;">
+              <div style="padding:8px 12px;font-size:12px;font-weight:900;color:#2ee6a5;background:rgba(30,214,141,.10);border-right:1px solid var(--line)">INTRADAY</div>
+              <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" class="fin num" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="qty" value="${p.intraQty != null ? p.intraQty : (p._suggestedIntraQty != null ? p._suggestedIntraQty : "")}" oninput="upd('${p.id}','intraQty',parseInt(this.value)||0)"></div>
+              <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" class="fin num en-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="0.00" value="${p.intraEntry != null ? p.intraEntry : ""}" oninput="upd('${p.id}','intraEntry',parseFloat(this.value)||null)"></div>
+              <div style="padding:6px 8px"><input type="number" class="fin num sl-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="0.00" value="${p.intraSL != null ? p.intraSL : ""}" oninput="upd('${p.id}','intraSL',parseFloat(this.value)||null)"></div>
+            </div>
+            <div style="border-top:1px solid var(--line);padding:7px 8px 8px;background:linear-gradient(180deg, rgba(22,28,45,.82), rgba(13,17,30,.94));">
+              <div class="g4" style="grid-template-columns:repeat(4,minmax(0,1fr));gap:0;align-items:stretch;">
+                <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
+                  <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">SIZING MATH</div>
+                  <div class="fcomp" id="rps-val-${p.id}" style="font-size:17px;line-height:1.05;color:var(--t2);margin-top:5px;font-weight:600;cursor:default;">${p._rps ? p._rps : "-"}</div>
+                </div>
+                <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
+                  <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">AVG PLAN ENTRY</div>
+                  <div class="fcomp" id="ape-${p.id}" style="font-size:17px;line-height:1.05;color:var(--green);margin-top:5px">${p._avgPlanEntry != null ? price2(p._avgPlanEntry) : "-"}</div>
+                </div>
+                <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
+                  <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">PLANNED QTY</div>
+                  <div class="fcomp" id="qty-${p.id}" style="font-size:17px;line-height:1.05;color:${(p._predQty + p._intraQty) > 0 ? "var(--green)" : "var(--t3)"};margin-top:5px">${(p._predQty + p._intraQty) > 0 ? (p._predQty + p._intraQty) : "-"}</div>
+                </div>
+                <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;">
+                  <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">PLANNED RISK</div>
+                  <div class="fcomp" id="prisk-${p.id}" style="font-size:17px;line-height:1.05;color:var(--amb);margin-top:5px">${p._planRisk != null && p._planRisk > 0 ? price2(p._planRisk) : "-"}</div>
+                </div>
+            </div>
+          </div>
         </div>
       </div>
       <div class="div"></div>
         <div class="sec-title">Execution <span class="sec-note">actual filled qty is split 30% intraday SL and 70% original SL</span><button class="btn-sec" type="button" style="padding:3px 8px;font-size:10px" onclick="event.stopPropagation();clearExecutionFields('${p.id}')">Clear exec</button></div>
-        <div class="g4" style="grid-template-columns:repeat(5,minmax(0,1fr));gap:14px;align-items:start;">
-          <div class="field"><div class="flabel">OV QTY</div><input type="number" class="fin num" ${compactNumStyle} placeholder="qty" value="${p.overnightQty != null ? p.overnightQty : ""}" oninput="upd('${p.id}','overnightQty',parseInt(this.value)||null)"></div>
-          <div class="field"><div class="flabel">OV PRICE</div><input type="number" class="fin num en-f" ${compactNumStyle} placeholder="overnight fill" value="${p.overnightEntry != null ? p.overnightEntry : ""}" oninput="upd('${p.id}','overnightEntry',parseFloat(this.value)||null)"></div>
-          <div class="field"><div class="flabel">OV SL</div><input type="number" class="fin num sl-f" ${compactNumStyle} placeholder="overnight sl" value="${p.overnightSL != null ? p.overnightSL : ""}" oninput="upd('${p.id}','overnightSL',parseFloat(this.value)||null)"></div>
-          <div class="field"><div class="flabel">QTY</div><input type="number" class="fin num" ${compactNumStyle} placeholder="qty" value="${p.actualQty != null ? p.actualQty : ""}" oninput="upd('${p.id}','actualQty',parseInt(this.value)||null)"></div>
-          <div class="field"><div class="flabel">PRICE</div><input type="number" class="fin num en-f" ${compactNumStyle} placeholder="same-day fill" value="${p.actualEntry != null ? p.actualEntry : ""}" oninput="upd('${p.id}','actualEntry',parseFloat(this.value)||null)"></div>
+        <div style="border:1px solid var(--line);border-radius:12px;overflow:hidden;background:rgba(15,19,33,.7);margin-top:4px">
+          <div style="display:grid;grid-template-columns:140px 96px 1fr 1fr;gap:0;padding:8px 12px;border-bottom:1px solid var(--line);font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--blu)">
+            <div>Order</div><div>Qty</div><div>Fill Price</div><div>Stop-Loss</div>
+          </div>
+          <div style="display:grid;grid-template-columns:140px 96px 1fr 1fr;gap:0;align-items:center;border-bottom:1px solid var(--line)">
+            <div style="padding:8px 12px;font-size:12px;font-weight:900;color:#7ea0ff;background:rgba(34,57,120,.14);border-right:1px solid var(--line)">AN - Antipication</div>
+            <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" class="fin num" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="qty" value="${p.overnightQty != null ? p.overnightQty : ""}" oninput="upd('${p.id}','overnightQty',parseInt(this.value)||null)"></div>
+            <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" class="fin num en-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="overnight fill" value="${p.overnightEntry != null ? p.overnightEntry : ""}" oninput="upd('${p.id}','overnightEntry',parseFloat(this.value)||null)"></div>
+            <div style="padding:6px 8px"><input type="number" class="fin num sl-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="overnight sl" value="${p.overnightSL != null ? p.overnightSL : ""}" oninput="upd('${p.id}','overnightSL',parseFloat(this.value)||null)"></div>
+          </div>
+          <div style="display:grid;grid-template-columns:140px 96px 1fr 1fr;gap:0;align-items:center;">
+            <div style="padding:8px 12px;font-size:12px;font-weight:900;color:#2ee6a5;background:rgba(30,214,141,.10);border-right:1px solid var(--line)">Main - Day</div>
+            <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" class="fin num" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="qty" value="${p.actualQty != null ? p.actualQty : ""}" oninput="upd('${p.id}','actualQty',parseInt(this.value)||null)"></div>
+            <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" class="fin num en-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="same-day fill" value="${p.actualEntry != null ? p.actualEntry : ""}" oninput="upd('${p.id}','actualEntry',parseFloat(this.value)||null)"></div>
+            <div style="padding:6px 8px"><input type="number" class="fin num sl-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="day sl" value="${p.daySL != null ? p.daySL : ""}" oninput="upd('${p.id}','daySL',parseFloat(this.value)||null)"></div>
+          </div>
         </div>
-        <div class="g4" style="margin-top:10px;gap:14px;align-items:start;">
-          <div class="field"><div class="flabel">TOTAL QTY <span class="flabel-tag">computed</span></div><div class="fcomp" id="totq-${p.id}" style="font-size:20px;color:var(--t1);">${getTotalQty(p) != null ? getTotalQty(p) : "-"}</div></div>
-          <div class="field"><div class="flabel">ENTRY PRICE <span class="flabel-tag">weighted avg</span></div><div class="fcomp" id="epx-${p.id}" style="font-size:20px;color:var(--t1);">${entry != null ? price2(entry) : "-"}</div></div>
-          <div class="field"><div class="flabel">ENTRY DATE</div><input type="date" class="fin" ${compactTrimStyle} value="${p.entryDate || ""}" onchange="upd('${p.id}','entryDate',this.value)"></div>
-          <div class="field"><div class="flabel">EXEC RISK <span class="flabel-tag">qty x sl gap</span></div><div class="fcomp" id="erisk-${p.id}" style="font-size:20px;color:${getExecutionRisk(p) > 0 ? "var(--red)" : "var(--t1)"};">${getExecutionRisk(p) != null ? price2(getExecutionRisk(p)) : "-"}</div></div>
+        <div style="margin-top:6px;padding:6px 8px 7px;border:1px solid rgba(92,227,141,.14);border-radius:10px;background:linear-gradient(180deg, rgba(22,28,45,.82), rgba(13,17,30,.94));box-shadow:inset 0 1px 0 rgba(255,255,255,.03);">
+          <div class="g4" style="grid-template-columns:repeat(4,minmax(0,1fr));gap:0;align-items:stretch;">
+            <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
+              <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">TOTAL QTY</div>
+              <div class="fcomp" id="totq-${p.id}" style="font-size:17px;line-height:1.05;color:var(--t1);margin-top:5px">${getTotalQty(p) != null ? getTotalQty(p) : "-"}</div>
+            </div>
+            <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
+              <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">AVG ENTRY</div>
+              <div class="fcomp" id="epx-${p.id}" style="font-size:17px;line-height:1.05;color:var(--green);margin-top:5px">${entry != null ? price2(entry) : "-"}</div>
+            </div>
+            <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
+              <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">ENTRY DATE</div>
+              <input type="date" class="fin" style="width:100%;min-width:0;margin-top:5px;height:28px;padding-top:5px;padding-bottom:5px" ${compactTrimStyle} value="${p.entryDate || ""}" onchange="upd('${p.id}','entryDate',this.value)">
+            </div>
+            <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;">
+              <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">EXEC RISK</div>
+              <div class="fcomp" id="erisk-${p.id}" style="font-size:17px;line-height:1.05;color:${execRisk > 0 ? "var(--red)" : "var(--t1)"};margin-top:5px">${execRisk != null ? price2(execRisk) : "-"}</div>
+            </div>
+          </div>
         </div>
         <div style="margin-top:10px;"><div style="font-size:10px;color:var(--t3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">Suggested 4-part split</div>${splitHtml}</div>
       </div>
       <div class="div"></div>
       <div class="sec"><div class="sec-title">Trim plan &amp; execution <span class="sec-note">enter trim date, actual sell Rs + qty after each trim</span></div><table class="ttbl"><thead><tr><th>Trim</th><th>Date</th><th>Suggested Rs</th><th>Actual sell Rs</th><th>Qty sold</th><th>P&amp;L</th><th class="c">Done</th></tr></thead><tbody>${trimRows}</tbody></table>${pnlSumHtml}</div>
       <div class="div"></div>
-      <div class="trail-box">
+        <div class="trail-box" id="trail-${p.id}">
         <div class="trail-hdr"><span class="trail-title">Trail stop loss</span><span class="trail-days" id="days-${p.id}">${p._days != null ? "Day " + p._days + " in trade" : ""}</span></div>
         <div class="trail-grid">
           <div><div class="tc-label">Initial SL</div><div class="tc-val sl-c"><strong>Rs ${priceSL(p.planSL)}</strong></div></div>

@@ -5,3 +5,4 @@
 - Do not hand back a change if the live module still errors or loads stale data.
 - For Streaks work, confirm `/api/streaks` returns `200` and the UI section is populated.
 - Keep answers concise and number-focused unless the user asks for detail.
+- For number-heavy answers, prefer compact tables with `Input`, `Formula`, and `Result` columns where possible.

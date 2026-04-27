@@ -1,6 +1,6 @@
 {
   "date": "2026-04-24",
-  "saved_at": "2026-04-26T12:45:36",
+  "saved_at": "2026-04-27T09:13:55",
   "positions": [
     {
       "id": "p1776944248494n9mf",
@@ -131,7 +131,7 @@
       "_realPnl": -1088,
       "_openPnl": 1932,
       "_currentSL": 718.9,
-      "_days": 3,
+      "_days": 4,
       "_beSug": true,
       "_status": "partial"
     },
@@ -238,7 +238,7 @@
       "_realPnl": 0,
       "_openPnl": null,
       "_currentSL": 1419.9,
-      "_days": 3,
+      "_days": 4,
       "_beSug": true,
       "_status": "closed"
     },
@@ -390,7 +390,7 @@
       "_realPnl": 2988,
       "_openPnl": null,
       "_currentSL": 1249,
-      "_days": 3,
+      "_days": 4,
       "_beSug": true,
       "_status": "closed"
     },

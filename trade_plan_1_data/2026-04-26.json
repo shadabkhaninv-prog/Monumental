@@ -1,6 +1,6 @@
 {
   "date": "2026-04-26",
-  "saved_at": "2026-04-26T18:59:35",
+  "saved_at": "2026-04-27T09:14:04",
   "positions": [
     {
       "id": "p1776944248494n9mf",
@@ -131,7 +131,7 @@
       "_realPnl": -1088,
       "_openPnl": 1932,
       "_currentSL": 718.9,
-      "_days": 3,
+      "_days": 4,
       "_beSug": true,
       "_status": "partial"
     }
