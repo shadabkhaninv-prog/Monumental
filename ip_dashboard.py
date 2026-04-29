@@ -1329,6 +1329,36 @@ def render_focus_board_lightweight(
           font-size: 12px;
           color: #cbd5e1;
         }}
+        .zoom-nav {{
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-wrap: wrap;
+        }}
+        .zoom-step {{
+          border: 1px solid #3a4250;
+          background: #1f2329;
+          color: #cbd5e1;
+          border-radius: 8px;
+          padding: 6px 10px;
+          font-size: 13px;
+          font-weight: 700;
+          cursor: pointer;
+        }}
+        .zoom-step:hover {{
+          background: #262b33;
+          border-color: #64748b;
+        }}
+        .zoom-step:disabled {{
+          opacity: .45;
+          cursor: not-allowed;
+        }}
+        .zoom-step-icon {{
+          min-width: 36px;
+          padding-inline: 0;
+          font-size: 18px;
+          line-height: 1;
+        }}
         .zoom-close {{
           border: 1px solid #3a4250;
           background: #1f2329;
@@ -1407,7 +1437,10 @@ def render_focus_board_lightweight(
               <div class="zoom-title" id="zoom-title"></div>
               <div class="zoom-subtitle" id="zoom-sector"></div>
             </div>
-            <div style="display:flex;align-items:center;gap:12px;">
+            <div class="zoom-nav">
+              <button class="zoom-step" type="button" id="zoom-prev" onclick="stepZoom(-1)">Prev</button>
+              <button class="zoom-step" type="button" id="zoom-next" onclick="stepZoom(1)">Next</button>
+              <button class="zoom-step zoom-step-icon" type="button" id="zoom-arrow" onclick="stepZoom(1)" aria-label="Next chart" title="Next chart">&rarr;</button>
               <div class="zoom-meta" id="zoom-meta"></div>
               <button class="zoom-close" type="button" onclick="closeZoom()">Close</button>
             </div>
@@ -1423,6 +1456,7 @@ def render_focus_board_lightweight(
         const symbols = {json.dumps(ordered_symbols)};
         let zoomChart = null;
         let zoomResizeObserver = null;
+        let zoomIndex = -1;
 
         function formatVolume(value) {{
           if (value === null || value === undefined) return 'n/a';
@@ -1438,6 +1472,17 @@ def render_focus_board_lightweight(
           metaEl.textContent = 'Close ' + card.end_close.toFixed(2) + ' | ' + moveText;
           metaEl.classList.toggle('positive', card.move_pct !== null && card.move_pct > 0);
           metaEl.classList.toggle('negative', card.move_pct !== null && card.move_pct < 0);
+        }}
+
+        function updateZoomNav() {{
+          const prevBtn = document.getElementById('zoom-prev');
+          const nextBtn = document.getElementById('zoom-next');
+          const arrowBtn = document.getElementById('zoom-arrow');
+          const total = symbols.length;
+          const nextDisabled = zoomIndex < 0 || zoomIndex >= total - 1;
+          if (prevBtn) prevBtn.disabled = zoomIndex <= 0;
+          if (nextBtn) nextBtn.disabled = nextDisabled;
+          if (arrowBtn) arrowBtn.disabled = nextDisabled;
         }}
 
         function bindTooltip(chart, card, tooltipEl) {{
@@ -1588,14 +1633,23 @@ def render_focus_board_lightweight(
         }}
 
         function openZoom(sym) {{
+          const idx = symbols.indexOf(sym);
+          if (idx < 0) return;
+          openZoomAt(idx);
+        }}
+
+        function openZoomAt(idx) {{
+          const sym = symbols[idx];
           const card = payload[sym];
           if (!card || !card.has_data) return;
           const overlay = document.getElementById('zoom-overlay');
           const zoomEl = document.getElementById('zoom-chart');
           const tooltipEl = document.getElementById('tooltip-zoom');
+          zoomIndex = idx;
           document.getElementById('zoom-title').textContent = sym;
           document.getElementById('zoom-sector').textContent = card.sector || 'Unknown';
           setMeta(document.getElementById('zoom-meta'), card);
+          updateZoomNav();
           zoomEl.innerHTML = '';
           tooltipEl.classList.remove('visible');
           overlay.classList.add('open');
@@ -1622,9 +1676,18 @@ def render_focus_board_lightweight(
           }});
         }}
 
+        function stepZoom(delta) {{
+          if (!symbols.length) return;
+          const nextIdx = zoomIndex + delta;
+          if (nextIdx < 0 || nextIdx >= symbols.length) return;
+          openZoomAt(nextIdx);
+        }}
+
         function closeZoom() {{
           const overlay = document.getElementById('zoom-overlay');
           overlay.classList.remove('open');
+          zoomIndex = -1;
+          updateZoomNav();
           if (zoomResizeObserver) {{
             zoomResizeObserver.disconnect();
             zoomResizeObserver = null;
@@ -1643,8 +1706,15 @@ def render_focus_board_lightweight(
 
         symbols.forEach(applyChart);
         document.addEventListener('keydown', (event) => {{
-          if (event.key === 'Escape') {{
+          const zoomOpen = document.getElementById('zoom-overlay').classList.contains('open');
+          if (event.key === 'Escape' && zoomOpen) {{
             closeZoom();
+          }} else if (zoomOpen && event.key === 'ArrowLeft') {{
+            event.preventDefault();
+            stepZoom(-1);
+          }} else if (zoomOpen && event.key === 'ArrowRight') {{
+            event.preventDefault();
+            stepZoom(1);
           }}
         }});
       </script>

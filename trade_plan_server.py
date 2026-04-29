@@ -30,9 +30,13 @@ DB_CONFIG = {
 }
 
 DEFAULT_HTML_PATH = Path(__file__).resolve().parent / "trade_plan_1.html"
-PUBLIC_IP_PROBES = (
+PUBLIC_IPV4_PROBES = (
     "https://api.ipify.org?format=json",
     "https://checkip.amazonaws.com",
+)
+PUBLIC_IPV6_PROBES = (
+    "https://api64.ipify.org?format=json",
+    "https://api6.ipify.org?format=json",
 )
 
 
@@ -40,8 +44,8 @@ def normalize_symbol(value: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", (value or "").strip().upper())
 
 
-def fetch_public_ip(timeout: float = 4.0) -> Optional[str]:
-    for url in PUBLIC_IP_PROBES:
+def fetch_public_ip_from_probes(probes: Sequence[str], timeout: float = 4.0) -> Optional[str]:
+    for url in probes:
         try:
             with urllib.request.urlopen(url, timeout=timeout) as response:
                 raw = response.read().decode("utf-8", errors="ignore").strip()
@@ -60,6 +64,14 @@ def fetch_public_ip(timeout: float = 4.0) -> Optional[str]:
         except Exception:
             continue
     return None
+
+
+def fetch_public_ip(timeout: float = 4.0) -> Optional[str]:
+    return fetch_public_ip_from_probes(PUBLIC_IPV4_PROBES, timeout=timeout)
+
+
+def fetch_public_ipv6(timeout: float = 4.0) -> Optional[str]:
+    return fetch_public_ip_from_probes(PUBLIC_IPV6_PROBES, timeout=timeout)
 
 
 def default_checklist_groups() -> List[Dict[str, object]]:
@@ -1074,7 +1086,7 @@ class TradePlanStore:
                             "breach_pct": round((actual_return_pct or 0.0) - (counterfactual_return_pct or 0.0), 2) if actual_return_pct is not None else None,
                             "stop_touch_date": stop_touch_date,
                             "stop_touch_stage": stop_touch_stage,
-                            "analysis_basis": "symbol_roundtrip_day1_intraday_then_daily_close_with_day3_ema_trailing",
+                            "analysis_basis": "symbol_roundtrip_day1_tactical_then_daily_close_with_day3_ema_trailing",
                         }
                     )
                     current = None
@@ -1141,7 +1153,7 @@ class TradePlanStore:
                         "breach_pct": round((current_return or 0.0) - (counterfactual_return_pct or 0.0), 2) if current_return is not None else None,
                         "stop_touch_date": stop_touch_date,
                         "stop_touch_stage": stop_touch_stage,
-                        "analysis_basis": "symbol_roundtrip_day1_intraday_then_daily_close_with_day3_ema_trailing",
+                        "analysis_basis": "symbol_roundtrip_day1_tactical_then_daily_close_with_day3_ema_trailing",
                     }
                 )
 
@@ -1273,7 +1285,7 @@ class TradePlanStore:
             "closed_campaigns": closed_campaigns,
             "open_campaigns_list": open_campaigns,
             "history_start_date": history_start_date.isoformat() if history_start_date else "",
-            "note": "Real-life stop-loss honoring is measured on round-trip tradebook campaigns using your rule: day 1 checks intraday after the actual buy time, day 2 checks the daily chart close against the original 2% stop, and from day 3 onward the stop trails to breakeven or the prior 5-day EMA, whichever is higher.",
+            "note": "Real-life stop-loss honoring is measured on round-trip tradebook campaigns using your rule: day 1 checks tactical after the actual buy time, day 2 checks the daily chart close against the original 2% stop, and from day 3 onward the stop trails to breakeven or the prior 5-day EMA, whichever is higher.",
         }
 
     def _build_plan_history_streaks(self, repo: BhavRepository, history_start_date: date) -> Dict[str, object]:
@@ -1520,7 +1532,7 @@ class TradePlanStore:
                     "breach_pct": round((actual_return_pct or 0.0) - (counterfactual_return_pct or 0.0), 2) if actual_return_pct is not None else None,
                     "stop_touch_date": stop_touch_date,
                     "stop_touch_stage": stop_touch_stage,
-                    "analysis_basis": "trade_plan_snapshot_day1_intraday_then_daily_close_with_day3_ema_trailing",
+                    "analysis_basis": "trade_plan_snapshot_day1_tactical_then_daily_close_with_day3_ema_trailing",
                     "plan_status": str(last_pos.get("_status") or ""),
                     "plan_days": last_pos.get("_days"),
                     "plan_rem": last_pos.get("_rem"),
@@ -1774,6 +1786,9 @@ class TradePlanStore:
                 remaining_qty = self._as_float(last_pos.get("_rem"))
                 status_raw = str(last_pos.get("_status") or "").strip().lower()
                 initial_sl = self._as_float(first_pos.get("planSL"))
+                tactical_sl = self._as_float(last_pos.get("tacticalSL"))
+                if tactical_sl <= 0:
+                    tactical_sl = self._as_float(first_pos.get("tacticalSL"))
                 trail_sl = self._as_float(last_pos.get("_currentSL"))
                 plan_days = int(self._as_float(last_pos.get("_days")))
                 moved_be = bool(last_pos.get("movedBE"))
@@ -1788,15 +1803,17 @@ class TradePlanStore:
                     plan_sl = self._as_float(first_pos.get("_currentSL"))
                 if plan_sl <= 0:
                     continue
+                execution_exit_price = self._execution_block_exit_price(last_pos, exec_summary)
+                comparison_sl = plan_sl
                 is_honored = False
                 if status_raw == "closed" and remaining_qty <= 0:
-                    if executed_sell_price is not None and executed_sell_price > 0 and plan_sl > 0:
-                        is_honored = executed_sell_price <= plan_sl + 0.01
-                    elif realized_qty > 0 and realized_value > 0 and plan_sl > 0:
+                    if execution_exit_price is not None and execution_exit_price > 0 and comparison_sl > 0:
+                        is_honored = execution_exit_price <= comparison_sl + 0.01
+                    elif realized_qty > 0 and realized_value > 0 and comparison_sl > 0:
                         avg_exit = realized_value / realized_qty if realized_qty > 0 else 0.0
-                        is_honored = avg_exit <= plan_sl + 0.01
-                elif remaining_qty > 0 and snapshot_cmp > 0 and plan_sl > 0:
-                    is_honored = snapshot_cmp <= plan_sl + 0.01
+                        is_honored = avg_exit <= comparison_sl + 0.01
+                elif remaining_qty > 0 and snapshot_cmp > 0 and comparison_sl > 0:
+                    is_honored = snapshot_cmp <= comparison_sl + 0.01
                 total += 1
                 if is_honored:
                     honored += 1
@@ -1900,6 +1917,9 @@ class TradePlanStore:
             status_raw = str(last_pos.get("_status") or "").strip().lower()
             remaining_qty = self._as_float(last_pos.get("_rem"))
             initial_sl = self._as_float(first_pos.get("planSL"))
+            tactical_sl = self._as_float(last_pos.get("tacticalSL"))
+            if tactical_sl <= 0:
+                tactical_sl = self._as_float(first_pos.get("tacticalSL"))
             trail_sl = self._as_float(last_pos.get("_currentSL"))
             plan_days = int(self._as_float(last_pos.get("_days")))
             moved_be = bool(last_pos.get("movedBE"))
@@ -1915,9 +1935,11 @@ class TradePlanStore:
                 plan_sl = self._as_float(first_pos.get("_currentSL"))
             if plan_sl <= 0:
                 plan_sl = round(entry_price * (1.0 - (default_stop_loss_pct / 100.0)), 2)
+            execution_exit_price = self._execution_block_exit_price(last_pos, exec_summary)
+            comparison_sl = plan_sl
 
             actual_pnl = round(actual_value - invested, 2)
-            stop_value = round(float(total_qty) * float(plan_sl), 2) if plan_sl > 0 else None
+            stop_value = round(float(total_qty) * float(comparison_sl), 2) if comparison_sl > 0 else None
             stop_pnl = round(stop_value - invested, 2) if stop_value is not None else None
             stop_return_pct = round(((stop_value / invested) - 1.0) * 100.0, 2) if stop_value is not None and invested else None
             pnl_delta = round((stop_pnl - actual_pnl), 2) if stop_pnl is not None else None
@@ -1925,43 +1947,17 @@ class TradePlanStore:
             trims = last_pos.get("trims") if isinstance(last_pos.get("trims"), list) else first_pos.get("trims")
             completed_trims = [trim for trim in trims if isinstance(trim, dict) and trim.get("done")] if isinstance(trims, list) else []
             planned_trim_pnl = 0.0
-            target_hit_cache: Dict[Tuple[str, str, str, float], bool] = {}
-
-            def trim_target_was_hit(trim_target: float) -> bool:
-                if trim_target <= 0:
-                    return False
-                cache_key = (symbol, entry_day.isoformat(), latest_market_day.isoformat(), round(float(trim_target), 2))
-                if cache_key in target_hit_cache:
-                    return target_hit_cache[cache_key]
-                try:
-                    bars = repo.fetch_daily_bars(symbol, entry_day, latest_market_day)
-                except Exception as exc:
-                    self._log_debug(f"target-hit lookup failed for {symbol} {entry_day.isoformat()}->{latest_market_day.isoformat()} target={trim_target:.2f}: {exc}")
-                    target_hit_cache[cache_key] = False
-                    return False
-                hit = any(self._as_float(bar.get("high")) >= float(trim_target) - 0.01 for bar in bars)
-                target_hit_cache[cache_key] = hit
-                return hit
-
-            planned_trim_qtys = [
-                float(max(0, math.ceil(total_qty * 0.33))),
-                float(max(0, math.ceil(total_qty * 0.25))),
-                float(max(0, math.floor(total_qty * 0.25))),
-                float(max(0, math.floor(total_qty * 0.17))),
-            ]
             latest_cmp_for_plan = snapshot_cmp if snapshot_cmp > 0 else entry_price
             if completed_trims:
-                for trim_idx, trim in enumerate(trims):
+                for trim in completed_trims:
                     if not isinstance(trim, dict):
                         continue
-                    planned_exit = self._as_float(trim.get("_sug"))
-                    planned_qty = planned_trim_qtys[trim_idx] if trim_idx < len(planned_trim_qtys) else self._as_float(trim.get("sq"))
-                    if planned_qty <= 0 or planned_exit <= 0:
-                        continue
-                    if trim_target_was_hit(planned_exit):
-                        planned_trim_pnl += planned_qty * planned_exit
-                    elif latest_cmp_for_plan > 0:
-                        planned_trim_pnl += planned_qty * latest_cmp_for_plan
+                    ap = self._as_float(trim.get("ap"))
+                    sq = self._as_float(trim.get("sq"))
+                    if ap > 0 and sq > 0:
+                        planned_trim_pnl += sq * ap
+                if remaining_qty > 0 and snapshot_cmp > 0:
+                    planned_trim_pnl += remaining_qty * snapshot_cmp
             completed_trim_count = len(completed_trims)
             if not completed_trims:
                 planned_pnl = 0.0
@@ -1978,21 +1974,15 @@ class TradePlanStore:
             honored = False
             violated = False
             if status_raw == "closed" and remaining_qty <= 0:
-                if executed_sell_price is not None and executed_sell_price > 0 and plan_sl > 0:
-                    honored = executed_sell_price <= plan_sl + 0.01
+                if execution_exit_price is not None and execution_exit_price > 0 and comparison_sl > 0:
+                    honored = execution_exit_price <= comparison_sl + 0.01
                     violated = not honored
-                elif realized_qty > 0 and realized_value > 0 and plan_sl > 0:
+                elif realized_qty > 0 and realized_value > 0 and comparison_sl > 0:
                     avg_exit = realized_value / realized_qty if realized_qty > 0 else 0.0
-                    honored = avg_exit <= plan_sl + 0.01
+                    honored = avg_exit <= comparison_sl + 0.01
                     violated = not honored
-            elif remaining_qty > 0 and self._as_float(snapshot_cmp) > 0 and plan_sl > 0:
-                cmp_now = self._as_float(snapshot_cmp)
-                if realized_qty > 0 and executed_sell_price is not None and executed_sell_price > plan_sl + 0.01:
-                    violated = True
-                elif cmp_now <= plan_sl + 0.01:
-                    violated = True
-                else:
-                    status_label = "OPEN"
+            else:
+                status_label = "OPEN"
 
             if honored:
                 status_label = "HONORED"
@@ -2013,10 +2003,12 @@ class TradePlanStore:
                     "buy_price": round(entry_price, 2),
                     "buy_qty": round(float(total_qty), 6),
                     "actual_qty": round(float(total_qty), 6),
+                    "tacticalSL": round(float(tactical_sl), 2) if tactical_sl and tactical_sl > 0 else None,
                     "executed_sell_price": executed_sell_price,
+                    "execution_exit_price": execution_exit_price,
                     "current_cmp": snapshot_cmp if snapshot_cmp > 0 else None,
                     "actual_value": actual_value,
-                    "stop_price": round(plan_sl, 2),
+                    "stop_price": round(comparison_sl, 2),
                     "stop_value": stop_value,
                     "stop_pnl": stop_pnl,
                     "stop_return_pct": stop_return_pct,
@@ -2037,20 +2029,18 @@ class TradePlanStore:
                     "stop_touch_date": "",
                     "stop_touch_stage": "",
                     "status_reason": (
-                        f"Executed sell {executed_sell_price:.2f} was at/below {stop_basis} {plan_sl:.2f}"
-                        if honored and executed_sell_price is not None and executed_sell_price > 0
+                        f"Execution block {execution_exit_price:.2f} was at/below {stop_basis} {comparison_sl:.2f}"
+                        if honored and execution_exit_price is not None and execution_exit_price > 0
                         else (
-                        f"Executed sell {executed_sell_price:.2f} was above {stop_basis} {plan_sl:.2f}"
-                            if violated and executed_sell_price is not None and executed_sell_price > 0
+                            f"Execution block {execution_exit_price:.2f} was above {stop_basis} {comparison_sl:.2f}"
+                            if violated and execution_exit_price is not None and execution_exit_price > 0
                             else (
-                                f"Partial exit existed above {stop_basis} {plan_sl:.2f}"
+                                f"Partial exit existed above {stop_basis} {comparison_sl:.2f}"
                                 if violated and realized_qty > 0
                                 else (
-                                f"Current CMP {snapshot_cmp:.2f} is above {stop_basis} {plan_sl:.2f}"
-                                if remaining_qty > 0 and snapshot_cmp > 0 and not violated
-                                else f"Current CMP {snapshot_cmp:.2f} is below {stop_basis} {plan_sl:.2f}"
-                                if remaining_qty > 0 and snapshot_cmp > 0
-                                else f"Latest stored status is {status_raw or 'unknown'} with remaining qty {remaining_qty:.0f}"
+                                    f"Position still open with {remaining_qty:.0f} remaining; awaiting full exit before judging stop"
+                                    if remaining_qty > 0
+                                    else f"Latest stored status is {status_raw or 'unknown'} with remaining qty {remaining_qty:.0f}"
                                 )
                             )
                         )
@@ -2146,7 +2136,7 @@ class TradePlanStore:
             "campaigns": campaigns,
             "closed_campaigns": honored_campaigns + violated_campaigns,
             "open_campaigns_list": open_campaigns,
-            "note": "HONORED means the trade exited at or below the active stop. VIOLATED means it exited above the active stop or stayed open without respecting it. OPEN means the trade is still unresolved.",
+            "note": "HONORED means the execution block exited at or below the active stop. VIOLATED means the execution block exited above the active stop or stayed open without respecting it. OPEN means the trade is still unresolved.",
             "debug_log_path": str(self.debug_log_path),
         }
 
@@ -2480,7 +2470,7 @@ class TradePlanStore:
                 "stop_touch_date": stop_touch_raw,
                 "stop_touch_stage": str(path.get("stop_touch_stage") or ""),
                 "stop_touch_price": stop_touch_price,
-                "analysis_basis": "symbol_roundtrip_day1_intraday_then_daily_close_with_day3_ema_trailing",
+                "analysis_basis": "symbol_roundtrip_day1_tactical_then_daily_close_with_day3_ema_trailing",
             }
             events.append(
                 {
@@ -2768,6 +2758,26 @@ class TradePlanStore:
             "last_sell_date": last_sell_date,
         }
 
+    def _execution_block_exit_price(self, position: Dict[str, object], exec_summary: Optional[Dict[str, object]] = None) -> Optional[float]:
+        exit_price = None
+        for trim in position.get("trims", []) or []:
+            if not isinstance(trim, dict) or not trim.get("done"):
+                continue
+            ap = self._as_float(trim.get("ap"))
+            if ap <= 0:
+                continue
+            if exit_price is None or ap < exit_price:
+                exit_price = ap
+        if exit_price is not None:
+            return round(exit_price, 2)
+
+        summary = exec_summary if isinstance(exec_summary, dict) else self._execution_summary(position)
+        for key in ("last_sell_price", "sell_price"):
+            price = self._as_float(summary.get(key))
+            if price > 0:
+                return round(price, 2)
+        return None
+
     def _total_qty(self, position: Dict[str, object]) -> Optional[float]:
         overnight_qty = self._as_float(position.get("overnightQty"))
         actual_qty = self._as_float(position.get("actualQty"))
@@ -2809,16 +2819,18 @@ class TradePlanStore:
             "symbol",
             "merits",
             "planEntry",
-                "planSL",
-                "intraSL",
-                "riskAmount",
-                "entryDate",
-                "overnightEntry",
-                "overnightQty",
-                "trailNote",
-                "posHigh",
-                "trailOverride",
-            ]
+            "planSL",
+            "tacticalEntry",
+            "tacticalQty",
+            "tacticalSL",
+            "riskAmount",
+            "entryDate",
+            "overnightEntry",
+            "overnightQty",
+            "trailNote",
+            "posHigh",
+            "trailOverride",
+        ]
         for field in scalar_fields:
             value = position.get(field)
             if isinstance(value, str):
@@ -2852,17 +2864,17 @@ class TradePlanStore:
 
     def _actual_deployed_risk(self, position: Dict[str, object]) -> float:
         plan_sl = self._as_float(position.get("planSL"))
-        intra_sl = self._as_float(position.get("intraSL")) or plan_sl
+        tactical_sl = self._as_float(position.get("tacticalSL")) or plan_sl
         total_qty = self._total_qty(position)
         entry_value = self._entry_value(position)
         if not (total_qty and total_qty > 0 and entry_value and entry_value > 0 and plan_sl > 0):
             return 0.0
 
-        intra_qty = round(total_qty * 0.30)
-        core_qty = max(0.0, total_qty - intra_qty)
+        tactical_qty = round(total_qty * 0.30)
+        core_qty = max(0.0, total_qty - tactical_qty)
         risk = max(0.0, (entry_value - plan_sl) * core_qty)
-        if intra_sl > 0:
-            risk += max(0.0, (entry_value - intra_sl) * intra_qty)
+        if tactical_sl > 0:
+            risk += max(0.0, (entry_value - tactical_sl) * tactical_qty)
 
         return round(risk, 2)
 
@@ -2945,6 +2957,33 @@ class TradePlanStore:
         except Exception:
             exposure_pct = None
 
+        realized_pnl = 0.0
+        win_count = 0
+        loss_count = 0
+        for position in exited_today_positions:
+            pnl = self._as_float(position.get("_realPnl"))
+            realized_pnl += pnl
+            if pnl > 0:
+                win_count += 1
+            elif pnl < 0:
+                loss_count += 1
+
+        open_pnl = 0.0
+        carried_risk_total = 0.0
+        for position in carried_positions:
+            open_pnl += self._as_float(position.get("_openPnl"))
+            remaining_qty = self._remaining_qty(position)
+            if remaining_qty is None or remaining_qty <= 0:
+                continue
+            entry = self._entry_value(position)
+            if entry is None or entry <= 0:
+                entry = self._as_float(position.get("actualEntry")) or self._as_float(position.get("overnightEntry")) or self._as_float(position.get("planEntry"))
+            sl = self._as_float(position.get("_currentSL"))
+            if sl <= 0:
+                sl = self._as_float(position.get("planSL"))
+            if entry > 0 and sl > 0:
+                carried_risk_total += max(0.0, (entry - sl) * remaining_qty)
+
         return {
             "ok": True,
             "date": plan_date,
@@ -2955,6 +2994,12 @@ class TradePlanStore:
             "planning_count": len(planning_for_day),
             "exposure": round(exposure, 2),
             "exposure_pct": round(exposure_pct, 2) if exposure_pct is not None else None,
+            "realized_pnl": round(realized_pnl, 2),
+            "open_pnl": round(open_pnl, 2),
+            "closed_count": len(exited_today_positions),
+            "win_count": win_count,
+            "loss_count": loss_count,
+            "carried_risk_total": round(carried_risk_total, 2),
             "settings": settings,
         }
 
@@ -2970,6 +3015,12 @@ class TradePlanStore:
                     "planning_count": view["planning_count"],
                     "exposure": view["exposure"],
                     "exposure_pct": view["exposure_pct"],
+                    "realized_pnl": view.get("realized_pnl", 0.0),
+                    "open_pnl": view.get("open_pnl", 0.0),
+                    "closed_count": view.get("closed_count", 0),
+                    "win_count": view.get("win_count", 0),
+                    "loss_count": view.get("loss_count", 0),
+                    "carried_risk_total": view.get("carried_risk_total", 0.0),
                 }
             )
         latest_date = items[-1]["date"] if items else date.today().isoformat()
@@ -3130,7 +3181,7 @@ class TradePlanStore:
         path = self.plan_path(plan_date)
         if not path.exists():
             return {"date": plan_date, "positions": [], "path": str(path), "exists": False}
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
         if not isinstance(payload, dict):
             payload = {"positions": []}
         payload["date"] = plan_date
@@ -3338,13 +3389,16 @@ class TradePlanHandler(BaseHTTPRequestHandler):
 
         symbol = kite_mod.infer_tradingsymbol(str(position.get("symbol") or ""))
         exchange = kite_mod.infer_exchange(str(position.get("symbol") or ""))
-        tick_size = float(body.get("tick_size") or 0.05)
-        limit_price, trigger_price = kite_mod.stop_limit_prices(float(trail), tick_size)
         tag_prefix = str(body.get("tag_prefix") or "TP-SL").strip() or "TP-SL"
         tag = f"{tag_prefix}-{plan_date.isoformat()}-{symbol}"
         product = str(body.get("product") or "CNC").strip().upper() or "CNC"
         if product not in {"CNC", "MIS"}:
             product = "CNC"
+
+        token_file = Path(body.get("token_file") or kite_mod.DEFAULT_TOKEN_FILE)
+        kite = kite_mod.get_kite_client(token_file)
+        tick_size = kite_mod.resolve_tick_size(kite, symbol, exchange, fallback=float(body.get("tick_size") or 0.05))
+        limit_price, trigger_price = kite_mod.stop_limit_prices(float(trail), tick_size)
 
         state_file = Path(body.get("state_file") or kite_mod.DEFAULT_STATE_FILE).expanduser().resolve()
         state = kite_mod.load_state(state_file)
@@ -3361,10 +3415,9 @@ class TradePlanHandler(BaseHTTPRequestHandler):
                 "quantity": rem,
                 "trigger_price": trigger_price,
                 "limit_price": limit_price,
+                "tick_size": tick_size,
             }
 
-        token_file = Path(body.get("token_file") or kite_mod.DEFAULT_TOKEN_FILE)
-        kite = kite_mod.get_kite_client(token_file)
         existing_orders = kite_mod.get_orders_with_tag(kite, tag)
         if existing_orders:
             last_order = existing_orders[-1]
@@ -3378,6 +3431,7 @@ class TradePlanHandler(BaseHTTPRequestHandler):
                 "quantity": rem,
                 "trigger_price": trigger_price,
                 "limit_price": limit_price,
+                "tick_size": tick_size,
             }
             state["last_run"] = {
                 "plan_file": str(self.store.plan_path(plan_date.isoformat())),
@@ -3396,6 +3450,21 @@ class TradePlanHandler(BaseHTTPRequestHandler):
                 "quantity": rem,
                 "trigger_price": trigger_price,
                 "limit_price": limit_price,
+                "tick_size": tick_size,
+            }
+
+        preview_only = bool(body.get("preview_only"))
+        if preview_only:
+            return {
+                "ok": True,
+                "preview": True,
+                "tag": tag,
+                "symbol": symbol,
+                "exchange": exchange,
+                "quantity": rem,
+                "trigger_price": trigger_price,
+                "limit_price": limit_price,
+                "tick_size": tick_size,
             }
 
         try:
@@ -3429,6 +3498,7 @@ class TradePlanHandler(BaseHTTPRequestHandler):
             "quantity": rem,
             "trigger_price": trigger_price,
             "limit_price": limit_price,
+            "tick_size": tick_size,
         }
         state["last_run"] = {
             "plan_file": str(self.store.plan_path(plan_date.isoformat())),
@@ -3446,6 +3516,7 @@ class TradePlanHandler(BaseHTTPRequestHandler):
             "quantity": rem,
             "trigger_price": trigger_price,
             "limit_price": limit_price,
+            "tick_size": tick_size,
         }
 
 
@@ -3509,6 +3580,7 @@ class TradePlanHandler(BaseHTTPRequestHandler):
                     "html_path": str(self.store.html_path),
                     "save_dir": str(self.store.save_dir),
                     "public_ip": fetch_public_ip(),
+                    "public_ip_v6": fetch_public_ipv6(),
                 }
             )
 

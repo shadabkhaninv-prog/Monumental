@@ -1,4 +1,4 @@
-﻿const API_BASE = "http://127.0.0.1:8765/api";
+const API_BASE = "/api";
 let positions = [];
 let planDate = todayStr();
 let saveTimer = null;
@@ -10,6 +10,9 @@ let currentView = "dashboard";
 let selectedPositionId = null;
 let dashboardItems = [];
 let latestDashboardDate = todayStr();
+let dashboardMonth = "";
+let dashboardMode = "cal";
+let dashboardSummary = null;
 let dayMeta = { open_positions_count: 0, exited_today_count: 0, planning_count: 0, exposure: 0, exposure_pct: null };
 let settings = {
   available_capital: null,
@@ -50,7 +53,8 @@ let portfolioSimReport = {
   tradebook_path: ""
 };
 let goalTrackerTab = "exposure";
-let kitePublicIp = "";
+let kitePublicIpV4 = "";
+let kitePublicIpV6 = "";
 const QUIET = new Set(["symbol", "merits", "trailNote", "mgmt.fe", "mgmt.fsl", "mgmt.ft", "mgmt.fbe", "mgmt.note"]);
 
 function todayStr() {
@@ -254,18 +258,31 @@ function legacyChecklistFieldsFromGroups(groups) {
   };
 }
 
+function migratePlanTacticalFields(pos) {
+  if (!pos || typeof pos !== "object") return pos;
+  if (pos.tacticalQty == null && pos.intraQty != null) pos.tacticalQty = pos.intraQty;
+  if (pos.tacticalEntry == null && pos.intraEntry != null) pos.tacticalEntry = pos.intraEntry;
+  if (pos.tacticalSL == null && pos.intraSL != null) pos.tacticalSL = pos.intraSL;
+  if (pos.tacticalRiskPct == null && pos.intraRiskPct != null) pos.tacticalRiskPct = pos.intraRiskPct;
+  delete pos.intraQty;
+  delete pos.intraEntry;
+  delete pos.intraSL;
+  delete pos.intraRiskPct;
+  return pos;
+}
+
 function newPos() {
   return {
     id: "p" + Date.now() + Math.random().toString(36).slice(2, 6),
     symbol: "",
     merits: "",
     conviction: 3,
-      cmp: null,
-      planEntry: null,
-      planSL: null,
-      intraEntry: null,
-      intraSL: null,
-    intraRiskPct: 30,
+    cmp: null,
+    planEntry: null,
+    planSL: null,
+    tacticalEntry: null,
+    tacticalSL: null,
+    tacticalRiskPct: 30,
     riskAmount: settings.per_position_risk != null ? Number(settings.per_position_risk) : null,
     actualEntry: null,
     overnightEntry: null,
@@ -273,7 +290,7 @@ function newPos() {
     overnightSL: null,
     daySL: null,
     actualQty: null,
-    intraQty: null,
+    tacticalQty: null,
     entryDate: "",
     posHigh: null,
     trailOverride: null,
@@ -306,6 +323,7 @@ function hydratePos(raw) {
   pos.thoughtTag = String(pos.thoughtTag || "NOTE").toUpperCase();
   pos.thoughtLog = normalizeThoughtLog(pos.thoughtLog);
   pos.symbol = normalizeSymbol(pos.symbol);
+  migratePlanTacticalFields(pos);
   return pos;
 }
 
@@ -405,11 +423,13 @@ async function loadStorageInfo() {
     const info = await api("/storage-info");
     storageOnline = true;
     savePath = info.save_dir || "";
-    kitePublicIp = info.public_ip || "";
+    kitePublicIpV4 = info.public_ip || "";
+    kitePublicIpV6 = info.public_ip_v6 || "";
     if (currentView === "day") setSaveState("Ready", "saved", "Autosave active");
   } catch (err) {
     storageOnline = false;
-    kitePublicIp = "";
+    kitePublicIpV4 = "";
+    kitePublicIpV6 = "";
     if (currentView === "day") setSaveState("Server offline", "", String(err.message || err));
   }
 }
@@ -478,6 +498,7 @@ async function saveSettings() {
 async function save(opts) {
   const options = Object.assign({ silent: false }, opts || {});
   const seq = ++saveSeq;
+  positions.forEach(migratePlanTacticalFields);
   localStorage.setItem(pkey(planDate), JSON.stringify(positions));
   if (!storageOnline) await loadStorageInfo();
   if (!storageOnline) {
@@ -524,6 +545,7 @@ async function loadDashboard() {
   if (!storageOnline) {
     dashboardItems = [];
     latestDashboardDate = todayStr();
+    dashboardSummary = null;
     setSaveState("Server offline", "", "Run trade_plan_server.py");
     return;
   }
@@ -531,12 +553,17 @@ async function loadDashboard() {
     const payload = await api("/dashboard");
     dashboardItems = Array.isArray(payload.items) ? payload.items : [];
     latestDashboardDate = payload.latest_date || todayStr();
+    dashboardSummary = payload.summary || null;
     if (payload.settings) settings = payload.settings;
+    if (!dashboardMonth || !dashboardItems.some(item => monthKeyFromDate(item.date) === dashboardMonth)) {
+      dashboardMonth = monthKeyFromDate(latestDashboardDate || todayStr());
+    }
     if (!planDate) planDate = latestDashboardDate;
     setSaveState("Ready", "saved", "Autosave active");
   } catch (_err) {
     dashboardItems = [];
     latestDashboardDate = todayStr();
+    dashboardSummary = null;
     setSaveState("Dashboard load failed", "", "API unavailable");
   }
 }
@@ -619,34 +646,28 @@ async function shiftDate(delta) {
 function compute(p) {
   const totalRisk = Number(p.riskAmount || 0);
   const coreRps = (p.planEntry != null && p.planSL != null) ? (p.planEntry - p.planSL) : null;
-  const intraRps = (p.planEntry != null && p.intraSL != null) ? (p.planEntry - p.intraSL) : coreRps;
-  const blendRps = (coreRps && intraRps) ? (coreRps * 0.70 + intraRps * 0.30) : coreRps;
+  const tacticalRps = (p.planEntry != null && p.tacticalSL != null) ? (p.planEntry - p.tacticalSL) : coreRps;
+  const blendRps = (coreRps && tacticalRps) ? (coreRps * 0.70 + tacticalRps * 0.30) : coreRps;
   const entry = getEffectiveEntry(p);
   p._coreRps = coreRps;
-  p._intraRps = intraRps;
+  p._tacticalRps = tacticalRps;
   p._blendRps = blendRps;
-  p._rps = blendRps && coreRps && intraRps
-    ? `Core Rs ${coreRps.toFixed(2)} | Intra Rs ${intraRps.toFixed(2)} | Blend Rs ${blendRps.toFixed(2)}`
-    : (coreRps ? "Rs " + coreRps.toFixed(2) : null);
+  p._blendPct = blendRps != null && p.planEntry > 0 ? +((blendRps / p.planEntry) * 100).toFixed(2) : null;
+  p._rps = blendRps != null ? blendRps.toFixed(2) : null;
   const coreQty = coreRps && coreRps > 0 && totalRisk > 0 ? Math.floor(totalRisk / coreRps) : 0;
-  p._suggestedIntraQty = coreQty > 0 ? Math.max(1, Math.round(coreQty * 0.30)) : null;
-  if (p.intraQty == null && p._suggestedIntraQty != null) p.intraQty = p._suggestedIntraQty;
-  const manualIntraQty = p.intraQty != null ? Math.max(0, parseInt(p.intraQty, 10) || 0) : null;
-  const effectiveIntraQty = manualIntraQty != null ? manualIntraQty : 0;
-  const totalQty = coreQty + effectiveIntraQty;
+  p._suggestedTacticalQty = coreQty > 0 ? Math.max(1, Math.round(coreQty * 0.30)) : null;
+  const manualTacticalQty = p.tacticalQty != null ? Math.max(0, parseInt(p.tacticalQty, 10) || 0) : null;
+  const tacticalQty = manualTacticalQty != null ? manualTacticalQty : 0;
+  const totalQty = coreQty + tacticalQty;
   p._qty = totalQty;
-  p._intraQty = effectiveIntraQty;
-    p._predQty = coreQty;
-    p._predRisk = p._predQty > 0 && coreRps ? +(p._predQty * coreRps).toFixed(2) : 0;
-    p._intraRisk = p._intraQty > 0 && intraRps ? +(p._intraQty * intraRps).toFixed(2) : 0;
-    p._planRisk = +(p._predRisk + p._intraRisk).toFixed(2);
-    const planAvgQty = [];
-    if (p.planEntry != null && p._predQty > 0) planAvgQty.push({ qty: p._predQty, price: Number(p.planEntry) });
-    if (p.intraEntry != null && p._intraQty > 0) planAvgQty.push({ qty: p._intraQty, price: Number(p.intraEntry) });
-    p._avgPlanEntry = planAvgQty.length
-      ? +(planAvgQty.reduce((s, leg) => s + (leg.qty * leg.price), 0) / planAvgQty.reduce((s, leg) => s + leg.qty, 0)).toFixed(2)
-      : null;
-    const ae = entry || p.planEntry;
+  p._tacticalQty = tacticalQty;
+  p._predQty = coreQty;
+  p._predRisk = p._predQty > 0 && coreRps ? +(p._predQty * coreRps).toFixed(2) : 0;
+  p._tacticalRisk = p._tacticalQty > 0 && tacticalRps ? +(p._tacticalQty * tacticalRps).toFixed(2) : 0;
+  p._planRisk = +(p._predRisk + p._tacticalRisk).toFixed(2);
+  p._avgTacticalEntry = getTacticalAverageEntry(p);
+  p._avgPlanEntry = p._avgTacticalEntry;
+  const ae = entry || p.planEntry;
   p.trims[0]._sug = ae ? +(ae * 1.03).toFixed(2) : null;
   p.trims[1]._sug = ae ? +(ae * 1.07).toFixed(2) : null;
   p.trims[2]._sug = ae ? +(ae * 1.15).toFixed(2) : null;
@@ -752,6 +773,37 @@ function getEffectiveEntry(p) {
   return actualEntry != null ? actualEntry : (overnightEntry != null ? overnightEntry : null);
 }
 
+function getTacticalAverageEntry(p) {
+  const planEntry = p.planEntry != null ? Number(p.planEntry) : null;
+  const planQty = Number(p._predQty || 0);
+  const tacticalEntry = p.tacticalEntry != null ? Number(p.tacticalEntry) : null;
+  const tacticalQty = Number(p._tacticalQty || p.tacticalQty || 0);
+  const legs = [];
+
+  if (planEntry != null && planEntry > 0 && planQty > 0) {
+    legs.push({ qty: planQty, price: planEntry });
+  }
+  if (tacticalEntry != null && tacticalEntry > 0 && tacticalQty > 0) {
+    legs.push({ qty: tacticalQty, price: tacticalEntry });
+  }
+
+  if (legs.length === 2) {
+    const totalQty = legs[0].qty + legs[1].qty;
+    if (totalQty > 0) {
+      const weighted = ((legs[0].qty * legs[0].price) + (legs[1].qty * legs[1].price)) / totalQty;
+      return +weighted.toFixed(2);
+    }
+  }
+  if (legs.length === 1) {
+    return +legs[0].price.toFixed(2);
+  }
+  return planEntry != null && planEntry > 0 ? +planEntry.toFixed(2) : null;
+}
+
+function getPlannedAverageEntry(p) {
+  return getTacticalAverageEntry(p);
+}
+
 function getAverageExecutionSL(p) {
   const legs = [];
   const overnightQty = p.overnightQty != null ? Number(p.overnightQty) : null;
@@ -845,7 +897,15 @@ function upd(id, field, value) {
   const p = positions.find(x => x.id === id);
   if (!p) return;
   if (field.startsWith("mgmt.")) p.mgmt[field.slice(5)] = value;
-  else p[field] = value;
+  else if (field === "tacticalQty") {
+    p.tacticalQty = value;
+  } else if (field === "tacticalEntry") {
+    p.tacticalEntry = value;
+  } else if (field === "tacticalSL") {
+    p.tacticalSL = value;
+  } else {
+    p[field] = value;
+  }
   autoSave();
   if (field.startsWith("mgmt.") || field === "thoughtTag") {
     paint(id, p);
@@ -1018,14 +1078,42 @@ function updateTrailSL(id) {
 async function pushStopLossOrder(id) {
   const p = positions.find(x => x.id === id);
   if (!p) return;
-  const preview = getTrailStopOrderPreview(p);
-  if (!preview) {
+  const localPreview = getTrailStopOrderPreview(p);
+  if (!localPreview) {
     alert("Set a trailing stop and keep the position open before pushing the Kite SL order.");
     return;
   }
   const symbol = p.symbol || "this position";
+  let preview;
+  try {
+    preview = await api("/kite/place-sl-order", {
+      method: "POST",
+      body: JSON.stringify({
+        date: planDate,
+        position_id: id,
+        preview_only: true
+      })
+    });
+  } catch (err) {
+    const msg = String(err.message || err || "");
+    const hint = msg.includes("Route not found")
+      ? "\n\nRestart trade_plan_server.py so the new Kite route is loaded."
+      : "";
+    alert("Failed to preview Kite SL order: " + msg + hint);
+    return;
+  }
+  if (preview.skipped) {
+    const msg = preview.reason === "kite_order_exists"
+      ? `Kite SL order already exists for ${symbol}.`
+      : `This Kite SL order was already processed for ${symbol}.`;
+    setSaveState(msg, "saved", preview.order_id ? "Order ID " + preview.order_id : "Kite SL");
+    alert(
+      `${msg}\n\nQty: ${preview.quantity}\nTrigger: Rs ${priceSL(preview.trigger_price)}\nLimit: Rs ${priceSL(preview.limit_price)}${preview.tick_size ? `\nTick size: ${Number(preview.tick_size).toFixed(2)}` : ""}${preview.order_id ? `\nOrder ID: ${preview.order_id}` : ""}`
+    );
+    return;
+  }
   const ok = confirm(
-    `Place Kite SL order for ${symbol}?\n\nQty: ${preview.qty}\nTrigger: Rs ${priceSL(preview.trigger)}\nLimit: Rs ${priceSL(preview.limit)}`
+    `Place Kite SL order for ${symbol}?\n\nQty: ${preview.quantity}\nTrigger: Rs ${priceSL(preview.trigger_price)}\nLimit: Rs ${priceSL(preview.limit_price)}${preview.tick_size ? `\nTick size: ${Number(preview.tick_size).toFixed(2)}` : ""}`
   );
   if (!ok) return;
   try {
@@ -1041,7 +1129,7 @@ async function pushStopLossOrder(id) {
       : `Kite SL order already exists for ${symbol}.`;
     setSaveState(msg, "saved", result.order_id ? "Order ID " + result.order_id : "Kite SL");
     alert(
-      `${msg}\n\nQty: ${result.quantity}\nTrigger: Rs ${priceSL(result.trigger_price)}\nLimit: Rs ${priceSL(result.limit_price)}${result.order_id ? `\nOrder ID: ${result.order_id}` : ""}`
+      `${msg}\n\nQty: ${result.quantity}\nTrigger: Rs ${priceSL(result.trigger_price)}\nLimit: Rs ${priceSL(result.limit_price)}${result.tick_size ? `\nTick size: ${Number(result.tick_size).toFixed(2)}` : ""}${result.order_id ? `\nOrder ID: ${result.order_id}` : ""}`
     );
   } catch (err) {
     const msg = String(err.message || err || "");
@@ -1140,11 +1228,8 @@ function paint(id, p) {
     if (text != null) node.textContent = text;
     if (cls != null) node.className = cls;
   };
-    const cmpInput = e("cmp-" + id);
-    const cmpQtyEl = e("cmp-" + id);
     const symInput = e("sym-" + id);
   if (symInput && symInput.value !== p.symbol) symInput.value = p.symbol || "";
-  if (cmpInput) cmpInput.value = p.cmp != null ? p.cmp : "";
   const card = e("card-" + id);
   if (card) card.className = "pcard st-" + p._status;
   const list = e("list-" + id);
@@ -1179,23 +1264,33 @@ function paint(id, p) {
   const hm = e("hmeta-" + id);
   if (hm) hm.innerHTML = getHeaderMeta(p, getBucketKey(p));
     const qtyEl = e("qty-" + id);
-    const planTotalQty = (Number(p._predQty || 0) + Number(p._intraQty || 0));
-    if (cmpQtyEl) {
-      cmpQtyEl.textContent = p._predQty > 0 ? p._predQty : "-";
-      cmpQtyEl.style.color = p._predQty > 0 ? "var(--green)" : "var(--t3)";
-      cmpQtyEl.style.fontSize = p._predQty > 0 ? "22px" : "16px";
+    const planTotalQty = (Number(p._predQty || 0) + Number(p._tacticalQty || 0));
+    const plannedQtyEl = e("cmp-" + id);
+    if (plannedQtyEl) {
+      plannedQtyEl.value = p._predQty > 0 ? p._predQty : "-";
+      plannedQtyEl.style.color = p._predQty > 0 ? "var(--t1)" : "var(--t3)";
+      plannedQtyEl.style.fontSize = "16px";
     }
     if (qtyEl) {
       qtyEl.textContent = planTotalQty > 0 ? planTotalQty : "-";
       qtyEl.style.color = planTotalQty > 0 ? "var(--green)" : "var(--t3)";
       qtyEl.style.fontSize = planTotalQty > 0 ? "22px" : "16px";
     }
-  set("rps-val-" + id, p._rps ? p._rps : "-");
+  const rpsEl = e("rps-val-" + id);
+  if (rpsEl) {
+    const pctTxt = p._blendPct != null ? `${p._blendPct.toFixed(2)}%` : "";
+    rpsEl.innerHTML = p._rps != null
+      ? `<span style="color:#ff4d6d;font-size:15px;font-weight:700;line-height:1">${p._rps}</span>${pctTxt ? ` <span style="color:#fca5a5;font-size:12px;font-weight:700;line-height:1">${pctTxt}</span>` : ""}`
+      : "-";
+  }
+  set("ape-" + id, getTacticalAverageEntry(p) != null ? price2(getTacticalAverageEntry(p)) : "-");
   set("prisk-" + id, p._planRisk != null && p._planRisk > 0 ? price2(p._planRisk) : "-");
   const carriedQty = getTotalQty(p);
   set("totq-" + id, carriedQty != null ? carriedQty : "-");
   set("epx-" + id, getEffectiveEntry(p) != null ? price2(getEffectiveEntry(p)) : "-");
   const execRisk = getExecutionRisk(p);
+  const execEntry = getEffectiveEntry(p);
+  set("psize-" + id, execEntry != null && carriedQty != null ? fi(carriedQty * execEntry) : "-");
   set("erisk-" + id, execRisk != null ? price2(execRisk) : "-");
   set("rem-" + id, p._rem != null ? p._rem : (carriedQty != null ? carriedQty : "-"));
   const qty = carriedQty || p._qty || 0;
@@ -2074,13 +2169,13 @@ function removePos(id) {
 function clearPlanFields(id) {
   const p = positions.find(x => x.id === id);
   if (!p) return;
-  if (!confirm("Clear the plan-level fields for this position?")) return;
+  if (!confirm("Clear the plan tactical fields for this position?")) return;
   p.planEntry = null;
   p.planSL = null;
-  p.intraEntry = null;
-  p.intraSL = null;
+  p.tacticalEntry = null;
+  p.tacticalSL = null;
   p.riskAmount = null;
-  p.intraQty = null;
+  p.tacticalQty = null;
   renderDayView();
   autoSave();
 }
@@ -2088,7 +2183,7 @@ function clearPlanFields(id) {
 function clearExecutionFields(id) {
   const p = positions.find(x => x.id === id);
   if (!p) return;
-  if (!confirm("Clear the execution fields for this position?")) return;
+  if (!confirm("Clear the execution tactical fields for this position?")) return;
   p.actualEntry = null;
   p.overnightEntry = null;
   p.overnightQty = null;
@@ -2146,36 +2241,340 @@ function collapseAll() {
   return;
 }
 
+function monthKeyFromDate(dateStr) {
+  return String(dateStr || todayStr()).slice(0, 7);
+}
+
+function monthPartsFromKey(monthKey) {
+  const parts = String(monthKey || monthKeyFromDate(todayStr())).split("-");
+  return {
+    year: Number(parts[0] || todayStr().slice(0, 4)),
+    month: Number(parts[1] || 1),
+  };
+}
+
+function monthLabelFromKey(monthKey) {
+  const parts = monthPartsFromKey(monthKey);
+  return new Date(parts.year, parts.month - 1, 1).toLocaleString("en-US", { month: "long" });
+}
+
+function dashboardMonthItems(monthKey) {
+  const key = monthKeyFromDate(monthKey);
+  return (dashboardItems || [])
+    .filter(item => monthKeyFromDate(item.date) === key)
+    .slice()
+    .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+}
+
+function dashboardYearsList() {
+  const years = new Set();
+  const currentYear = Number(todayStr().slice(0, 4));
+  [currentYear - 2, currentYear - 1, currentYear].forEach(y => years.add(String(y)));
+  (dashboardItems || []).forEach(item => {
+    const year = String(item.date || "").slice(0, 4);
+    if (year) years.add(year);
+  });
+  return Array.from(years).sort((a, b) => Number(a) - Number(b));
+}
+
+function dashboardSummaryForMonth(items) {
+  const list = Array.isArray(items) ? items : [];
+  const latest = list.length ? list[list.length - 1] : null;
+  const realized = list.reduce((sum, item) => sum + Number(item.realized_pnl || 0), 0);
+  const closed = list.reduce((sum, item) => sum + Number(item.closed_count || 0), 0);
+  const wins = list.reduce((sum, item) => sum + Number(item.win_count || 0), 0);
+  const losses = list.reduce((sum, item) => sum + Number(item.loss_count || 0), 0);
+  const tradeDays = list.filter(item => Number(item.open_positions_count || 0) > 0 || Number(item.planning_count || 0) > 0 || Number(item.closed_count || 0) > 0).length;
+  const winDays = list.filter(item => Number(item.realized_pnl || 0) > 0).length;
+  const lossDays = list.filter(item => Number(item.realized_pnl || 0) < 0).length;
+  const maxExposure = list.reduce((best, item) => Math.max(best, Number(item.exposure || 0)), 0);
+  const maxExposurePct = list.reduce((best, item) => Math.max(best, Number(item.exposure_pct || 0)), 0);
+  const latestExposure = latest ? Number(latest.exposure || 0) : 0;
+  const latestExposurePct = latest && latest.exposure_pct != null ? Number(latest.exposure_pct) : null;
+  const openNow = latest ? Number(latest.open_positions_count || 0) : 0;
+  const openPnl = latest ? Number(latest.open_pnl || 0) : 0;
+  const carriedRiskTotal = latest ? Number(latest.carried_risk_total || 0) : 0;
+  const avgRiskTrade = openNow > 0 ? carriedRiskTotal / openNow : Number(settings.per_position_risk || 0);
+  const totalTrades = list.reduce((sum, item) => sum + Number(item.closed_count || 0), 0) + openNow;
+  return {
+    realized,
+    closed,
+    wins,
+    losses,
+    tradeDays,
+    winDays,
+    lossDays,
+    maxExposure,
+    maxExposurePct,
+    latestExposure,
+    latestExposurePct,
+    openNow,
+    openPnl,
+    avgRiskTrade,
+    totalTrades,
+    latestDate: latest ? latest.date : monthKeyFromDate(todayStr()) + "-01",
+  };
+}
+
+function dashboardToneForItem(item) {
+  if (!item) {
+    return {
+      cls: "empty",
+      tag: "EMPTY",
+      value: "",
+      valueClass: "",
+      copy: "No trades planned",
+      open: 0,
+      planned: 0,
+      exposure: "-",
+      exposurePct: "-",
+    };
+  }
+  const open = Number(item.open_positions_count || 0);
+  const planned = Number(item.planning_count || 0);
+  const closed = Number(item.closed_count || 0);
+  const exposure = Number(item.exposure || 0);
+  const exposurePct = item.exposure_pct != null ? Number(item.exposure_pct) : null;
+  if (open > 0) {
+    return {
+      cls: "open",
+      tag: "OPEN",
+      value: money(exposure),
+      valueClass: "pos",
+      copy: "Open positions carried to this date and plan saved for that day",
+      open,
+      planned,
+      exposure: money(exposure),
+      exposurePct: exposurePct != null ? pct(exposurePct) : "-",
+    };
+  }
+  if (closed > 0) {
+    return {
+      cls: exposure > 0 ? "open" : "planned",
+      tag: "CLOSED",
+      value: money(exposure),
+      valueClass: exposure > 0 ? "pos" : "neu",
+      copy: "Closed trades saved for this date.",
+      open,
+      planned,
+      exposure: money(exposure),
+      exposurePct: exposurePct != null ? pct(exposurePct) : "-",
+    };
+  }
+  if (planned > 0) {
+    return {
+      cls: "planned",
+      tag: "PLANNED",
+      value: money(exposure),
+      valueClass: exposure > 0 ? "pos" : "neu",
+      copy: "Planned trades saved for this date.",
+      open,
+      planned,
+      exposure: money(exposure),
+      exposurePct: exposurePct != null ? pct(exposurePct) : "-",
+    };
+  }
+  return {
+    cls: exposure > 0 ? "open" : "planned",
+    tag: "RECORDED",
+    value: money(exposure),
+    valueClass: exposure > 0 ? "pos" : "neu",
+    copy: "Recorded exposure for this date.",
+    open: 0,
+    planned: 0,
+    exposure: money(exposure),
+    exposurePct: exposurePct != null ? pct(exposurePct) : "-",
+  };
+}
+
+function dashboardMonthCell(dateStr, item) {
+  const day = Number(String(dateStr).slice(8, 10)) || "";
+  const tone = dashboardToneForItem(item);
+  const valueHtml = tone.value
+    ? `<div class="db-day-value ${tone.valueClass}">${tone.value}</div>`
+    : `<div class="db-day-value empty-space" aria-hidden="true"></div>`;
+  const stats = `
+    <div class="db-day-stats">
+      <div class="db-day-row">
+        <div class="db-mini-k">Open</div>
+        <div class="db-mini-v">${tone.open || 0}</div>
+      </div>
+      <div class="db-day-row">
+        <div class="db-mini-k">Planned</div>
+        <div class="db-mini-v">${tone.planned || 0}</div>
+      </div>
+      <div class="db-day-row">
+        <div class="db-mini-k">Exposure</div>
+        <div class="db-mini-v">${tone.exposurePct}</div>
+      </div>
+    </div>`;
+  const click = item ? ` onclick="openDay('${dateStr}')" ` : "";
+  return `
+    <div class="db-day ${tone.cls}"${click}>
+      <div class="db-day-head">
+        <div class="db-day-num">${day}</div>
+      </div>
+      ${valueHtml}
+      ${stats}
+    </div>
+  `;
+}
+
+function dashboardCalendarCells(monthKey, monthMap) {
+  const cells = monthDaysFromKey(monthKey);
+  return cells.map(dateStr => dateStr ? dashboardMonthCell(dateStr, monthMap.get(dateStr) || null) : `<div class="db-day empty"></div>`).join("");
+}
+
+function dashboardListCard(item) {
+  const tone = dashboardToneForItem(item);
+  return `
+    <div class="dash-card" onclick="openDay('${item.date}')">
+      <div class="dash-date">${fmtDateLabel(item.date)}</div>
+      <div class="dash-sub">${tone.copy}</div>
+      <div class="dash-stats">
+        <div><div class="dash-k">Open positions</div><div class="dash-v">${tone.open || 0}</div></div>
+        <div><div class="dash-k">Planned trades</div><div class="dash-v">${tone.planned || 0}</div></div>
+        <div><div class="dash-k">Exposure</div><div class="dash-v small">${money(item.exposure)}</div></div>
+        <div><div class="dash-k">Exposure</div><div class="dash-v small">${pct(item.exposure_pct)}</div></div>
+      </div>
+    </div>`;
+}
+
+function monthDaysFromKey(monthKey) {
+  const parts = monthPartsFromKey(monthKey);
+  const cells = [];
+  const totalDays = new Date(parts.year, parts.month, 0).getDate();
+  for (let day = 1; day <= totalDays; day++) {
+    const dt = new Date(parts.year, parts.month - 1, day);
+    cells.push(dt.toISOString().slice(0, 10));
+  }
+  return cells;
+}
+
+function setDashboardMode(mode) {
+  dashboardMode = mode === "list" ? "list" : "cal";
+  renderApp();
+}
+
+function setDashboardYear(year) {
+  const current = dashboardMonth || monthKeyFromDate(latestDashboardDate || todayStr());
+  dashboardMonth = `${year}-${String(current).slice(5, 7)}`;
+  dashboardMode = "cal";
+  renderApp();
+}
+
+function setDashboardMonthIndex(index) {
+  const current = dashboardMonth || monthKeyFromDate(latestDashboardDate || todayStr());
+  dashboardMonth = `${String(current).slice(0, 4)}-${String(index + 1).padStart(2, "0")}`;
+  dashboardMode = "cal";
+  renderApp();
+}
+
+function dashboardShiftMonth(delta) {
+  const current = dashboardMonth || monthKeyFromDate(latestDashboardDate || todayStr());
+  const parts = monthPartsFromKey(current);
+  const next = new Date(parts.year, parts.month - 1 + delta, 1);
+  dashboardMonth = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
+  dashboardMode = "cal";
+  renderApp();
+}
+
 function renderDashboardView() {
   syncChrome();
   const main = e("main");
   if (!main) return;
-  const cards = dashboardItems.length ? dashboardItems.map(item => `
-    <div class="dash-card" onclick="openDay('${item.date}')">
-      <div class="dash-date">${fmtDateLabel(item.date)}</div>
-      <div class="dash-sub">Open positions carried to this date and plan saved for that day</div>
-      <div class="dash-stats">
-        <div><div class="dash-k">Open positions</div><div class="dash-v">${item.open_positions_count || 0}</div></div>
-        <div><div class="dash-k">Planned trades</div><div class="dash-v">${item.planning_count || 0}</div></div>
-        <div><div class="dash-k">Exposure</div><div class="dash-v small">${money(item.exposure)}</div></div>
-        <div><div class="dash-k">% Exposure</div><div class="dash-v small">${pct(item.exposure_pct)}</div></div>
-      </div>
-    </div>
-  `).join("") : `<div class="settings-card"><div class="view-note">No saved trade dates yet. Open the Day view and save your first plan, then the grid will appear here.</div></div>`;
+  const selectedMonth = dashboardMonth || monthKeyFromDate(latestDashboardDate || todayStr());
+  const monthItems = dashboardMonthItems(selectedMonth);
+  const summary = dashboardSummaryForMonth(monthItems);
+  const year = String(selectedMonth).slice(0, 4);
+  const monthName = monthLabelFromKey(selectedMonth);
+  const monthMap = new Map(monthItems.map(item => [String(item.date || ""), item]));
+  const years = dashboardYearsList();
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const monthsNav = months.map((label, idx) => `
+    <button class="db-nav-btn ${Number(String(selectedMonth).slice(5, 7)) === idx + 1 ? "on" : ""}" onclick="setDashboardMonthIndex(${idx})">${label}</button>
+  `).join("");
+  const yearsNav = years.map(y => `
+    <button class="db-nav-btn ${year === String(y) ? "on" : ""}" onclick="setDashboardYear('${y}')">${y}</button>
+  `).join("");
+  const monthCells = dashboardCalendarCells(selectedMonth, monthMap);
+  const latestGlobal = dashboardItems.length ? dashboardItems[dashboardItems.length - 1] : null;
+  const accountExposure = latestGlobal ? Number(latestGlobal.exposure || 0) : 0;
+  const openRisk = latestGlobal ? Number(latestGlobal.carried_risk_total || 0) : 0;
+  const exposurePct = latestGlobal && latestGlobal.exposure_pct != null ? Number(latestGlobal.exposure_pct) : (Number(settings.available_capital || 0) > 0 ? (accountExposure / Number(settings.available_capital || 0)) * 100 : null);
+  const progressWidth = exposurePct != null ? Math.max(0, Math.min(100, exposurePct)) : 0;
+  const monthExposureClass = summary.latestExposure > 0 ? "pos" : "neu";
+  const winRate = summary.closed > 0 ? (summary.wins / summary.closed) * 100.0 : null;
+  const avgRiskPct = Number(settings.per_position_risk || 0) > 0 ? (summary.avgRiskTrade / Number(settings.per_position_risk || 1)) * 100.0 : null;
+  const sidebarLegend = `
+    <div class="dsb-row"><span>Trade Days</span><strong>${summary.tradeDays}</strong></div>
+    <div class="dsb-row"><span>Win Days</span><strong>${summary.winDays}</strong></div>
+    <div class="dsb-row"><span>Loss Days</span><strong>${summary.lossDays}</strong></div>
+    <div class="dsb-row"><span>Total Trades</span><strong>${summary.totalTrades}</strong></div>
+  `;
+  const sidebarYears = yearsNav || "";
   main.innerHTML = `
-    <section class="hero">
-      <h2>Date Dashboard</h2>
+    <section class="dashboard-shell">
+      <aside class="dashboard-sidebar">
+        <div class="dsb-card">
+          <div class="dsb-title">Account</div>
+          <div class="dsb-row"><div><div class="dsb-k">Capital</div><div class="dsb-v">${money(settings.available_capital)}</div></div></div>
+          <div class="dsb-row"><div><div class="dsb-k">Daily Risk</div><div class="dsb-v">${money(settings.daily_risk)}</div></div></div>
+          <div class="dsb-row"><div><div class="dsb-k">Per-Position</div><div class="dsb-v">${money(settings.per_position_risk)}</div></div></div>
+          <div class="dsb-row"><div><div class="dsb-k">Today Exposure</div><div class="dsb-v">${money(accountExposure)}</div></div></div>
+          <div class="dsb-muted">Exposure vs capital</div>
+          <div class="prog-track" style="margin-top:8px"><div class="prog-fill" style="width:${progressWidth}%"></div></div>
+          <div class="dsb-row"><span class="dsb-k">% Exposure</span><strong>${exposurePct != null ? pct(exposurePct) : "-"}</strong></div>
+        </div>
+        <div class="dsb-card">
+          <div class="dsb-title">Navigate</div>
+          <div class="db-nav-grid">${sidebarYears}</div>
+          <div class="db-nav-grid" style="margin-top:8px">${monthsNav}</div>
+        </div>
+        <div class="dsb-card">
+          <div class="dsb-title">${monthName} Legend</div>
+          ${sidebarLegend}
+        </div>
+      </aside>
+      <section class="dashboard-main">
+        <div class="db-top">
+          <div class="db-title-wrap">
+            <div class="db-month">${monthName} <span class="db-year">${year}</span></div>
+          </div>
+          <div class="db-actions">
+            <button class="btn-add" onclick="goDay()">+ New Entry</button>
+          </div>
+        </div>
+        <section class="db-summary">
+          <div class="db-stat">
+            <div class="db-stat-k">Latest Exposure</div>
+            <div class="db-stat-v ${monthExposureClass}">${money(summary.latestExposure)}</div>
+            <div class="db-stat-sub">${summary.openNow} open positions</div>
+          </div>
+          <div class="db-stat">
+            <div class="db-stat-k">Win Rate</div>
+            <div class="db-stat-v">${winRate != null ? pct(winRate) : "-"}</div>
+            <div class="db-stat-sub">${summary.wins}W · ${summary.losses}L</div>
+          </div>
+          <div class="db-stat">
+            <div class="db-stat-k">Avg Risk/Trade</div>
+            <div class="db-stat-v">${money(summary.avgRiskTrade)}</div>
+            <div class="db-stat-sub">${avgRiskPct != null ? pct(avgRiskPct) + " of limit" : "per-position limit"}</div>
+          </div>
+          <div class="db-stat">
+            <div class="db-stat-k">Max Exposure</div>
+            <div class="db-stat-v">${money(summary.maxExposure)}</div>
+            <div class="db-stat-sub">${summary.maxExposurePct != null ? pct(summary.maxExposurePct) + " of capital" : "month high"}</div>
+          </div>
+          <div class="db-stat">
+            <div class="db-stat-k">Open Risk</div>
+            <div class="db-stat-v ${openRisk > 0 ? "neg" : "neu"}">${money(openRisk)}</div>
+            <div class="db-stat-sub">${summary.openNow} open positions; loss if active SLs hit</div>
+          </div>
+        </section>
+        <section class="db-month-grid">${monthCells}</section>
+      </section>
     </section>
-    <section class="settings-card">
-      <div class="sec-title" style="margin-bottom:12px;border-bottom:none;padding-bottom:0">Global Snapshot</div>
-      <div class="dash-stats">
-        <div><div class="dash-k">Available capital</div><div class="dash-v small">${money(settings.available_capital)}</div></div>
-        <div><div class="dash-k">Daily risk</div><div class="dash-v small">${money(settings.daily_risk)}</div></div>
-        <div><div class="dash-k">Per-position risk</div><div class="dash-v small">${money(settings.per_position_risk)}</div></div>
-        <div><div class="dash-k">Quick open</div><div class="dash-v small">${fmtDateLabel(latestDashboardDate || todayStr())}</div></div>
-      </div>
-    </section>
-    <section class="dash-grid">${cards}</section>
   `;
 }
 
@@ -2563,11 +2962,36 @@ async function loadPlanStreakReport() {
   }
 }
 
+function effectiveHonorStatus(item) {
+  const raw = String(item?.status || "").toUpperCase();
+  const executionExit = Number(
+    item?.execution_exit_price ??
+    item?.executed_sell_price ??
+    item?.last_sell_price ??
+    item?.sell_price ??
+    item?.actual_sell_price ??
+    item?.simulated_exit_price ??
+    0
+  );
+  const stopPrice = Number(
+    item?.stop_price ??
+    item?.plan_current_sl ??
+    item?.plan_trail_override ??
+    item?.tactical_stop_price ??
+    item?.tacticalSL ??
+    0
+  );
+  if (raw === "VIOLATED" && executionExit > 0 && stopPrice > 0 && executionExit <= stopPrice + 0.01) {
+    return "HONORED";
+  }
+  return raw;
+}
+
 function renderExecutionRibbon(campaigns) {
   const items = Array.isArray(campaigns)
     ? campaigns
         .filter(item => {
-          const status = String(item.status || "").toUpperCase();
+          const status = effectiveHonorStatus(item);
           return status === "HONORED" || status === "VIOLATED";
         })
         .slice(-10)
@@ -2578,10 +3002,10 @@ function renderExecutionRibbon(campaigns) {
     VIOLATED: { fg: "#ef4444", bg: "rgba(239,68,68,.12)", ring: "rgba(239,68,68,.28)" }
   };
   const total = items.length;
-  const honored = items.filter(item => String(item.status || "").toUpperCase() === "HONORED").length;
-  const violated = items.filter(item => String(item.status || "").toUpperCase() === "VIOLATED").length;
+  const honored = items.filter(item => effectiveHonorStatus(item) === "HONORED").length;
+  const violated = items.filter(item => effectiveHonorStatus(item) === "VIOLATED").length;
   const chips = items.map(item => {
-    const status = String(item.status || "OPEN").toUpperCase();
+    const status = effectiveHonorStatus(item) || "OPEN";
     const m = meta[status] || meta.HONORED;
     const label = escHtml(status);
     const symbol = escHtml(item.symbol || "-");
@@ -2637,7 +3061,7 @@ function renderStreakFrame(campaigns, summary) {
     ? [...campaigns]
         .sort((a, b) => String(b.entry_date || b.price_date || "").localeCompare(String(a.entry_date || a.price_date || "")))
         .filter(item => {
-          const status = String(item.status || "").toUpperCase();
+          const status = effectiveHonorStatus(item);
           return status === "HONORED" || status === "VIOLATED";
         })
         .slice(0, 14)
@@ -2649,7 +3073,7 @@ function renderStreakFrame(campaigns, summary) {
   const violatedCount = Number(summary?.violated_campaigns || 0);
   const recent = items.slice(0, 9);
   const recentSix = items.slice(0, 6);
-  const recentHonored = recentSix.filter(item => String(item.status || "").toUpperCase() === "HONORED").length;
+  const recentHonored = recentSix.filter(item => effectiveHonorStatus(item) === "HONORED").length;
   const recentTotal = recentSix.length;
   const recentViolated = Math.max(0, recentTotal - recentHonored);
   const recentLead = recentTotal
@@ -2671,9 +3095,23 @@ function renderStreakFrame(campaigns, summary) {
   };
   const iconByStatus = status => status === "HONORED" ? "&#10003;" : "&#215;";
   const detailFor = item => {
-    const status = String(item.status || "").toUpperCase();
+    const status = effectiveHonorStatus(item);
     const isTrail = Number(item.plan_trail_override || 0) > 0 || Number(item.plan_current_sl || 0) > Number(item.buy_price || 0) * 0.985 + 0.01 || /trail/i.test(String(item.status_reason || ""));
+    const executionExit = Number(
+      item.execution_exit_price ??
+      item.executed_sell_price ??
+      item.last_sell_price ??
+      item.sell_price ??
+      item.actual_sell_price ??
+      item.simulated_exit_price ??
+      0
+    );
+    const stopPrice = Number(item.stop_price ?? item.plan_current_sl ?? item.tactical_stop_price ?? item.tacticalSL ?? 0);
+    const isTacticalStop = executionExit > 0 && stopPrice > 0 && executionExit <= stopPrice + 0.01;
     if (status === "HONORED") {
+      if (isTacticalStop) {
+        return { headline: "Tactical stop hit", body: "Discipline protects." };
+      }
       return isTrail
         ? { headline: "Trailing stop hit", body: "Discipline protects." }
         : { headline: "Initial stop hit", body: "Plan. Protect. Perform." };
@@ -2681,7 +3119,7 @@ function renderStreakFrame(campaigns, summary) {
     return { headline: "Exited above stop", body: "Review. Improve. Repeat." };
   };
   const tiles = items.map(item => {
-    const status = String(item.status || "HONORED").toUpperCase();
+    const status = effectiveHonorStatus(item) || "HONORED";
     const meta = statusMeta[status] || statusMeta.HONORED;
     const label = escHtml(item.symbol || "-");
     const date = escHtml(fmtDateLabel(item.entry_date || item.price_date || ""));
@@ -2775,7 +3213,7 @@ function renderStreakView() {
       const stopPrice = item.stop_price != null ? Number(item.stop_price) : null;
       const completedTrimCount = isPlanMode ? Number(item.completed_trim_count || 0) : 0;
       const sellPrice = isPlanMode
-        ? (item.executed_sell_price != null ? Number(item.executed_sell_price) : (item.current_cmp != null ? Number(item.current_cmp) : null))
+        ? (item.execution_exit_price != null ? Number(item.execution_exit_price) : (item.executed_sell_price != null ? Number(item.executed_sell_price) : (item.current_cmp != null ? Number(item.current_cmp) : null)))
         : (item.simulated_exit_price != null ? Number(item.simulated_exit_price) : null);
       const value = isPlanMode
         ? (item.actual_value != null ? Number(item.actual_value) : null)
@@ -2846,7 +3284,7 @@ function renderStreakView() {
       ? `<div style="margin-top:0">${reportAlert}${frameHtml}${sizingHtml}</div>`
       : `<section class="settings-card">
           <div class="sec-title" style="margin-bottom:12px;border:none;padding-bottom:0">Latest snapshot</div>
-          <div class="view-note">Stop loss used for this analysis: ${pct(stop)}. Latest tradebook: ${escHtml(tradebookName)}. The table compares actual live return with the stop-plan path: day 1 checks intraday after the actual buy time, day 2 checks the daily chart close against the original 2% stop, and from day 3 onward the stop trails to breakeven or the prior 5-day EMA, whichever is higher.</div>
+          <div class="view-note">Stop loss used for this analysis: ${pct(stop)}. Latest tradebook: ${escHtml(tradebookName)}. The table compares actual live return with the stop-plan path: day 1 checks tactical after the actual buy time, day 2 checks the daily chart close against the original 2% stop, and from day 3 onward the stop trails to breakeven or the prior 5-day EMA, whichever is higher.</div>
           ${reportAlert}
           ${frameHtml}
           <div class="view-note" style="margin-top:12px">${escHtml(activeReport.note || "No additional note.")}</div>
@@ -2899,37 +3337,44 @@ function buildCard(p, num) {
   const secondaryBadge = getSecondaryBadge(p);
   const headerMeta = getHeaderMeta(p, getBucketKey(p));
   const entry = getEffectiveEntry(p);
+  const avgTacticalEntry = getTacticalAverageEntry(p);
   const closeNoteValue = p.mgmt && p.mgmt.note ? p.mgmt.note : "";
   const carriedQty = getTotalQty(p);
   const displayRisk = getDisplayedRisk(p);
   const displayRiskLabel = getDisplayedRiskLabel(p);
-    const cmpChip = p.cmp != null
+  const cmpChip = p.cmp != null
       ? `<span style="display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:999px;border:1px solid rgba(85,153,255,.35);background:linear-gradient(180deg, rgba(85,153,255,.18), rgba(85,153,255,.08));color:#9cc4ff;font-family:var(--mono);font-size:12px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;box-shadow:0 0 0 1px rgba(11,18,34,.4) inset">CMP Rs ${priceSL(p.cmp)}</span>`
       : "";
   const slOrder = getTrailStopOrderPreview(p);
-  const publicIpNote = kitePublicIp ? `Kite/public egress IP: ${kitePublicIp}` : "Public IP not detected yet.";
+  const publicIpParts = [];
+  if (kitePublicIpV4) publicIpParts.push(`IPv4 ${kitePublicIpV4}`);
+  if (kitePublicIpV6) publicIpParts.push(`IPv6 ${kitePublicIpV6}`);
+  const publicIpNote = publicIpParts.length ? `Kite/public egress IPs: ${publicIpParts.join(" | ")}` : "Public IP not detected yet.";
   const slOrderButton = slOrder
-    ? `<button class="be-btn" type="button" onclick="pushStopLossOrder('${p.id}')">Push SL Order (${slOrder.qty} @ Rs ${priceSL(slOrder.limit)})</button>`
+    ? `<button class="be-btn" type="button" onclick="pushStopLossOrder('${p.id}')">Push SL Order</button>`
     : "";
   const slOrderNote = slOrder
-    ? `Kite order preview: qty ${slOrder.qty}, trigger Rs ${priceSL(slOrder.trigger)}, limit Rs ${priceSL(slOrder.limit)}`
+    ? "Kite order pricing is resolved from the instrument master when you click Push SL Order."
     : "Set a trail override to enable the Kite SL push button.";
-   const compactNumStyle = 'style="width:100%;min-width:0"';
-   const compactTrimStyle = 'style="width:100%;min-width:0"';
+  const compactNumStyle = 'style="width:100%;min-width:0"';
+  const compactTrimStyle = 'style="width:100%;min-width:0"';
+  const compactQtyStyle = 'style="width:100%;min-width:0;height:28px;padding-top:4px;padding-bottom:4px;font-size:12px;font-weight:600;line-height:1;text-align:center;color:var(--t1);background:rgba(15,19,33,.9)"';
+  const compactSummaryValueStyle = 'font-size:12px;line-height:1.05;font-weight:700;white-space:nowrap';
+  const compactBigValueStyle = 'font-size:12px;line-height:1.05;font-weight:700;white-space:nowrap';
   const avgExecSL = getAverageExecutionSL(p);
   const execRisk = getExecutionRisk(p);
   const qty = carriedQty != null ? carriedQty : (p._qty || 0);
   const splits = [Math.ceil(qty * 0.33), Math.ceil(qty * 0.25), Math.floor(qty * 0.25), Math.floor(qty * 0.17)];
-  const splitHtml = `<div class="qty-splits"><div class="qs-box"><div class="qs-lbl">T1 - lock</div><div class="qs-val" id="sp0-${p.id}">${qty > 0 ? splits[0] : "-"}</div><div class="qs-pct">33%</div></div><div class="qs-box"><div class="qs-lbl">T2 - target</div><div class="qs-val" id="sp1-${p.id}">${qty > 0 ? splits[1] : "-"}</div><div class="qs-pct">25%</div></div><div class="qs-box"><div class="qs-lbl">T3 - run</div><div class="qs-val" id="sp2-${p.id}">${qty > 0 ? splits[2] : "-"}</div><div class="qs-pct">25%</div></div><div class="qs-box"><div class="qs-lbl">T4 - runner</div><div class="qs-val" id="sp3-${p.id}">${qty > 0 ? splits[3] : "-"}</div><div class="qs-pct">17%</div></div></div>`;
   const trimLabels = ["+3% lock", "+7% target", "+15% run", "+25% runner"];
   const trimColors = ["var(--amb)", "var(--blu)", "var(--green)", "var(--green)"];
   let running = carriedQty != null ? carriedQty : 0;
   let trimRows = "";
   p.trims.forEach((t, i) => {
     const sug = t._sug ? "Rs " + t._sug : (i === 1 ? "7% target" : "-");
+    const trimQty = qty > 0 ? splits[i] : "-";
     const pnlTxt = t._pnl != null ? (t._pnl >= 0 ? "+" : "-") + "Rs " + fi(t._pnl) : "-";
     running -= (t.done && t.sq ? t.sq : 0);
-    trimRows += `<tr id="tr-${i}-${p.id}" class="${t.done ? "t-done" : ""}"><td><span class="t-label">T${i + 1}</span><span class="t-pct" style="color:${trimColors[i]}">${trimLabels[i]}</span></td><td><input type="date" class="t-in t-date" ${compactTrimStyle} value="${t.dt || ""}" oninput="updTrim('${p.id}',${i},'dt',this.value)"></td><td><span id="ts${i}-${p.id}" class="${t._sug ? "t-target" : "t-na"}">${sug}</span></td><td><input type="number" class="t-in" placeholder="Rs sell" ${compactTrimStyle} value="${t.ap != null ? t.ap : ""}" oninput="updTrim('${p.id}',${i},'ap',parseFloat(this.value)||null)"></td><td><input type="number" class="t-in" placeholder="qty" ${compactTrimStyle} value="${t.sq != null ? t.sq : ""}" oninput="updTrim('${p.id}',${i},'sq',parseInt(this.value)||null)"><span class="t-rem" id="tr${i}-${p.id}">${carriedQty != null ? running + " rem" : ""}</span></td><td><span id="tp${i}-${p.id}" class="${t._pnl != null ? "t-pl " + (t._pnl >= 0 ? "pos" : "neg") : "t-pl"}">${pnlTxt}</span></td><td style="text-align:center"><input type="checkbox" class="t-chk" ${t.done ? "checked" : ""} onchange="updTrim('${p.id}',${i},'done',this.checked)"></td></tr>`;
+    trimRows += `<tr id="tr-${i}-${p.id}" class="${t.done ? "t-done" : ""}"><td><span class="t-label">T${i + 1}</span><span class="t-pct" style="color:${trimColors[i]}">${trimLabels[i]}</span></td><td><input type="date" class="t-in t-date" ${compactTrimStyle} value="${t.dt || ""}" oninput="updTrim('${p.id}',${i},'dt',this.value)"></td><td><span id="ts${i}-${p.id}" class="${t._sug ? "t-target" : "t-na"}">${sug}</span></td><td><span class="t-target">${trimQty}</span></td><td><input type="number" class="t-in" placeholder="Rs sell" ${compactTrimStyle} value="${t.ap != null ? t.ap : ""}" oninput="updTrim('${p.id}',${i},'ap',parseFloat(this.value)||null)"></td><td><input type="number" class="t-in" placeholder="qty" ${compactTrimStyle} value="${t.sq != null ? t.sq : ""}" oninput="updTrim('${p.id}',${i},'sq',parseInt(this.value)||null)"><span class="t-rem" id="tr${i}-${p.id}">${carriedQty != null ? running + " rem" : ""}</span></td><td><span id="tp${i}-${p.id}" class="${t._pnl != null ? "t-pl " + (t._pnl >= 0 ? "pos" : "neg") : "t-pl"}">${pnlTxt}</span></td><td style="text-align:center"><input type="checkbox" class="t-chk" ${t.done ? "checked" : ""} onchange="updTrim('${p.id}',${i},'done',this.checked)"></td></tr>`;
   });
   const hasTrim = p.trims.some(t => t.done);
   const net = (p._realPnl || 0) + (p._openPnl || 0);
@@ -2959,109 +3404,144 @@ function buildCard(p, num) {
     </div>
     <div class="pbody ${p.collapsed ? "hide" : ""}" id="pb-${p.id}">
       <div class="sec"><div class="sec-title">Merits &amp; thesis</div><textarea class="fin" rows="2" placeholder="Why this stock? RS rank, catalyst, setup pattern..." oninput="upd('${p.id}','merits',this.value)">${p.merits || ""}</textarea></div>
-      <div class="sec">
-        <div class="sec-title" style="gap:10px;flex-wrap:wrap">
-          <span>Plan</span>
-          <span class="sec-note">core qty uses planned SL, tactical qty is set manually</span>
-          <span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <span style="font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--blu)">Risk willing</span>
-            <input type="number" class="fin num" style="width:110px;height:28px;padding-top:5px;padding-bottom:5px" placeholder="5000" value="${p.riskAmount != null ? p.riskAmount : ""}" oninput="upd('${p.id}','riskAmount',parseFloat(this.value)||null)">
-            <button class="btn-sec" type="button" style="padding:3px 8px;font-size:10px" onclick="event.stopPropagation();clearPlanFields('${p.id}')">Clear plan</button>
-          </span>
-        </div>
-        <div style="border:1px solid var(--line);border-radius:12px;overflow:hidden;background:rgba(15,19,33,.7);margin-top:4px">
-          <div style="display:grid;grid-template-columns:140px 96px 1fr 1fr;gap:0;padding:8px 12px;border-bottom:1px solid var(--line);font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--blu)">
-            <div>STAGE</div><div>QTY</div><div>PLAN ENTRY</div><div>STOP-LOSS</div>
+      <div class="trade-io-grid">
+        <div class="sec trade-panel trade-plan">
+    <div class="sec-title" style="gap:10px;flex-wrap:nowrap;align-items:center">
+      <span style="display:flex;align-items:center;gap:8px;white-space:nowrap;color:var(--blu);font-weight:900;letter-spacing:.14em">1 • PLAN
+        <button class="btn-sec" type="button" style="padding:3px 8px;font-size:10px" onclick="event.stopPropagation();clearPlanFields('${p.id}')">Clear</button>
+      </span>
+            <span style="display:flex;align-items:center;gap:8px;flex-wrap:nowrap;white-space:nowrap">
+              <span style="font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--blu)">Risk willing</span>
+              <input type="number" class="fin num" style="width:110px;height:28px;padding-top:5px;padding-bottom:5px" placeholder="5000" value="${p.riskAmount != null ? p.riskAmount : ""}" oninput="upd('${p.id}','riskAmount',parseFloat(this.value)||null)">
+            </span>
           </div>
-          <div style="display:grid;grid-template-columns:140px 96px 1fr 1fr;gap:0;align-items:center;border-bottom:1px solid var(--line)">
-            <div style="padding:8px 12px;font-size:12px;font-weight:900;color:#7ea0ff;background:rgba(34,57,120,.14);border-right:1px solid var(--line)">PLANNED</div>
-              <div style="padding:6px 8px;border-right:1px solid var(--line)"><div id="cmp-${p.id}" class="fcomp" style="font-size:17px;line-height:1.05;color:${p._predQty > 0 ? "var(--green)" : "var(--t3)"};margin-top:2px">${p._predQty > 0 ? Math.floor(Number(p._predQty)) : "-"}</div></div>
-              <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" class="fin num en-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="0.00" value="${p.planEntry != null ? p.planEntry : ""}" oninput="upd('${p.id}','planEntry',parseFloat(this.value)||null)"></div>
-              <div style="padding:6px 8px"><input type="number" class="fin num sl-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="0.00" value="${p.planSL != null ? p.planSL : ""}" oninput="upd('${p.id}','planSL',parseFloat(this.value)||null)"></div>
+          <div class="trade-panel-body">
+            <div style="border:1px solid var(--line);border-radius:12px;overflow:hidden;background:rgba(15,19,33,.7);margin-top:2px">
+              <div style="display:grid;grid-template-columns:140px 96px 1fr 1fr;gap:0;padding:8px 12px;border-bottom:1px solid var(--line);font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--blu)">
+                <div></div><div>QTY</div><div>PLAN ENTRY</div><div>STOP-LOSS</div>
+              </div>
+              <div style="display:grid;grid-template-columns:140px 96px 1fr 1fr;gap:0;align-items:center;border-bottom:1px solid var(--line)">
+                <div style="padding:8px 12px;font-size:11px;font-weight:900;letter-spacing:.10em;color:#2ee6a5;background:rgba(30,214,141,.10);border-right:1px solid var(--line)">TACTICAL</div>
+                <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" class="fin num qty-mini" placeholder="tactical qty" value="${p.tacticalQty != null ? p.tacticalQty : ""}" oninput="upd('${p.id}','tacticalQty',this.value === "" ? null : (parseInt(this.value, 10) || 0))"></div>
+                <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" class="fin num en-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="tactical price" value="${p.tacticalEntry != null ? p.tacticalEntry : ""}" oninput="upd('${p.id}','tacticalEntry',parseFloat(this.value)||null)"></div>
+                <div style="padding:6px 8px"><input type="number" class="fin num sl-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="tactical sl" value="${p.tacticalSL != null ? p.tacticalSL : ""}" oninput="upd('${p.id}','tacticalSL',parseFloat(this.value)||null)"></div>
+              </div>
+              <div style="display:grid;grid-template-columns:140px 96px 1fr 1fr;gap:0;align-items:center;">
+                <div style="padding:8px 12px;font-size:11px;font-weight:900;letter-spacing:.10em;color:#7ea0ff;background:rgba(34,57,120,.14);border-right:1px solid var(--line)">PLANNED</div>
+                <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="text" class="fin num qty-mini" id="cmp-${p.id}" value="${p._predQty > 0 ? Math.floor(Number(p._predQty)) : "-"}" readonly></div>
+                <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" class="fin num en-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="0.00" value="${p.planEntry != null ? p.planEntry : ""}" oninput="upd('${p.id}','planEntry',parseFloat(this.value)||null)"></div>
+                <div style="padding:6px 8px"><input type="number" class="fin num sl-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="0.00" value="${p.planSL != null ? p.planSL : ""}" oninput="upd('${p.id}','planSL',parseFloat(this.value)||null)"></div>
+              </div>
+              <div style="border-top:1px solid var(--line);padding:7px 8px 8px;background:linear-gradient(180deg, rgba(22,28,45,.82), rgba(13,17,30,.94));">
+                <div class="g4" style="grid-template-columns:repeat(4,minmax(0,1fr));gap:0;align-items:stretch;">
+                  <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
+                    <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">BLENDED SL</div>
+                    <div class="fcomp mini-val" id="rps-val-${p.id}" style="display:flex;align-items:baseline;gap:6px;flex-wrap:nowrap;white-space:nowrap;color:#ff4d6d;margin-top:3px;cursor:default">${p._rps != null ? `<span style="color:#ff4d6d;font-size:12px;font-weight:700;line-height:1">${p._rps}</span>${p._blendPct != null ? ` <span style="color:#fca5a5;font-size:10px;font-weight:700;line-height:1">${p._blendPct.toFixed(2)}%</span>` : ""}` : "-"}</div>
+                  </div>
+                  <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
+                    <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">AVG TACTICAL ENTRY</div>
+                    <div class="fcomp mini-val" id="ape-${p.id}" style="color:var(--green);margin-top:5px">${avgTacticalEntry != null ? price2(avgTacticalEntry) : "-"}</div>
+                  </div>
+                  <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
+                    <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">TOTAL POSITION QTY</div>
+                    <div class="fcomp mini-val" id="qty-${p.id}" style="color:${(p._predQty + (p._tacticalQty || 0)) > 0 ? "var(--t1)" : "var(--t3)"};margin-top:5px">${(p._predQty + (p._tacticalQty || 0)) > 0 ? (p._predQty + (p._tacticalQty || 0)) : "-"}</div>
+                  </div>
+                  <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;">
+                    <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">TOTAL RISK</div>
+                    <div class="fcomp mini-val" id="prisk-${p.id}" style="color:var(--amb);margin-top:5px">${p._planRisk != null && p._planRisk > 0 ? price2(p._planRisk) : "-"}</div>
+                  </div>
+                </div>
+              </div>
             </div>
-            <div style="display:grid;grid-template-columns:140px 96px 1fr 1fr;gap:0;align-items:center;">
-              <div style="padding:8px 12px;font-size:12px;font-weight:900;color:#2ee6a5;background:rgba(30,214,141,.10);border-right:1px solid var(--line)">INTRADAY</div>
-              <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" class="fin num" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="qty" value="${p.intraQty != null ? p.intraQty : (p._suggestedIntraQty != null ? p._suggestedIntraQty : "")}" oninput="upd('${p.id}','intraQty',parseInt(this.value)||0)"></div>
-              <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" class="fin num en-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="0.00" value="${p.intraEntry != null ? p.intraEntry : ""}" oninput="upd('${p.id}','intraEntry',parseFloat(this.value)||null)"></div>
-              <div style="padding:6px 8px"><input type="number" class="fin num sl-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="0.00" value="${p.intraSL != null ? p.intraSL : ""}" oninput="upd('${p.id}','intraSL',parseFloat(this.value)||null)"></div>
+          </div>
+        </div>
+        <div class="sec trade-panel trade-exec">
+          <div class="sec-title" style="gap:10px;flex-wrap:nowrap;align-items:center">
+              <span style="display:flex;align-items:center;gap:8px;white-space:nowrap;color:var(--green);font-weight:900;letter-spacing:.14em">2 • EXECUTE
+                <button class="btn-sec" type="button" style="padding:3px 8px;font-size:10px" onclick="event.stopPropagation();clearExecutionFields('${p.id}')">Clear</button>
+              </span>
+            <span style="display:flex;align-items:center;gap:8px;flex-wrap:nowrap;white-space:nowrap">
+              <span style="font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--blu)">Entry date</span>
+              <input type="date" class="fin" style="width:150px;height:28px;padding-top:5px;padding-bottom:5px" ${compactTrimStyle} value="${p.entryDate || ""}" onchange="upd('${p.id}','entryDate',this.value)">
+            </span>
+          </div>
+          <div class="trade-panel-body">
+            <div style="border:1px solid var(--line);border-radius:12px;overflow:hidden;background:rgba(15,19,33,.7);margin-top:4px">
+              <div style="display:grid;grid-template-columns:140px 96px 1fr 1fr;gap:0;padding:8px 12px;border-bottom:1px solid var(--line);font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--blu)">
+                <div></div><div>QTY</div><div>FILL PRICE</div><div>STOP-LOSS</div>
+              </div>
+              <div style="display:grid;grid-template-columns:140px 96px 1fr 1fr;gap:0;align-items:center;border-bottom:1px solid var(--line)">
+                <div style="padding:8px 12px;font-size:11px;font-weight:900;letter-spacing:.10em;color:#2ee6a5;background:rgba(30,214,141,.10);border-right:1px solid var(--line)">TACTICAL</div>
+                <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" class="fin num qty-mini" placeholder="tactical qty" value="${p.overnightQty != null ? p.overnightQty : ""}" oninput="upd('${p.id}','overnightQty',parseInt(this.value)||null)"></div>
+                <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" class="fin num en-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="tactical fill" value="${p.overnightEntry != null ? p.overnightEntry : ""}" oninput="upd('${p.id}','overnightEntry',parseFloat(this.value)||null)"></div>
+                <div style="padding:6px 8px"><input type="number" class="fin num sl-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="tactical sl" value="${p.overnightSL != null ? p.overnightSL : ""}" oninput="upd('${p.id}','overnightSL',parseFloat(this.value)||null)"></div>
+              </div>
+              <div style="display:grid;grid-template-columns:140px 96px 1fr 1fr;gap:0;align-items:center;">
+                <div style="padding:8px 12px;font-size:11px;font-weight:900;letter-spacing:.10em;color:#7ea0ff;background:rgba(34,57,120,.14);border-right:1px solid var(--line)">CORE</div>
+                <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" class="fin num qty-mini" placeholder="qty" value="${p.actualQty != null ? p.actualQty : ""}" oninput="upd('${p.id}','actualQty',parseInt(this.value)||null)"></div>
+                <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" class="fin num en-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="same-day fill" value="${p.actualEntry != null ? p.actualEntry : ""}" oninput="upd('${p.id}','actualEntry',parseFloat(this.value)||null)"></div>
+                <div style="padding:6px 8px"><input type="number" class="fin num sl-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="day sl" value="${p.daySL != null ? p.daySL : ""}" oninput="upd('${p.id}','daySL',parseFloat(this.value)||null)"></div>
+              </div>
             </div>
-            <div style="border-top:1px solid var(--line);padding:7px 8px 8px;background:linear-gradient(180deg, rgba(22,28,45,.82), rgba(13,17,30,.94));">
-              <div class="g4" style="grid-template-columns:repeat(4,minmax(0,1fr));gap:0;align-items:stretch;">
+            <div style="margin-top:4px;padding:6px 8px 7px;border:1px solid rgba(92,227,141,.14);border-radius:10px;background:linear-gradient(180deg, rgba(22,28,45,.82), rgba(13,17,30,.94));box-shadow:inset 0 1px 0 rgba(255,255,255,.03);">
+              <div class="g4" style="grid-template-columns:minmax(0,.95fr) minmax(0,1fr) minmax(150px,1.15fr) minmax(0,.95fr);gap:0;align-items:stretch;">
                 <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
-                  <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">SIZING MATH</div>
-                  <div class="fcomp" id="rps-val-${p.id}" style="font-size:17px;line-height:1.05;color:var(--t2);margin-top:5px;font-weight:600;cursor:default;">${p._rps ? p._rps : "-"}</div>
+                  <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">TOTAL QTY</div>
+                  <div class="fcomp" id="totq-${p.id}" style="${compactBigValueStyle};color:var(--t1);margin-top:5px">${getTotalQty(p) != null ? getTotalQty(p) : "-"}</div>
                 </div>
                 <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
-                  <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">AVG PLAN ENTRY</div>
-                  <div class="fcomp" id="ape-${p.id}" style="font-size:17px;line-height:1.05;color:var(--green);margin-top:5px">${p._avgPlanEntry != null ? price2(p._avgPlanEntry) : "-"}</div>
+                  <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">AVG ENTRY</div>
+                  <div class="fcomp" id="epx-${p.id}" style="${compactBigValueStyle};color:var(--green);margin-top:5px">${entry != null ? price2(entry) : "-"}</div>
                 </div>
                 <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
-                  <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">PLANNED QTY</div>
-                  <div class="fcomp" id="qty-${p.id}" style="font-size:17px;line-height:1.05;color:${(p._predQty + p._intraQty) > 0 ? "var(--green)" : "var(--t3)"};margin-top:5px">${(p._predQty + p._intraQty) > 0 ? (p._predQty + p._intraQty) : "-"}</div>
+                  <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">POSITION SIZE</div>
+                  <div class="fcomp" id="psize-${p.id}" style="${compactBigValueStyle};color:var(--t1);margin-top:5px">${entry != null && getTotalQty(p) != null ? fi(getTotalQty(p) * entry) : "-"}</div>
                 </div>
                 <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;">
-                  <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">PLANNED RISK</div>
-                  <div class="fcomp" id="prisk-${p.id}" style="font-size:17px;line-height:1.05;color:var(--amb);margin-top:5px">${p._planRisk != null && p._planRisk > 0 ? price2(p._planRisk) : "-"}</div>
+                  <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">EXEC RISK</div>
+                  <div class="fcomp" id="erisk-${p.id}" style="${compactBigValueStyle};color:${execRisk > 0 ? "var(--red)" : "var(--t1)"};margin-top:5px">${execRisk != null ? price2(execRisk) : "-"}</div>
                 </div>
+              </div>
             </div>
           </div>
         </div>
       </div>
-      <div class="div"></div>
-        <div class="sec-title">Execution <span class="sec-note">actual filled qty is split 30% intraday SL and 70% original SL</span><button class="btn-sec" type="button" style="padding:3px 8px;font-size:10px" onclick="event.stopPropagation();clearExecutionFields('${p.id}')">Clear exec</button></div>
-        <div style="border:1px solid var(--line);border-radius:12px;overflow:hidden;background:rgba(15,19,33,.7);margin-top:4px">
-          <div style="display:grid;grid-template-columns:140px 96px 1fr 1fr;gap:0;padding:8px 12px;border-bottom:1px solid var(--line);font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--blu)">
-            <div>Order</div><div>Qty</div><div>Fill Price</div><div>Stop-Loss</div>
-          </div>
-          <div style="display:grid;grid-template-columns:140px 96px 1fr 1fr;gap:0;align-items:center;border-bottom:1px solid var(--line)">
-            <div style="padding:8px 12px;font-size:12px;font-weight:900;color:#7ea0ff;background:rgba(34,57,120,.14);border-right:1px solid var(--line)">AN - Antipication</div>
-            <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" class="fin num" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="qty" value="${p.overnightQty != null ? p.overnightQty : ""}" oninput="upd('${p.id}','overnightQty',parseInt(this.value)||null)"></div>
-            <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" class="fin num en-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="overnight fill" value="${p.overnightEntry != null ? p.overnightEntry : ""}" oninput="upd('${p.id}','overnightEntry',parseFloat(this.value)||null)"></div>
-            <div style="padding:6px 8px"><input type="number" class="fin num sl-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="overnight sl" value="${p.overnightSL != null ? p.overnightSL : ""}" oninput="upd('${p.id}','overnightSL',parseFloat(this.value)||null)"></div>
-          </div>
-          <div style="display:grid;grid-template-columns:140px 96px 1fr 1fr;gap:0;align-items:center;">
-            <div style="padding:8px 12px;font-size:12px;font-weight:900;color:#2ee6a5;background:rgba(30,214,141,.10);border-right:1px solid var(--line)">Main - Day</div>
-            <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" class="fin num" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="qty" value="${p.actualQty != null ? p.actualQty : ""}" oninput="upd('${p.id}','actualQty',parseInt(this.value)||null)"></div>
-            <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" class="fin num en-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="same-day fill" value="${p.actualEntry != null ? p.actualEntry : ""}" oninput="upd('${p.id}','actualEntry',parseFloat(this.value)||null)"></div>
-            <div style="padding:6px 8px"><input type="number" class="fin num sl-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="day sl" value="${p.daySL != null ? p.daySL : ""}" oninput="upd('${p.id}','daySL',parseFloat(this.value)||null)"></div>
-          </div>
-        </div>
-        <div style="margin-top:6px;padding:6px 8px 7px;border:1px solid rgba(92,227,141,.14);border-radius:10px;background:linear-gradient(180deg, rgba(22,28,45,.82), rgba(13,17,30,.94));box-shadow:inset 0 1px 0 rgba(255,255,255,.03);">
-          <div class="g4" style="grid-template-columns:repeat(4,minmax(0,1fr));gap:0;align-items:stretch;">
-            <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
-              <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">TOTAL QTY</div>
-              <div class="fcomp" id="totq-${p.id}" style="font-size:17px;line-height:1.05;color:var(--t1);margin-top:5px">${getTotalQty(p) != null ? getTotalQty(p) : "-"}</div>
-            </div>
-            <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
-              <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">AVG ENTRY</div>
-              <div class="fcomp" id="epx-${p.id}" style="font-size:17px;line-height:1.05;color:var(--green);margin-top:5px">${entry != null ? price2(entry) : "-"}</div>
-            </div>
-            <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
-              <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">ENTRY DATE</div>
-              <input type="date" class="fin" style="width:100%;min-width:0;margin-top:5px;height:28px;padding-top:5px;padding-bottom:5px" ${compactTrimStyle} value="${p.entryDate || ""}" onchange="upd('${p.id}','entryDate',this.value)">
-            </div>
-            <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;">
-              <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">EXEC RISK</div>
-              <div class="fcomp" id="erisk-${p.id}" style="font-size:17px;line-height:1.05;color:${execRisk > 0 ? "var(--red)" : "var(--t1)"};margin-top:5px">${execRisk != null ? price2(execRisk) : "-"}</div>
+      <div class="trade-io-grid trim-trail-grid" style="margin-top:4px;grid-template-columns:minmax(0,1.3fr) minmax(0,.7fr)">
+        <div class="trade-panel trim-panel">
+          <div class="trade-panel-body">
+            <div class="sec" style="margin-bottom:0">
+              <div class="sec-title" style="margin-bottom:8px;padding-bottom:5px;color:var(--amb)">3 • TRIM</div>
+              <table class="ttbl"><thead><tr><th>Trim</th><th>Date</th><th>Suggested Rs</th><th>Trim Qty</th><th>Actual sell Rs</th><th>Qty sold</th><th>P&amp;L</th><th class="c">Done</th></tr></thead><tbody>${trimRows}</tbody></table>
+              ${pnlSumHtml}
             </div>
           </div>
         </div>
-        <div style="margin-top:10px;"><div style="font-size:10px;color:var(--t3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">Suggested 4-part split</div>${splitHtml}</div>
-      </div>
-      <div class="div"></div>
-      <div class="sec"><div class="sec-title">Trim plan &amp; execution <span class="sec-note">enter trim date, actual sell Rs + qty after each trim</span></div><table class="ttbl"><thead><tr><th>Trim</th><th>Date</th><th>Suggested Rs</th><th>Actual sell Rs</th><th>Qty sold</th><th>P&amp;L</th><th class="c">Done</th></tr></thead><tbody>${trimRows}</tbody></table>${pnlSumHtml}</div>
-      <div class="div"></div>
-        <div class="trail-box" id="trail-${p.id}">
-        <div class="trail-hdr"><span class="trail-title">Trail stop loss</span><span class="trail-days" id="days-${p.id}">${p._days != null ? "Day " + p._days + " in trade" : ""}</span></div>
-        <div class="trail-grid">
-          <div><div class="tc-label">Initial SL</div><div class="tc-val sl-c"><strong>Rs ${priceSL(p.planSL)}</strong></div></div>
-          <div><div class="tc-label">Current SL</div><div class="tc-val sl-c" id="tsl-${p.id}"><strong>Rs ${priceSL(p._currentSL)}</strong></div></div>
-          <div><div class="tc-label">Breakeven</div><div class="tc-val ${p.movedBE ? "ok-c" : ""}" id="bec-${p.id}" style="display:${p.movedBE ? "block" : "none"}">${p.movedBE ? "Rs " + priceSL(entry || p.actualEntry || p.overnightEntry) : ""}</div><div class="tc-val" ${p.movedBE ? 'style="display:none"' : ""}>${(entry || p.actualEntry || p.overnightEntry) ? "Rs " + priceSL(entry || p.actualEntry || p.overnightEntry) : "-"}</div></div>
-          <div><div class="tc-label">Override SL</div><div style="display:flex;gap:6px;align-items:center;margin-top:4px;flex-wrap:wrap"><input type="number" class="t-in" id="toi-${p.id}" style="width:92px" placeholder="manual" value="${p.trailOverride != null ? p.trailOverride : ""}" oninput="upd('${p.id}','trailOverride',parseFloat(this.value)||null)"><button class="be-btn" type="button" onclick="updateTrailSL('${p.id}')">Update SL</button>${slOrderButton}</div></div>
+        <div class="trade-panel trail-panel">
+          <div class="trade-panel-body">
+            <div class="trail-box" id="trail-${p.id}" style="margin:0;padding:0;border:none;background:transparent;box-shadow:none;min-height:100%;display:flex;flex-direction:column">
+              <div class="trail-hdr"><span class="trail-title">4 • TRAIL</span><span class="trail-days" id="days-${p.id}">${p._days != null ? "Day " + p._days + " in trade" : ""}</span></div>
+              <div class="trail-grid" style="grid-template-columns:1fr 1fr">
+                <div><div class="tc-label">Initial SL</div><div class="tc-val trail-num sl-c"><strong>Rs ${priceSL(p.planSL)}</strong></div></div>
+                <div><div class="tc-label">Current SL</div><div class="tc-val trail-num sl-c" id="tsl-${p.id}"><strong>Rs ${priceSL(p._currentSL)}</strong></div></div>
+                <div><div class="tc-label">Breakeven</div><div class="tc-val trail-num ${p.movedBE ? "ok-c" : ""}" id="bec-${p.id}" style="display:${p.movedBE ? "block" : "none"}">${p.movedBE ? "Rs " + priceSL(entry || p.actualEntry || p.overnightEntry) : ""}</div><div class="tc-val trail-num" ${p.movedBE ? 'style="display:none"' : ""}>${(entry || p.actualEntry || p.overnightEntry) ? "Rs " + priceSL(entry || p.actualEntry || p.overnightEntry) : "-"}</div></div>
+                <div><div class="tc-label">Override SL</div><div style="display:flex;gap:6px;align-items:center;margin-top:4px;flex-wrap:wrap"><input type="number" class="t-in" id="toi-${p.id}" style="width:92px" placeholder="manual" value="${p.trailOverride != null ? p.trailOverride : ""}" oninput="upd('${p.id}','trailOverride',parseFloat(this.value)||null)"><button class="be-btn" type="button" onclick="updateTrailSL('${p.id}')">Update SL</button>${slOrderButton}</div></div>
+              </div>
+              ${beBanner}
+              <div class="trail-mile">
+                <div class="trail-mile-bar">
+                  <span class="trail-mile-fill"></span>
+                  <span class="trail-mile-spot"></span>
+                </div>
+                <div class="trail-mile-lbls">
+                  <div><div class="trail-mile-k">SL</div><div class="trail-mile-v trail-num sl-c">Rs ${priceSL(p.planSL)}</div></div>
+                  <div><div class="trail-mile-k">Entry</div><div class="trail-mile-v trail-num">Rs ${priceSL(entry || p.actualEntry || p.overnightEntry)}</div></div>
+                  <div><div class="trail-mile-k">+25%</div><div class="trail-mile-v trail-num">${(entry || p.actualEntry || p.overnightEntry) ? "Rs " + priceSL((entry || p.actualEntry || p.overnightEntry) * 1.25) : "-"}</div></div>
+                </div>
+              </div>
+              <div class="trail-note-wrap" style="margin-top:auto"><div class="trail-note-lbl">SL adjustment note</div><input type="text" class="t-note" id="tni-${p.id}" placeholder="e.g. moved SL to EMA20 at Rs 182 - structure holding..." value="${p.trailNote || ""}" oninput="upd('${p.id}','trailNote',this.value)"></div>
+            </div>
+          </div>
         </div>
-        <div class="view-note" style="margin-top:8px">${slOrderNote}<br>${publicIpNote}</div>
-        ${beBanner}
-        <div class="trail-note-wrap"><div class="trail-note-lbl">SL adjustment note</div><input type="text" class="t-note" id="tni-${p.id}" placeholder="e.g. moved SL to EMA20 at Rs 182 - structure holding..." value="${p.trailNote || ""}" oninput="upd('${p.id}','trailNote',this.value)"></div>
       </div>
       <div class="sec"><div class="sec-title">Close note <span class="sec-note">capture the trade at close</span></div><textarea class="dev-note" id="mgmt-note-${p.id}" placeholder="Deviation, lesson, or what to remember at close..." oninput="upd('${p.id}','mgmt.note',this.value)">${escHtml(closeNoteValue)}</textarea></div>
     </div>

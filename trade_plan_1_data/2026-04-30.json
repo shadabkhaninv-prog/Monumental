@@ -1,0 +1,507 @@
+{
+  "date": "2026-04-30",
+  "saved_at": "2026-04-29T19:21:25",
+  "positions": [
+    {
+      "id": "p17770254578501mo0",
+      "symbol": "BSE",
+      "merits": "market tml . biggest whatle . shallow pullback to 8 ema , wait for break of fallng wedge",
+      "conviction": 3,
+      "cmp": 3635.7,
+      "planEntry": 3482.1,
+      "planSL": 3410.9,
+      "tacticalEntry": null,
+      "tacticalSL": 3449.9,
+      "tacticalRiskPct": 30,
+      "riskAmount": 3000,
+      "actualEntry": 3488.9,
+      "overnightEntry": 3449,
+      "overnightQty": 25,
+      "overnightSL": 3411.9,
+      "daySL": 3449.9,
+      "actualQty": 40,
+      "tacticalQty": 25,
+      "entryDate": "2026-04-27",
+      "posHigh": null,
+      "trailOverride": 3524,
+      "trailNote": "Made a new high if it breaks day's low , out of here.",
+      "thoughtTag": "NOTE",
+      "thoughtLog": [
+        {
+          "ts": "2026-04-27T04:40:28.750Z",
+          "tag": "NOTE",
+          "text": "wicky breakout"
+        },
+        {
+          "ts": "2026-04-27T04:41:57.576Z",
+          "tag": "NOTE",
+          "text": "stalling near 3525 , 3530 htere is a resistance . we are not going to be swayed by intraday"
+        },
+        {
+          "ts": "2026-04-27T05:06:08.934Z",
+          "tag": "NOTE",
+          "text": "reversing back 3479 should be protected"
+        }
+      ],
+      "movedBE": false,
+      "trims": [
+        {
+          "pct": 3,
+          "type": "fixed",
+          "ap": 3579.8,
+          "sq": 11,
+          "dt": "2026-04-24",
+          "done": true,
+          "_sug": 3577.76,
+          "_pnl": 1000
+        },
+        {
+          "pct": 10,
+          "type": "trail",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 3716.7,
+          "_pnl": null
+        },
+        {
+          "pct": 15,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 3994.58,
+          "_pnl": null
+        },
+        {
+          "pct": 25,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 4341.94,
+          "_pnl": null
+        }
+      ],
+      "mgmt": {
+        "checklist": [
+          [
+            false,
+            false,
+            false
+          ],
+          [
+            true,
+            false,
+            false
+          ],
+          [
+            false,
+            false,
+            false
+          ]
+        ],
+        "note": ""
+      },
+      "collapsed": false,
+      "_coreRps": 71.19999999999982,
+      "_blendRps": 59.499999999999815,
+      "_rps": "59.50",
+      "_qty": 67,
+      "_predQty": 42,
+      "_predRisk": 2990.4,
+      "_planRisk": 3795.4,
+      "_suggestedQty": 20,
+      "_rem": 54,
+      "_realPnl": 1000,
+      "_openPnl": 8756,
+      "_currentSL": 3524,
+      "_days": 2,
+      "_beSug": true,
+      "_status": "partial",
+      "_avgPlanEntry": 3482.1,
+      "_blendPct": 1.71,
+      "_tacticalRps": 32.19999999999982,
+      "_tacticalQty": 25,
+      "_tacticalRisk": 805,
+      "_avgTacticalEntry": 3482.1,
+      "_suggestedTacticalQty": 13
+    },
+    {
+      "id": "p1777275356085ebju",
+      "symbol": "MCX",
+      "merits": "TML . but bit of a drag ,tracking BSE ",
+      "conviction": 2,
+      "cmp": 2968.3,
+      "planEntry": 2815,
+      "planSL": 2773,
+      "tacticalEntry": null,
+      "tacticalSL": null,
+      "tacticalRiskPct": 30,
+      "riskAmount": 1500,
+      "actualEntry": 2802.31,
+      "overnightEntry": null,
+      "overnightQty": null,
+      "overnightSL": null,
+      "daySL": 2773.7,
+      "actualQty": 40,
+      "tacticalQty": 0,
+      "entryDate": "2026-04-27",
+      "posHigh": null,
+      "trailOverride": 2829,
+      "trailNote": "Trail SL updated to Rs 2829",
+      "thoughtTag": "LESSON",
+      "thoughtLog": [
+        {
+          "ts": "2026-04-27T08:13:43.170Z",
+          "tag": "NOTE",
+          "text": "not convinced , its just jittery and sloppy but its a leader .bse is leading so lets see"
+        },
+        {
+          "ts": "2026-04-28T04:36:01.666Z",
+          "tag": "NOTE",
+          "text": "performing better than i had expected"
+        },
+        {
+          "ts": "2026-04-29T04:20:59.140Z",
+          "tag": "EXIT",
+          "text": "some panic selling during weak open"
+        },
+        {
+          "ts": "2026-04-29T04:24:46.065Z",
+          "tag": "EXIT",
+          "text": "mcx continues to outperform"
+        },
+        {
+          "ts": "2026-04-29T10:03:10.619Z",
+          "tag": "LESSON",
+          "text": "intraday mis order square up screwup"
+        }
+      ],
+      "movedBE": false,
+      "trims": [
+        {
+          "pct": 3,
+          "type": "fixed",
+          "ap": 2870.8,
+          "sq": 12,
+          "dt": "2026-04-27",
+          "done": true,
+          "_sug": 2886.38,
+          "_pnl": 822
+        },
+        {
+          "pct": 10,
+          "type": "trail",
+          "ap": 2882.9,
+          "sq": 10,
+          "dt": "",
+          "done": true,
+          "_sug": 2998.47,
+          "_pnl": 806
+        },
+        {
+          "pct": 15,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 3222.66,
+          "_pnl": null
+        },
+        {
+          "pct": 25,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 3502.89,
+          "_pnl": null
+        }
+      ],
+      "mgmt": {
+        "checklist": [
+          [
+            false,
+            false,
+            false
+          ],
+          [
+            true,
+            false,
+            false
+          ],
+          [
+            false,
+            false,
+            false
+          ]
+        ],
+        "note": ""
+      },
+      "collapsed": false,
+      "_coreRps": 42,
+      "_blendRps": 42,
+      "_rps": "42.00",
+      "_qty": 35,
+      "_predQty": 35,
+      "_predRisk": 1470,
+      "_planRisk": 1470,
+      "_avgPlanEntry": 2815,
+      "_suggestedQty": 12,
+      "_rem": 18,
+      "_realPnl": 1628,
+      "_openPnl": 2988,
+      "_currentSL": 2829,
+      "_days": 2,
+      "_beSug": true,
+      "_status": "partial",
+      "_blendPct": 1.49,
+      "_tacticalRps": 42,
+      "_tacticalQty": 0,
+      "_tacticalRisk": 0,
+      "_avgTacticalEntry": 2815,
+      "_suggestedTacticalQty": 11
+    },
+    {
+      "id": "p1777372385419pqw8",
+      "symbol": "CGPOWER",
+      "merits": "HOTTEST SECTOR .POWER SECTOR . BULL FLAG .TIGHT TWO DAYS",
+      "conviction": 3,
+      "cmp": 825.6,
+      "planEntry": 837.1,
+      "planSL": 817.9,
+      "tacticalEntry": 837.34,
+      "tacticalSL": 831.9,
+      "tacticalRiskPct": 30,
+      "riskAmount": 4000,
+      "actualEntry": 837.34,
+      "overnightEntry": 830.34,
+      "overnightQty": 123,
+      "overnightSL": 817.9,
+      "daySL": 831.9,
+      "actualQty": 140,
+      "tacticalQty": null,
+      "entryDate": "2026-04-29",
+      "posHigh": null,
+      "trailOverride": null,
+      "trailNote": "",
+      "thoughtTag": "NOTE",
+      "thoughtLog": [
+        {
+          "ts": "2026-04-29T10:01:46.713Z",
+          "tag": "NOTE",
+          "text": "it never really broke that 840 levels"
+        },
+        {
+          "ts": "2026-04-29T10:01:56.553Z",
+          "tag": "NOTE",
+          "text": "power sector pulled back"
+        }
+      ],
+      "movedBE": false,
+      "trims": [
+        {
+          "pct": 3,
+          "type": "fixed",
+          "ap": 831,
+          "sq": 140,
+          "dt": "2026-04-29",
+          "done": true,
+          "_sug": 859.09,
+          "_pnl": -888
+        },
+        {
+          "pct": 10,
+          "type": "trail",
+          "ap": 827,
+          "sq": 83,
+          "dt": "2026-04-29",
+          "done": true,
+          "_sug": 892.45,
+          "_pnl": -858
+        },
+        {
+          "pct": 15,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 959.18,
+          "_pnl": null
+        },
+        {
+          "pct": 25,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 1042.59,
+          "_pnl": null
+        }
+      ],
+      "mgmt": {
+        "checklist": [
+          [
+            false,
+            false,
+            false
+          ],
+          [
+            false,
+            false,
+            false
+          ],
+          [
+            false,
+            false,
+            false
+          ]
+        ],
+        "note": ""
+      },
+      "collapsed": false,
+      "_coreRps": 19.200000000000045,
+      "_blendRps": 15.000000000000044,
+      "_blendPct": 1.79,
+      "_rps": "15.00",
+      "_qty": 208,
+      "_predQty": 208,
+      "_predRisk": 3993.6,
+      "_planRisk": 3993.6,
+      "_avgPlanEntry": 837.1,
+      "_suggestedQty": 79,
+      "_rem": 40,
+      "_realPnl": -1746,
+      "_openPnl": -339,
+      "_currentSL": 817.9,
+      "_days": 0,
+      "_beSug": false,
+      "_status": "partial",
+      "_tacticalRps": 5.2000000000000455,
+      "_tacticalQty": 0,
+      "_tacticalRisk": 0,
+      "_avgTacticalEntry": 837.1,
+      "_suggestedTacticalQty": 62
+    },
+    {
+      "id": "p17774570491736ysa",
+      "symbol": "CPPLUS",
+      "merits": "SECURITY ",
+      "conviction": 3,
+      "cmp": 2338.4,
+      "planEntry": 2334.1,
+      "planSL": 2291.9,
+      "tacticalEntry": 2334.14,
+      "tacticalSL": 2291.9,
+      "tacticalRiskPct": 30,
+      "riskAmount": 3000,
+      "actualEntry": null,
+      "overnightEntry": 2334.14,
+      "overnightQty": 25,
+      "overnightSL": 2291.9,
+      "daySL": null,
+      "actualQty": null,
+      "tacticalQty": null,
+      "entryDate": "2026-04-30",
+      "posHigh": null,
+      "trailOverride": null,
+      "trailNote": "",
+      "thoughtTag": "NOTE",
+      "thoughtLog": [],
+      "movedBE": false,
+      "trims": [
+        {
+          "pct": 3,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "dt": "2026-04-30",
+          "done": false,
+          "_sug": 2404.16,
+          "_pnl": null
+        },
+        {
+          "pct": 10,
+          "type": "trail",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 2497.53,
+          "_pnl": null
+        },
+        {
+          "pct": 15,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 2684.26,
+          "_pnl": null
+        },
+        {
+          "pct": 25,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 2917.67,
+          "_pnl": null
+        }
+      ],
+      "mgmt": {
+        "checklist": [
+          [
+            false,
+            false,
+            false
+          ],
+          [
+            false,
+            false,
+            false
+          ],
+          [
+            false,
+            false,
+            false
+          ]
+        ],
+        "note": ""
+      },
+      "collapsed": false,
+      "_coreRps": 42.19999999999982,
+      "_blendRps": 42.19999999999982,
+      "_blendPct": 1.81,
+      "_rps": "42.20",
+      "_qty": 71,
+      "_predQty": 71,
+      "_predRisk": 2996.2,
+      "_planRisk": 2996.2,
+      "_avgPlanEntry": 2334.1,
+      "_suggestedQty": 8,
+      "_rem": 25,
+      "_realPnl": 0,
+      "_openPnl": 107,
+      "_currentSL": 2291.9,
+      "_days": -1,
+      "_beSug": false,
+      "_status": "active",
+      "_tacticalRps": 42.19999999999982,
+      "_tacticalQty": 0,
+      "_tacticalRisk": 0,
+      "_avgTacticalEntry": 2334.1,
+      "_suggestedTacticalQty": 21
+    }
+  ]
+}

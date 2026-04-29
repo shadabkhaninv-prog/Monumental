@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import os
 import json
+import re
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -31,6 +32,7 @@ DEFAULT_TOKEN_FILE = BASE_DIR / "kite_token.txt"
 DEFAULT_SAVE_DIR = Path.home() / "Downloads" / "trade_plan_1_data"
 DEFAULT_TAG_PREFIX = "TP-SL"
 DEFAULT_STATE_FILE = DEFAULT_SAVE_DIR / ".kite_stop_loss_orders_state.json"
+_TICK_SIZE_CACHE: Dict[str, Tuple[Dict[str, float], Dict[str, float]]] = {}
 
 
 def read_kite_token_file(token_file: Path) -> Dict[str, str]:
@@ -72,6 +74,55 @@ def get_kite_client(token_file: Path):
         except Exception:
             pass
     return kite
+
+
+def normalize_symbol(value: str) -> str:
+    return re.sub(r"[^A-Z0-9]", "", (value or "").strip().upper())
+
+
+def _kite_tick_maps(kite, exchange: str) -> Tuple[Dict[str, float], Dict[str, float]]:
+    exchange_key = (exchange or "NSE").strip().upper() or "NSE"
+    cached = _TICK_SIZE_CACHE.get(exchange_key)
+    if cached is not None:
+        return cached
+
+    exact: Dict[str, float] = {}
+    normalized: Dict[str, float] = {}
+    try:
+        instruments = kite.instruments(exchange_key)
+    except Exception:
+        _TICK_SIZE_CACHE[exchange_key] = (exact, normalized)
+        return exact, normalized
+
+    for inst in instruments or []:
+        symbol = str(inst.get("tradingsymbol") or "").strip().upper()
+        if not symbol:
+            continue
+        try:
+            tick_size = float(inst.get("tick_size"))
+        except (TypeError, ValueError):
+            continue
+        if tick_size <= 0:
+            continue
+        exact.setdefault(symbol, tick_size)
+        normalized.setdefault(normalize_symbol(symbol), tick_size)
+
+    cached = (exact, normalized)
+    _TICK_SIZE_CACHE[exchange_key] = cached
+    return cached
+
+
+def resolve_tick_size(kite, symbol: str, exchange: Optional[str] = None, fallback: float = 0.05) -> float:
+    symbol_txt = infer_tradingsymbol(symbol)
+    exchange_txt = (exchange or infer_exchange(symbol_txt)).strip().upper() or "NSE"
+    exact, normalized = _kite_tick_maps(kite, exchange_txt)
+    candidates = [symbol_txt.strip().upper(), normalize_symbol(symbol_txt)]
+    for candidate in candidates:
+        if candidate in exact:
+            return exact[candidate]
+        if candidate in normalized:
+            return normalized[candidate]
+    return fallback if fallback and fallback > 0 else 0.05
 
 
 def friendly_kite_error(exc: Exception) -> str:
@@ -250,7 +301,7 @@ def main() -> int:
     parser.add_argument("--save-dir", type=Path, default=DEFAULT_SAVE_DIR, help="Directory containing dated plan JSON files.")
     parser.add_argument("--token-file", type=Path, default=DEFAULT_TOKEN_FILE, help="Path to kite_token.txt.")
     parser.add_argument("--tag-prefix", default=DEFAULT_TAG_PREFIX, help="Order tag prefix used for duplicate detection.")
-    parser.add_argument("--tick-size", type=float, default=0.05, help="Price tick size used to derive the limit price.")
+    parser.add_argument("--tick-size", type=float, default=0.0, help="Optional override tick size. Default: auto-detect from Kite instrument master.")
     parser.add_argument("--product", default="CNC", choices=["CNC", "MIS"], help="Kite product for the stop-loss order.")
     parser.add_argument("--place", action="store_true", help="Actually submit the orders. Without this flag the script only previews.")
     parser.add_argument("--state-file", type=Path, default=DEFAULT_STATE_FILE, help="Optional JSON file used to remember submitted orders.")
@@ -287,13 +338,14 @@ def main() -> int:
         exchange = infer_exchange(str(position.get("symbol") or ""))
         rem = int(position["_remaining_qty"])
         trigger = float(position["_sl_trigger"])
-        limit_price, trigger_price = stop_limit_prices(trigger, args.tick_size)
+        tick_size = args.tick_size if args.tick_size and args.tick_size > 0 else resolve_tick_size(kite, symbol, exchange)
+        limit_price, trigger_price = stop_limit_prices(trigger, tick_size)
         tag = f"{args.tag_prefix}-{plan_date.isoformat()}-{symbol}"
 
         if tag in remembered:
             record = remembered[tag]
             order_id = record.get("order_id", "")
-            print(f"SKIP  {symbol:<12} already processed for tag {tag} order_id={order_id}")
+            print(f"SKIP  {symbol:<12} already processed for tag {tag} order_id={order_id} tick={tick_size:.2f}")
             skipped += 1
             continue
 
@@ -302,7 +354,7 @@ def main() -> int:
             last_order = existing_orders[-1]
             status = str(last_order.get("status") or "").strip()
             order_id = str(last_order.get("order_id") or "")
-            print(f"SKIP  {symbol:<12} existing Kite order tag={tag} status={status} order_id={order_id}")
+            print(f"SKIP  {symbol:<12} existing Kite order tag={tag} status={status} order_id={order_id} tick={tick_size:.2f}")
             remembered[tag] = {
                 "order_id": order_id,
                 "status": status,
@@ -311,6 +363,7 @@ def main() -> int:
                 "quantity": rem,
                 "trigger_price": trigger_price,
                 "limit_price": limit_price,
+                "tick_size": tick_size,
             }
             state_changed = True
             skipped += 1
@@ -319,7 +372,7 @@ def main() -> int:
         print(
             f"{'PLACE' if args.place else 'PREV '}  {symbol:<12} "
             f"qty={rem:<4} trigger={trigger_price:.2f} limit={limit_price:.2f} "
-            f"exchange={exchange} product={args.product}"
+            f"tick={tick_size:.2f} exchange={exchange} product={args.product}"
         )
 
         if not args.place:
@@ -348,6 +401,7 @@ def main() -> int:
                 "quantity": rem,
                 "trigger_price": trigger_price,
                 "limit_price": limit_price,
+                "tick_size": tick_size,
             }
             state_changed = True
             placed += 1

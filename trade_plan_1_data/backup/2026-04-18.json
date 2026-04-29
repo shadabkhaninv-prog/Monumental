@@ -1,0 +1,85 @@
+{
+  "date": "2026-04-18",
+  "saved_at": "2026-04-20T12:43:30",
+  "positions": [
+    {
+      "id": "p1776666098398lcx8",
+      "symbol": "APARINDS",
+      "merits": "power equipment .near high ,big gaps .strongest sector",
+      "conviction": 3,
+      "cmp": 11482,
+      "planEntry": 11488,
+      "planSL": 11078,
+      "intraSL": null,
+      "intraRiskPct": 30,
+      "riskAmount": 3000,
+      "actualEntry": 11458,
+      "actualQty": 9,
+      "entryDate": "2026-04-17",
+      "posHigh": null,
+      "trailOverride": null,
+      "trailNote": "",
+      "movedBE": false,
+      "trims": [
+        {
+          "pct": 3,
+          "type": "fixed",
+          "ap": 11587,
+          "sq": 5,
+          "done": true,
+          "_sug": 11801.74,
+          "_pnl": 645
+        },
+        {
+          "pct": 10,
+          "type": "trail",
+          "ap": null,
+          "sq": null,
+          "done": false,
+          "_sug": null,
+          "_pnl": null
+        },
+        {
+          "pct": 15,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "done": false,
+          "_sug": 13176.7,
+          "_pnl": null
+        },
+        {
+          "pct": 25,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "done": false,
+          "_sug": 14322.5,
+          "_pnl": null
+        }
+      ],
+      "mgmt": {
+        "fe": false,
+        "fsl": false,
+        "ft": false,
+        "fbe": false,
+        "note": ""
+      },
+      "collapsed": true,
+      "_qty": 7,
+      "_rps": "Rs 410.00",
+      "_rr": "4.5",
+      "_rem": 4,
+      "_realPnl": 645,
+      "_openPnl": 96,
+      "_currentSL": 11078,
+      "_days": 3,
+      "_beSug": true,
+      "_status": "partial",
+      "_predRisk": 3000,
+      "_intraRisk": 0,
+      "_predQty": 7,
+      "_intraQty": 0
+    }
+  ]
+}

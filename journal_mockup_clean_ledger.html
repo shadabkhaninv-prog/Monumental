@@ -1,0 +1,1019 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Journal Mockup - Clean Ledger</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root{
+      --bg:#080a0f;
+      --bg2:#0c1017;
+      --panel:#111722;
+      --panel2:#0d121b;
+      --line:rgba(255,255,255,.07);
+      --line2:rgba(255,255,255,.11);
+      --text:#edf2ff;
+      --muted:#8e98b4;
+      --muted2:#62708d;
+      --green:#17e08a;
+      --green2:rgba(23,224,138,.12);
+      --amber:#ffb546;
+      --amber2:rgba(255,181,70,.12);
+      --red:#ff5f78;
+      --red2:rgba(255,95,120,.12);
+      --blue:#6bb0ff;
+      --blue2:rgba(107,176,255,.12);
+      --shadow:0 24px 70px rgba(0,0,0,.42);
+      --sans:'Space Grotesk',system-ui,sans-serif;
+      --mono:'JetBrains Mono',monospace;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0;
+      color:var(--text);
+      font-family:var(--sans);
+      background:
+        radial-gradient(1100px 680px at 10% 4%, rgba(107,176,255,.16), transparent 56%),
+        radial-gradient(820px 620px at 88% 10%, rgba(23,224,138,.14), transparent 52%),
+        radial-gradient(680px 460px at 72% 84%, rgba(255,181,70,.06), transparent 60%),
+        linear-gradient(180deg, #06070b 0%, #090c11 36%, #080a0f 100%);
+    }
+    body::before{
+      content:"";
+      position:fixed;
+      inset:0;
+      pointer-events:none;
+      background:
+        linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px);
+      background-size:72px 72px;
+      opacity:.16;
+      mask-image:linear-gradient(180deg, rgba(0,0,0,.72), rgba(0,0,0,.28) 50%, rgba(0,0,0,.68));
+    }
+    .shell{
+      min-height:100vh;
+      display:grid;
+      grid-template-rows:auto 1fr;
+    }
+    .topbar{
+      position:sticky;
+      top:0;
+      z-index:20;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:16px;
+      padding:18px 22px 14px;
+      border-bottom:1px solid rgba(255,255,255,.06);
+      background:linear-gradient(180deg, rgba(8,10,15,.94), rgba(8,10,15,.78));
+      backdrop-filter:blur(16px);
+    }
+    .brand{display:flex;align-items:center;gap:12px;min-width:0}
+    .mark{
+      width:40px;height:40px;border-radius:13px;
+      display:grid;place-items:center;
+      border:1px solid rgba(107,176,255,.23);
+      background:linear-gradient(180deg, rgba(23,32,47,.98), rgba(10,14,21,.98));
+      color:var(--green);font-weight:700;letter-spacing:.06em;
+      box-shadow:inset 0 1px 0 rgba(255,255,255,.03);
+      flex:none;
+    }
+    .brand h1{
+      margin:0;
+      font-size:16px;
+      font-weight:700;
+      letter-spacing:.12em;
+      text-transform:uppercase;
+    }
+    .brand p{
+      margin:2px 0 0;
+      color:var(--muted);
+      font-size:12px;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}
+    .pill,.btn,.chip{
+      border:1px solid var(--line);
+      border-radius:999px;
+      background:linear-gradient(180deg, rgba(18,24,35,.96), rgba(13,17,25,.96));
+      color:var(--text);
+      font-family:inherit;
+    }
+    .pill{
+      padding:9px 13px;
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      font-size:12px;
+      color:var(--muted);
+    }
+    .pill strong{color:var(--text);font-family:var(--mono);font-size:12px}
+    .pill.green{border-color:rgba(23,224,138,.2);background:rgba(23,224,138,.07)}
+    .pill.blue{border-color:rgba(107,176,255,.2);background:rgba(107,176,255,.07)}
+    .btn{
+      padding:11px 15px;
+      font-size:13px;
+      font-weight:700;
+      cursor:pointer;
+    }
+    .btn.primary{
+      color:#d9fff0;
+      border-color:rgba(23,224,138,.28);
+      background:linear-gradient(180deg, rgba(23,224,138,.18), rgba(23,224,138,.08));
+    }
+    .btn.primary:hover{border-color:rgba(23,224,138,.4)}
+    .workspace{
+      display:grid;
+      grid-template-columns:260px minmax(0,1fr) 350px;
+      gap:14px;
+      padding:14px;
+      align-items:start;
+    }
+    .rail{
+      display:grid;
+      gap:14px;
+      align-content:start;
+      position:sticky;
+      top:88px;
+      max-height:calc(100vh - 104px);
+      overflow:auto;
+      padding-right:2px;
+    }
+    .panel,.card{
+      border:1px solid var(--line);
+      border-radius:20px;
+      background:linear-gradient(180deg, rgba(17,23,33,.96), rgba(11,15,22,.96));
+      box-shadow:var(--shadow);
+    }
+    .section-head{
+      display:flex;
+      align-items:baseline;
+      justify-content:space-between;
+      gap:10px;
+      padding:15px 16px 12px;
+      border-bottom:1px solid rgba(255,255,255,.06);
+    }
+    .section-head .kicker{
+      font-size:10px;
+      text-transform:uppercase;
+      letter-spacing:.16em;
+      color:var(--green);
+      font-weight:700;
+    }
+    .section-head .note{font-size:11px;color:var(--muted)}
+    .card-body{padding:14px 16px 16px}
+    .account-grid{display:grid;gap:12px}
+    .account-row{
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-end;
+      gap:10px;
+    }
+    .account-row .label{
+      font-size:10px;
+      text-transform:uppercase;
+      letter-spacing:.09em;
+      color:var(--muted);
+      margin-bottom:2px;
+    }
+    .account-row .value{
+      font-family:var(--mono);
+      font-size:20px;
+      font-weight:700;
+      line-height:1;
+      white-space:nowrap;
+    }
+    .mini-copy{
+      color:var(--muted);
+      font-size:11px;
+      line-height:1.45;
+      margin-top:8px;
+    }
+    .track{
+      height:11px;
+      border-radius:999px;
+      background:rgba(255,255,255,.05);
+      overflow:hidden;
+      border:1px solid rgba(255,255,255,.05);
+    }
+    .track > span{
+      display:block;
+      height:100%;
+      width:14.4%;
+      border-radius:inherit;
+      background:linear-gradient(90deg, rgba(23,224,138,.95), rgba(107,176,255,.84));
+    }
+    .nav-grid{
+      display:grid;
+      grid-template-columns:repeat(3, minmax(0,1fr));
+      gap:8px;
+    }
+    .nav-chip{
+      padding:9px 8px;
+      text-align:center;
+      border-radius:12px;
+      border:1px solid rgba(255,255,255,.07);
+      background:linear-gradient(180deg, rgba(19,25,36,.95), rgba(13,17,25,.95));
+      color:var(--text);
+      font-size:12px;
+      font-family:var(--sans);
+      cursor:pointer;
+    }
+    .nav-chip.on{
+      color:#d8ffe9;
+      border-color:rgba(23,224,138,.28);
+      background:rgba(23,224,138,.08);
+    }
+    .legend{
+      display:grid;
+      gap:10px;
+    }
+    .legend-row{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:10px;
+      font-size:12px;
+    }
+    .legend-row span{color:var(--muted)}
+    .legend-row strong{
+      font-family:var(--mono);
+      font-size:16px;
+      font-weight:700;
+    }
+    .main{min-width:0;display:grid;gap:14px}
+    .hero{
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-end;
+      gap:16px;
+      padding:4px 2px 2px;
+    }
+    .month-title{
+      font-family:var(--mono);
+      font-size:42px;
+      font-weight:700;
+      letter-spacing:-1.4px;
+      line-height:1;
+      margin:0;
+    }
+    .month-title .year{
+      font-size:19px;
+      color:var(--muted);
+      font-weight:400;
+      margin-left:8px;
+    }
+    .month-copy{
+      margin-top:9px;
+      max-width:720px;
+      color:var(--muted);
+      font-size:13px;
+      line-height:1.55;
+    }
+    .summary{
+      display:grid;
+      grid-template-columns:repeat(5, minmax(0,1fr));
+      gap:10px;
+    }
+    .metric{
+      border:1px solid rgba(255,255,255,.07);
+      border-radius:18px;
+      background:linear-gradient(180deg, rgba(18,24,35,.96), rgba(12,16,24,.96));
+      padding:13px 14px 12px;
+      min-height:92px;
+    }
+    .metric.kit{border-color:rgba(23,224,138,.14)}
+    .metric .k{
+      font-size:10px;
+      text-transform:uppercase;
+      letter-spacing:.1em;
+      color:var(--muted);
+    }
+    .metric .v{
+      font-family:var(--mono);
+      font-size:19px;
+      font-weight:700;
+      margin-top:7px;
+      line-height:1.05;
+    }
+    .metric .v.green{color:var(--green)}
+    .metric .v.red{color:var(--red)}
+    .metric .sub{
+      font-size:11px;
+      color:var(--muted);
+      margin-top:6px;
+      line-height:1.35;
+    }
+    .calendar-shell{
+      border:1px solid rgba(255,255,255,.07);
+      border-radius:22px;
+      background:linear-gradient(180deg, rgba(12,16,23,.96), rgba(9,12,18,.98));
+      box-shadow:var(--shadow);
+      overflow:hidden;
+    }
+    .calendar-head{
+      display:flex;
+      justify-content:space-between;
+      gap:12px;
+      align-items:center;
+      padding:14px 16px 12px;
+      border-bottom:1px solid rgba(255,255,255,.06);
+    }
+    .calendar-head .title{
+      font-size:11px;
+      text-transform:uppercase;
+      letter-spacing:.16em;
+      color:var(--green);
+      font-weight:700;
+    }
+    .calendar-head .detail{
+      font-size:11px;
+      color:var(--muted);
+    }
+    .calendar{
+      display:grid;
+      grid-template-columns:repeat(10,minmax(0,1fr));
+      gap:8px;
+      padding:12px;
+    }
+    .day{
+      color:var(--text);
+      min-height:156px;
+      padding:10px 10px 12px;
+      border-radius:18px;
+      border:1px solid rgba(255,255,255,.07);
+      background:linear-gradient(180deg, rgba(17,22,31,.96), rgba(11,14,21,.98));
+      display:flex;
+      flex-direction:column;
+      gap:8px;
+      cursor:pointer;
+      transition:transform .16s ease, border-color .16s ease, box-shadow .16s ease;
+      position:relative;
+      overflow:hidden;
+    }
+    .day::after{
+      content:"";
+      position:absolute;
+      inset:auto 12px 8px 12px;
+      height:4px;
+      border-radius:999px;
+      background:rgba(255,255,255,.05);
+    }
+    .day:hover{
+      transform:translateY(-2px);
+      border-color:rgba(107,176,255,.24);
+    }
+    .day.selected{
+      border-color:rgba(23,224,138,.3);
+      box-shadow:0 0 0 1px rgba(23,224,138,.12) inset, 0 22px 34px rgba(0,0,0,.32);
+      background:linear-gradient(180deg, rgba(16,26,22,.98), rgba(10,13,18,.98));
+    }
+    .day.good{border-color:rgba(23,224,138,.14)}
+    .day.amber{border-color:rgba(255,181,70,.16)}
+    .day.red{border-color:rgba(255,95,120,.16)}
+    .day-head{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:10px;
+    }
+    .day-num{
+      font-family:var(--mono);
+      font-size:12px;
+      color:var(--muted);
+      line-height:1;
+    }
+    .day-chip{
+      padding:4px 8px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.08);
+      background:rgba(255,255,255,.03);
+      font-size:10px;
+      letter-spacing:.08em;
+      text-transform:uppercase;
+      white-space:nowrap;
+    }
+    .day-chip.open{color:#a4d6ff;border-color:rgba(107,176,255,.22);background:rgba(107,176,255,.08)}
+    .day-chip.closed{color:#abffd8;border-color:rgba(23,224,138,.22);background:rgba(23,224,138,.08)}
+    .day-chip.plan{color:#ffd58f;border-color:rgba(255,181,70,.22);background:rgba(255,181,70,.08)}
+    .day-chip.idle{color:var(--muted);background:rgba(255,255,255,.02)}
+    .day-value{
+      font-family:var(--mono);
+      font-size:16px;
+      font-weight:700;
+      letter-spacing:-.02em;
+      line-height:1.02;
+      white-space:nowrap;
+    }
+    .day-value.good{color:var(--green)}
+    .day-value.amber{color:var(--amber)}
+    .day-value.red{color:var(--red)}
+    .day-value.neutral{color:var(--text)}
+    .day-copy{
+      color:var(--muted);
+      font-size:11px;
+      line-height:1.45;
+      min-height:30px;
+    }
+    .mini-grid{
+      display:grid;
+      grid-template-columns:repeat(2,minmax(0,1fr));
+      gap:8px;
+      margin-top:auto;
+      position:relative;
+      z-index:1;
+    }
+    .mini{
+      border-top:1px solid rgba(255,255,255,.06);
+      padding-top:7px;
+    }
+    .mini .k{
+      font-size:9px;
+      text-transform:uppercase;
+      letter-spacing:.09em;
+      color:var(--muted2);
+    }
+    .mini .v{
+      font-family:var(--mono);
+      font-size:13px;
+      font-weight:700;
+      margin-top:3px;
+      white-space:nowrap;
+    }
+    .mini .v.good{color:var(--green)}
+    .mini .v.warn{color:var(--amber)}
+    .mini .v.neu{color:var(--text)}
+    .bar{
+      height:6px;
+      border-radius:999px;
+      background:rgba(255,255,255,.05);
+      overflow:hidden;
+      border:1px solid rgba(255,255,255,.04);
+      position:relative;
+      z-index:1;
+    }
+    .bar span{
+      display:block;height:100%;
+      border-radius:inherit;
+      background:linear-gradient(90deg, rgba(23,224,138,.92), rgba(107,176,255,.8));
+    }
+    .bar.warn span{background:linear-gradient(90deg, rgba(255,181,70,.95), rgba(255,95,120,.84))}
+    .detail-list{
+      display:grid;
+      gap:14px;
+    }
+    .spotlight{
+      border:1px solid rgba(23,224,138,.16);
+      border-radius:22px;
+      background:
+        radial-gradient(700px 220px at 0% 0%, rgba(23,224,138,.12), transparent 42%),
+        linear-gradient(180deg, rgba(18,23,33,.98), rgba(10,13,19,.98));
+      padding:18px;
+    }
+    .spotlight .eyebrow{
+      font-size:10px;
+      text-transform:uppercase;
+      letter-spacing:.16em;
+      color:var(--green);
+      font-weight:700;
+    }
+    .spotlight h2{
+      margin:10px 0 4px;
+      font-size:28px;
+      letter-spacing:-.9px;
+      line-height:1.02;
+    }
+    .spotlight .big{
+      font-family:var(--mono);
+      font-size:30px;
+      font-weight:700;
+      line-height:1;
+      color:var(--green);
+      white-space:nowrap;
+    }
+    .spotlight .meta{
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      margin-top:14px;
+    }
+    .badge{
+      padding:6px 10px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.08);
+      background:rgba(255,255,255,.03);
+      font-size:11px;
+      color:var(--text);
+      white-space:nowrap;
+    }
+    .badge.good{color:#abffd8;border-color:rgba(23,224,138,.22);background:rgba(23,224,138,.08)}
+    .badge.warn{color:#ffd58f;border-color:rgba(255,181,70,.22);background:rgba(255,181,70,.08)}
+    .badge.blue{color:#b4d8ff;border-color:rgba(107,176,255,.22);background:rgba(107,176,255,.08)}
+    .detail-card{
+      border:1px solid rgba(255,255,255,.07);
+      border-radius:20px;
+      background:linear-gradient(180deg, rgba(17,23,33,.96), rgba(11,15,22,.96));
+      overflow:hidden;
+    }
+    .detail-card .card-body{padding:14px 16px 16px}
+    .detail-title{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      margin-bottom:12px;
+    }
+    .detail-title .kicker{
+      font-size:10px;
+      text-transform:uppercase;
+      letter-spacing:.16em;
+      color:var(--green);
+      font-weight:700;
+    }
+    .detail-title .note{font-size:11px;color:var(--muted)}
+    textarea,input{
+      width:100%;
+      border:1px solid rgba(255,255,255,.08);
+      border-radius:14px;
+      background:linear-gradient(180deg, rgba(14,18,27,.96), rgba(11,14,20,.98));
+      color:var(--text);
+      font:inherit;
+      outline:none;
+    }
+    textarea{
+      min-height:114px;
+      padding:12px 13px;
+      resize:vertical;
+      line-height:1.55;
+      color:#e9effb;
+    }
+    input{
+      padding:11px 12px;
+      font-size:13px;
+    }
+    input::placeholder,textarea::placeholder{color:#687590}
+    .timeline{
+      display:grid;
+      gap:10px;
+    }
+    .entry{
+      display:grid;
+      grid-template-columns:28px minmax(0,1fr);
+      gap:10px;
+      align-items:start;
+    }
+    .dot{
+      width:22px;height:22px;border-radius:999px;
+      display:grid;place-items:center;
+      margin-top:4px;
+      border:1px solid rgba(255,255,255,.08);
+      background:rgba(255,255,255,.03);
+      color:var(--muted);
+      font-family:var(--mono);
+      font-size:10px;
+    }
+    .bubble{
+      border:1px solid rgba(255,255,255,.07);
+      border-radius:14px;
+      background:rgba(255,255,255,.025);
+      padding:11px 12px;
+    }
+    .bubble-head{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:10px;
+      margin-bottom:8px;
+      font-family:var(--mono);
+      font-size:11px;
+      color:#d8e2f2;
+      letter-spacing:.08em;
+      text-transform:uppercase;
+    }
+    .tag{
+      padding:4px 7px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.08);
+      font-size:10px;
+      font-weight:700;
+    }
+    .tag.entry{color:#a8dbff;border-color:rgba(107,176,255,.22);background:rgba(107,176,255,.08)}
+    .tag.trim{color:#ffd49a;border-color:rgba(255,181,70,.22);background:rgba(255,181,70,.08)}
+    .tag.exit{color:#abffd8;border-color:rgba(23,224,138,.22);background:rgba(23,224,138,.08)}
+    .bubble p{
+      margin:0;
+      color:#e7edf8;
+      font-size:13px;
+      line-height:1.55;
+    }
+    .tag-row{
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      margin:10px 0 12px;
+    }
+    .chip{
+      padding:8px 11px;
+      border-radius:999px;
+      font-size:11px;
+      color:#d9e4f6;
+      cursor:pointer;
+    }
+    .chip.on{
+      color:#d7ffe9;
+      border-color:rgba(23,224,138,.26);
+      background:rgba(23,224,138,.09);
+    }
+    .composer{
+      display:grid;
+      grid-template-columns:1fr auto;
+      gap:10px;
+      align-items:center;
+    }
+    .footer-note{
+      display:flex;
+      justify-content:space-between;
+      gap:10px;
+      color:var(--muted);
+      font-size:11px;
+      margin-top:10px;
+      align-items:center;
+    }
+    .footer-note strong{
+      color:var(--text);
+      font-family:var(--mono);
+      font-size:11px;
+    }
+    @media (max-width:1360px){
+      .workspace{grid-template-columns:1fr}
+      .rail{position:static;max-height:none}
+      .summary{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .calendar{grid-template-columns:repeat(5,minmax(0,1fr))}
+    }
+    @media (max-width:820px){
+      .topbar{padding:14px}
+      .workspace{padding:12px}
+      .calendar{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .summary{grid-template-columns:1fr}
+      .month-title{font-size:34px}
+      .composer{grid-template-columns:1fr}
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="mark">JT</div>
+        <div>
+          <h1>Journal</h1>
+          <p>Trade journal for exposure, execution, and daily discipline.</p>
+        </div>
+      </div>
+      <div class="actions">
+        <div class="pill blue"><span>Exposure</span><strong>14.4%</strong></div>
+        <div class="pill green"><span>Open risk</span><strong>Rs 3,874</strong></div>
+        <button class="btn primary">+ New Entry</button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <aside class="rail">
+        <section class="panel">
+          <div class="section-head">
+            <div class="kicker">Account</div>
+            <div class="note">capital guardrails</div>
+          </div>
+          <div class="card-body account-grid">
+            <div class="account-row">
+              <div>
+                <div class="label">Capital</div>
+                <div class="value">Rs 30,00,000</div>
+              </div>
+            </div>
+            <div class="account-row">
+              <div>
+                <div class="label">Daily risk</div>
+                <div class="value">Rs 7,000</div>
+              </div>
+            </div>
+            <div class="account-row">
+              <div>
+                <div class="label">Per-position</div>
+                <div class="value">Rs 3,000</div>
+              </div>
+            </div>
+            <div class="account-row">
+              <div style="width:100%">
+                <div class="label">Today exposure</div>
+                <div class="value">Rs 4,32,059</div>
+                <div class="mini-copy">Exposure vs capital stays visible so the journal behaves like a live risk desk, not a notebook.</div>
+              </div>
+            </div>
+            <div>
+              <div class="mini-copy" style="margin-top:0">Current exposure</div>
+              <div class="track" style="margin-top:8px"><span></span></div>
+              <div class="account-row" style="margin-top:10px">
+                <span class="label">% exposure</span>
+                <strong style="font-family:var(--mono);font-size:17px">14.4%</strong>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <div class="kicker">Navigate</div>
+            <div class="note">date + month</div>
+          </div>
+          <div class="card-body" style="display:grid;gap:12px">
+            <div class="nav-grid">
+              <button class="nav-chip">2024</button>
+              <button class="nav-chip">2025</button>
+              <button class="nav-chip on">2026</button>
+            </div>
+            <div class="nav-grid">
+              <button class="nav-chip">Jan</button>
+              <button class="nav-chip">Feb</button>
+              <button class="nav-chip">Mar</button>
+              <button class="nav-chip on">Apr</button>
+              <button class="nav-chip">May</button>
+              <button class="nav-chip">Jun</button>
+              <button class="nav-chip">Jul</button>
+              <button class="nav-chip">Aug</button>
+              <button class="nav-chip">Sep</button>
+              <button class="nav-chip">Oct</button>
+              <button class="nav-chip">Nov</button>
+              <button class="nav-chip">Dec</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <div class="kicker">April Legend</div>
+            <div class="note">month summary</div>
+          </div>
+          <div class="card-body legend">
+            <div class="legend-row"><span>Trade days</span><strong>15</strong></div>
+            <div class="legend-row"><span>Win days</span><strong>4</strong></div>
+            <div class="legend-row"><span>Loss days</span><strong>4</strong></div>
+            <div class="legend-row"><span>Total trades</span><strong>14</strong></div>
+          </div>
+        </section>
+      </aside>
+
+      <section class="main">
+        <div class="hero">
+          <div>
+            <h2 class="month-title">April <span class="year">2026</span></h2>
+            <div class="month-copy">
+              A calmer journal layout: one strong hierarchy, softer card borders, and a more obvious selected-day inspector so the screen reads like a workspace instead of a wall of identical boxes.
+            </div>
+          </div>
+          <div class="pill blue"><span>View</span><strong>Month</strong></div>
+        </div>
+
+        <section class="summary">
+          <div class="metric kit">
+            <div class="k">Latest exposure</div>
+            <div class="v green">Rs 4,32,059</div>
+            <div class="sub">4 open positions</div>
+          </div>
+          <div class="metric">
+            <div class="k">Win rate</div>
+            <div class="v">50.0%</div>
+            <div class="sub">5W · 4L</div>
+          </div>
+          <div class="metric">
+            <div class="k">Avg risk / trade</div>
+            <div class="v">Rs 969</div>
+            <div class="sub">32.3% of limit</div>
+          </div>
+          <div class="metric">
+            <div class="k">Max exposure</div>
+            <div class="v">Rs 4,32,059</div>
+            <div class="sub">14.4% of capital</div>
+          </div>
+          <div class="metric">
+            <div class="k">Open risk</div>
+            <div class="v red">Rs 3,874</div>
+            <div class="sub">Loss if active SLs hit</div>
+          </div>
+        </section>
+
+        <section class="calendar-shell">
+          <div class="calendar-head">
+            <div>
+              <div class="title">Journal grid</div>
+              <div class="detail">Tap a day to inspect its notes, execution, and risk on the right.</div>
+            </div>
+            <div class="pill green"><span>Selected</span><strong id="selected-label">29 Apr</strong></div>
+          </div>
+          <div class="calendar" id="calendar"></div>
+        </section>
+      </section>
+
+      <aside class="rail">
+        <section class="spotlight">
+          <div class="eyebrow">Selected day</div>
+          <h2 id="day-title">29 April</h2>
+          <div class="big" id="day-value">Rs 4,32,059</div>
+          <div class="meta">
+            <span class="badge good" id="day-state">Open</span>
+            <span class="badge blue" id="day-open">Open 4</span>
+            <span class="badge warn" id="day-pct">14.4% of capital</span>
+          </div>
+        </section>
+
+        <section class="detail-card">
+          <div class="section-head">
+            <div class="kicker">Thesis</div>
+            <div class="note">editable narrative</div>
+          </div>
+          <div class="card-body">
+            <textarea id="thesis-box">Strong trend continuation with disciplined sizing. The layout should make the plan easy to read first, then the execution details second.</textarea>
+          </div>
+        </section>
+
+        <section class="detail-card">
+          <div class="section-head">
+            <div class="kicker">Quick tags</div>
+            <div class="note">tap to prefill</div>
+          </div>
+          <div class="card-body">
+            <div class="tag-row">
+              <button class="chip on">ENTRY</button>
+              <button class="chip">TRIM</button>
+              <button class="chip">SL MOVED</button>
+              <button class="chip">EXIT</button>
+              <button class="chip">CAUTION</button>
+              <button class="chip">LESSON</button>
+            </div>
+            <div class="composer">
+              <input type="text" value="Price held structure; let the stop earn its keep." placeholder="Write a short note...">
+              <button class="btn primary">Log</button>
+            </div>
+            <div class="footer-note">
+              <span>One-line journal entry</span>
+              <strong>ENTRY</strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="detail-card">
+          <div class="section-head">
+            <div class="kicker">Activity log</div>
+            <div class="note">latest thoughts</div>
+          </div>
+          <div class="card-body">
+            <div class="timeline">
+              <div class="entry">
+                <div class="dot">01</div>
+                <div class="bubble">
+                  <div class="bubble-head"><span>09:46 · 21 Apr</span><span class="tag entry">ENTRY</span></div>
+                  <p>Entered on the 5m ORB. Keep the visual hierarchy calm so the execution story is easy to scan.</p>
+                </div>
+              </div>
+              <div class="entry">
+                <div class="dot">02</div>
+                <div class="bubble">
+                  <div class="bubble-head"><span>10:34 · 21 Apr</span><span class="tag trim">TRIM</span></div>
+                  <p>Partial booked into strength. The selected-day card should stay the anchor and not fight the calendar.</p>
+                </div>
+              </div>
+              <div class="entry">
+                <div class="dot">03</div>
+                <div class="bubble">
+                  <div class="bubble-head"><span>15:14 · 21 Apr</span><span class="tag exit">EXIT</span></div>
+                  <p>Flattened cleanly at close. The monthly grid can hold the broad pattern, while the right rail stores the why.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </aside>
+    </main>
+  </div>
+
+  <script>
+    const fmt = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 });
+    const selectedLabel = document.getElementById('selected-label');
+    const dayTitle = document.getElementById('day-title');
+    const dayValue = document.getElementById('day-value');
+    const dayState = document.getElementById('day-state');
+    const dayOpen = document.getElementById('day-open');
+    const dayPct = document.getElementById('day-pct');
+    const calendar = document.getElementById('calendar');
+
+    const data = [
+      { day: '31', month: 'Mar', value: 0, open: 0, planned: 0, pct: 0, chip: 'idle', tone: 'neutral', note: 'Carry-in' },
+      { day: 1, value: 0, open: 0, planned: 0, pct: 0, chip: 'idle', tone: 'neutral', note: 'Flat' },
+      { day: 2, value: 0, open: 0, planned: 0, pct: 0, chip: 'idle', tone: 'neutral', note: 'Flat' },
+      { day: 3, value: 0, open: 0, planned: 0, pct: 0, chip: 'idle', tone: 'neutral', note: 'Flat' },
+      { day: 4, value: 0, open: 0, planned: 0, pct: 0, chip: 'idle', tone: 'neutral', note: 'Flat' },
+      { day: 5, value: 0, open: 0, planned: 0, pct: 0, chip: 'idle', tone: 'neutral', note: 'Flat' },
+      { day: 6, value: 0, open: 0, planned: 0, pct: 0, chip: 'idle', tone: 'neutral', note: 'Flat' },
+      { day: 7, value: 0, open: 0, planned: 0, pct: 0, chip: 'idle', tone: 'neutral', note: 'Flat' },
+      { day: 8, value: 0, open: 0, planned: 0, pct: 0, chip: 'idle', tone: 'amber', note: 'Watching setup' },
+      { day: 9, value: 0, open: 0, planned: 0, pct: 0, chip: 'idle', tone: 'neutral', note: 'Flat' },
+      { day: 10, value: 0, open: 0, planned: 0, pct: 0, chip: 'idle', tone: 'amber', note: 'Planning' },
+      { day: 11, value: 0, open: 0, planned: 0, pct: 0, chip: 'idle', tone: 'neutral', note: 'Flat' },
+      { day: 12, value: 0, open: 0, planned: 0, pct: 0, chip: 'idle', tone: 'neutral', note: 'Flat' },
+      { day: 13, value: 0, open: 0, planned: 0, pct: 0, chip: 'idle', tone: 'neutral', note: 'Flat' },
+      { day: 14, value: 0, open: 0, planned: 0, pct: 0, chip: 'idle', tone: 'neutral', note: 'Flat' },
+      { day: 15, value: 0, open: 0, planned: 0, pct: 0, chip: 'idle', tone: 'neutral', note: 'Flat' },
+      { day: 16, value: 0, open: 0, planned: 0, pct: 0, chip: 'idle', tone: 'neutral', note: 'Flat' },
+      { day: 17, value: 45928, open: 1, planned: 0, pct: 1.5, chip: 'open', tone: 'green', note: 'One live position' },
+      { day: 18, value: 45928, open: 1, planned: 0, pct: 1.5, chip: 'open', tone: 'green', note: 'One live position' },
+      { day: 19, value: 45928, open: 1, planned: 0, pct: 1.5, chip: 'open', tone: 'green', note: 'One live position' },
+      { day: 20, value: 23954, open: 1, planned: 1, pct: 0.8, chip: 'open', tone: 'green', note: 'Open + plan' },
+      { day: 21, value: 62522, open: 2, planned: 1, pct: 2.1, chip: 'open', tone: 'green', note: 'Strength building' },
+      { day: 22, value: 122245, open: 2, planned: 0, pct: 4.1, chip: 'open', tone: 'green', note: 'Active build' },
+      { day: 23, value: 57785, open: 1, planned: 0, pct: 1.9, chip: 'open', tone: 'green', note: 'Managed' },
+      { day: 24, value: 46167, open: 1, planned: 0, pct: 1.5, chip: 'open', tone: 'green', note: 'Managed' },
+      { day: 25, value: 46167, open: 1, planned: 0, pct: 1.5, chip: 'open', tone: 'green', note: 'Managed' },
+      { day: 26, value: 46167, open: 1, planned: 0, pct: 1.5, chip: 'open', tone: 'green', note: 'Managed' },
+      { day: 27, value: 404003, open: 3, planned: 0, pct: 13.5, chip: 'open', tone: 'green', note: 'High exposure' },
+      { day: 28, value: 331162, open: 3, planned: 0, pct: 11.0, chip: 'open', tone: 'green', note: 'High exposure' },
+      { day: 29, value: 432059, open: 4, planned: 0, pct: 14.4, chip: 'open', tone: 'green', note: 'Latest exposure', selected: true }
+    ];
+
+    let selected = data.find(d => d.selected) || data[data.length - 1];
+
+    function money(value) {
+      return 'Rs ' + fmt.format(Math.max(0, Number(value || 0)));
+    }
+
+    function renderCalendar() {
+      const max = Math.max(...data.map(d => Number(d.value || 0)), 1);
+      calendar.innerHTML = data.map(d => {
+        const isSelected = d === selected;
+        const toneClass = d.tone === 'green' ? 'good' : d.tone === 'amber' ? 'amber' : d.tone === 'red' ? 'red' : 'neutral';
+        const chipClass = d.chip === 'open' ? 'open' : d.chip === 'plan' ? 'plan' : d.chip === 'closed' ? 'closed' : 'idle';
+        const barWidth = Math.max(0, Math.min(100, (Number(d.value || 0) / max) * 100));
+        const valueLabel = d.value > 0 ? money(d.value) : 'Rs 0';
+        const dayLabel = d.month ? `${d.day} ${d.month}` : String(d.day);
+        return `
+          <button class="day ${isSelected ? 'selected' : ''} ${toneClass}" data-day="${String(d.day)}">
+            <div class="day-head">
+              <div>
+                <div class="day-num">${dayLabel}</div>
+                <div class="day-value ${toneClass}">${valueLabel}</div>
+              </div>
+              <span class="day-chip ${chipClass}">${d.chip}</span>
+            </div>
+            <div class="day-copy">${d.note}</div>
+            <div class="mini-grid">
+              <div class="mini">
+                <div class="k">Open</div>
+                <div class="v ${d.open ? 'good' : 'neu'}">${d.open}</div>
+              </div>
+              <div class="mini">
+                <div class="k">Planned</div>
+                <div class="v ${d.planned ? 'warn' : 'neu'}">${d.planned}</div>
+              </div>
+              <div class="mini" style="grid-column:1 / -1">
+                <div class="k">Exposure</div>
+                <div class="v ${d.pct ? 'good' : 'neu'}">${d.pct.toFixed(1)}%</div>
+              </div>
+            </div>
+            <div class="bar ${d.value > 0 ? '' : 'warn'}" style="margin-top:8px"><span style="width:${barWidth}%"></span></div>
+          </button>
+        `;
+      }).join('');
+
+      calendar.querySelectorAll('.day').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const day = btn.getAttribute('data-day');
+          const next = data.find(d => String(d.day) === day);
+          if (next) {
+            selected = next;
+            updateInspector();
+            renderCalendar();
+          }
+        });
+      });
+    }
+
+    function updateInspector() {
+      const selectedDay = selected.day;
+      selectedLabel.textContent = `${selectedDay} Apr`;
+      dayTitle.textContent = `${selectedDay} April`;
+      dayValue.textContent = money(selected.value);
+      dayState.textContent = selected.chip === 'open' ? 'Open' : selected.chip === 'closed' ? 'Closed' : 'Planning';
+      dayOpen.textContent = `Open ${selected.open}`;
+      dayPct.textContent = `${selected.pct.toFixed(1)}% of capital`;
+    }
+
+    renderCalendar();
+    updateInspector();
+  </script>
+</body>
+</html>

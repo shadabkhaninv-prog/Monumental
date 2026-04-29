@@ -63,6 +63,18 @@ def safe(v):
     return v
 
 
+def normalize_sector_text(v):
+    """Normalize a sector field for storage."""
+    text = str(v or "").strip().upper()
+    return text or None
+
+
+def normalize_symbol_text(v):
+    """Normalize a symbol for storage/search."""
+    text = str(v or "").strip().upper()
+    return text or None
+
+
 def get_latest_bhav_date(conn):
     cursor = conn.cursor()
     cursor.execute("SELECT MAX(mktdate) AS d FROM mktdatecalendar")
@@ -1548,6 +1560,93 @@ def api_top_sectors():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/sector-admin/search")
+def api_sector_admin_search():
+    """Search sector rows for the inline editor."""
+    q = normalize_symbol_text(request.args.get("q", ""))
+    try:
+        limit = int(request.args.get("limit", 50))
+    except ValueError:
+        limit = 50
+    limit = max(1, min(200, limit))
+
+    try:
+        conn = get_conn()
+        cursor = conn.cursor(dictionary=True)
+        if q:
+            like = f"%{q}%"
+            cursor.execute("""
+                SELECT symbol, sector1, sector2, sector3
+                FROM sectors
+                WHERE UPPER(symbol) LIKE %s
+                   OR UPPER(COALESCE(sector1, '')) LIKE %s
+                   OR UPPER(COALESCE(sector2, '')) LIKE %s
+                   OR UPPER(COALESCE(sector3, '')) LIKE %s
+                ORDER BY
+                    CASE WHEN UPPER(symbol) = %s THEN 0 ELSE 1 END,
+                    CASE WHEN UPPER(symbol) LIKE %s THEN 0 ELSE 1 END,
+                    symbol
+                LIMIT %s
+            """, (like, like, like, like, q, like, limit))
+        else:
+            cursor.execute("""
+                SELECT symbol, sector1, sector2, sector3
+                FROM sectors
+                ORDER BY symbol
+                LIMIT %s
+            """, (limit,))
+        rows = cursor.fetchall()
+        cursor.close(); conn.close()
+        return jsonify({
+            "query": q,
+            "limit": limit,
+            "count": len(rows),
+            "rows": rows,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/sector-admin/save", methods=["POST"])
+def api_sector_admin_save():
+    """Insert or update a sector mapping row."""
+    payload = request.get_json(silent=True) or {}
+    symbol = normalize_symbol_text(payload.get("symbol"))
+    if not symbol:
+        return jsonify({"error": "symbol required"}), 400
+
+    sector1 = normalize_sector_text(payload.get("sector1"))
+    sector2 = normalize_sector_text(payload.get("sector2"))
+    sector3 = normalize_sector_text(payload.get("sector3"))
+
+    try:
+        conn = get_conn()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("""
+            INSERT INTO sectors (symbol, sector1, sector2, sector3)
+            VALUES (%s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                sector1 = VALUES(sector1),
+                sector2 = VALUES(sector2),
+                sector3 = VALUES(sector3)
+        """, (symbol, sector1, sector2, sector3))
+        conn.commit()
+        cursor.execute("""
+            SELECT symbol, sector1, sector2, sector3
+            FROM sectors
+            WHERE symbol = %s
+        """, (symbol,))
+        row = cursor.fetchone()
+        cursor.close(); conn.close()
+        return jsonify({
+            "ok": True,
+            "row": row,
+            "message": f"Saved {symbol}",
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/sector-stocks")
 def api_sector_stocks():
     """Return all stocks mapped to the requested sector."""
@@ -2486,6 +2585,209 @@ HTML_PAGE = r"""
     font-size: 11px; color: var(--muted);
   }
 
+  .sector-page-tabs {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin: 0 0 10px;
+  }
+  .sector-page-tab {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: rgba(0,0,0,.10);
+    color: var(--muted);
+    padding: 10px 14px;
+    cursor: pointer;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    transition: all .15s ease;
+  }
+  .sector-page-tab.active {
+    color: #fff;
+    border-color: var(--accent2);
+    background: rgba(56, 217, 169, .12);
+  }
+  .sector-pane { display: none; }
+  .sector-pane.active { display: block; }
+
+  .sector-editor-card {
+    background: rgba(0,0,0,.08);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 12px;
+  }
+  .sector-editor-head {
+    display: flex;
+    gap: 12px;
+    justify-content: space-between;
+    align-items: end;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+  .sector-editor-note {
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .sector-editor-toolbar {
+    display: flex;
+    gap: 8px;
+    align-items: end;
+    flex-wrap: wrap;
+  }
+  .sector-editor-toolbar label,
+  .sector-editor-field label {
+    display: block;
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 4px;
+    font-weight: 700;
+    letter-spacing: .3px;
+    text-transform: uppercase;
+  }
+  .sector-editor-toolbar input,
+  .sector-editor-field input {
+    width: 100%;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 7px 10px;
+    font-size: 13px;
+    min-width: 0;
+  }
+  .sector-editor-form {
+    display: grid;
+    grid-template-columns: minmax(180px, 1.1fr) repeat(3, minmax(0, 1fr)) auto;
+    gap: 8px;
+    align-items: end;
+    margin: 10px 0 10px;
+  }
+  @media (max-width: 1200px) {
+    .sector-editor-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .sector-editor-form .sector-editor-form-actions { grid-column: 1 / -1; }
+  }
+  @media (max-width: 700px) {
+    .sector-editor-form { grid-template-columns: 1fr; }
+  }
+  .sector-editor-form-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .sector-editor-actions button {
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 700;
+    font-size: 12px;
+  }
+  .sector-editor-actions button.secondary {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .sector-editor-actions button.secondary:hover {
+    color: var(--text);
+    border-color: var(--accent);
+  }
+  .sector-editor-status {
+    margin: 2px 0 8px;
+    font-size: 11px;
+    color: var(--muted);
+    min-height: 0;
+  }
+  .sector-editor-status.ok { color: var(--accent2); }
+  .sector-editor-status.err { color: var(--red); }
+  .sector-editor-results-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    margin: 10px 0 6px;
+  }
+  .sector-editor-count {
+    font-size: 12px;
+    color: var(--accent2);
+    font-weight: 800;
+  }
+  .sector-editor-table-wrap {
+    max-height: 58vh;
+    overflow: auto;
+  }
+  .sector-editor-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  .sector-editor-table thead th {
+    position: sticky;
+    top: 0;
+    background: var(--surface);
+    z-index: 1;
+    border-bottom: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .6px;
+    padding: 10px 12px;
+    text-align: left;
+  }
+  .sector-editor-table tbody td {
+    padding: 10px 12px;
+    border-bottom: 1px solid rgba(255,255,255,.05);
+    vertical-align: middle;
+  }
+  .sector-editor-table tbody tr:hover { background: rgba(79, 142, 247, .08); }
+  .sector-editor-table tbody td input {
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--card);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 7px 9px;
+    font-size: 13px;
+  }
+  .sector-editor-symbol {
+    font-weight: 800;
+    color: var(--accent2);
+    letter-spacing: .4px;
+  }
+  .sector-editor-row-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .sector-editor-row-save {
+    padding: 7px 12px;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 700;
+    font-size: 12px;
+  }
+  .sector-editor-row-load {
+    padding: 7px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    background: transparent;
+    color: var(--muted);
+    font-weight: 700;
+    font-size: 12px;
+  }
+  .sector-editor-row-load:hover {
+    color: var(--text);
+    border-color: var(--accent);
+  }
+
   .sector-list {
     margin-top: 10px; overflow: hidden; border-radius: 10px; border: 1px solid var(--border);
   }
@@ -2508,26 +2810,26 @@ HTML_PAGE = r"""
   }
   .screener-card {
     background: var(--card); border: 1px solid var(--border); border-radius: 14px;
-    box-shadow: var(--shadow); padding: 16px;
+    box-shadow: var(--shadow); padding: 10px 12px 12px;
   }
   .screener-header {
-    display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: end; justify-content: space-between;
-    margin-bottom: 14px;
+    display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: end; justify-content: space-between;
+    margin-bottom: 4px;
   }
   .screener-controls {
-    display: flex; flex-wrap: wrap; gap: 12px; align-items: end;
+    display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: end;
   }
   .screener-controls label {
-    display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; font-weight: 700;
+    display: block; font-size: 11px; color: var(--muted); margin-bottom: 4px; font-weight: 700;
     letter-spacing: .3px;
   }
   .screener-controls input {
     background: var(--surface); color: var(--text); border: 1px solid var(--border);
-    border-radius: 8px; padding: 8px 10px; font-size: 13px;
+    border-radius: 8px; padding: 7px 10px; font-size: 13px;
   }
-  .screener-actions { display: flex; gap: 10px; align-items: center; }
+  .screener-actions { display: flex; gap: 8px; align-items: center; }
   .screener-actions button {
-    padding: 9px 14px; border-radius: 8px; border: none; cursor: pointer;
+    padding: 8px 12px; border-radius: 8px; border: none; cursor: pointer;
     background: var(--accent); color: #fff; font-weight: 700; font-size: 13px;
   }
   .screener-actions button.secondary {
@@ -2537,16 +2839,16 @@ HTML_PAGE = r"""
     color: var(--text); border-color: var(--accent);
   }
   .screener-status {
-    margin-top: 10px; font-size: 12px; color: var(--muted); min-height: 18px;
+    margin-top: 2px; font-size: 11px; color: var(--muted); min-height: 0;
   }
   .screener-status.ok { color: var(--accent2); }
   .screener-status.err { color: var(--red); }
   .screener-meta-strip {
-    display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px;
+    display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px;
   }
   .screener-meta-chip {
     background: rgba(0,0,0,.18); border: 1px solid var(--border); border-radius: 999px;
-    padding: 6px 10px; font-size: 12px; color: var(--muted);
+    padding: 5px 9px; font-size: 11px; color: var(--muted);
   }
   .screener-meta-chip b { color: var(--text); margin-left: 5px; }
   .screener-grid {
@@ -2594,7 +2896,7 @@ HTML_PAGE = r"""
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
-    margin: 12px 0 14px;
+    margin: 8px 0 10px;
   }
   .gmlist-tab {
     border: 1px solid var(--border);
@@ -2628,9 +2930,151 @@ HTML_PAGE = r"""
     display: block;
   }
   .gmlist-panel-note {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--muted);
-    margin: 10px 0 0;
+    margin: 4px 0 0;
+  }
+  .gmlist-subtabs {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin: 6px 0 8px;
+  }
+  .gmlist-subtab {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: rgba(0,0,0,.10);
+    color: var(--muted);
+    padding: 8px 12px;
+    cursor: pointer;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: all .15s ease;
+  }
+  .gmlist-subtab .gmlist-tab-count {
+    font-size: 11px;
+    color: var(--accent2);
+    font-weight: 800;
+  }
+  .gmlist-subtab.active {
+    color: #fff;
+    border-color: var(--accent2);
+    background: rgba(56, 217, 169, .12);
+  }
+  .gmlist-live-panel {
+    display: none;
+  }
+  .gmlist-live-panel.active {
+    display: block;
+  }
+  .page-gmlist .gmlist-panel[data-panel="live"] .screener-controls {
+    margin-bottom: 6px;
+  }
+  .page-gmlist .gmlist-panel[data-panel="live"] .screener-panel-head {
+    padding: 8px 12px;
+  }
+  .page-gmlist .gmlist-panel[data-panel="live"] .screener-table-wrap {
+    max-height: 64vh;
+  }
+  .page-gmlist #gmlistStatus:empty,
+  .page-gmlist #gmlistMetaStrip:empty,
+  .page-gmlist #gmlistLiveStatus:empty,
+  .page-gmlist #gmlistStrongStartNote:empty {
+    display: none;
+  }
+  .page-gmlist .gmlist-card {
+    padding-top: 8px;
+  }
+  .page-gmlist .gmlist-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px 16px;
+    flex-wrap: wrap;
+    margin-bottom: 4px;
+  }
+  .page-gmlist .gmlist-brand-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .page-gmlist .gmlist-brand {
+    font-size: 13px;
+    font-weight: 900;
+    letter-spacing: 1.4px;
+    text-transform: uppercase;
+    color: var(--text);
+    padding-left: 10px;
+    border-left: 3px solid var(--accent);
+    line-height: 1;
+  }
+  .page-gmlist .gmlist-head .gmlist-tabs {
+    margin: 0;
+  }
+  .page-gmlist .gmlist-head .gmlist-tab {
+    padding: 6px 9px;
+    font-size: 11px;
+    border-radius: 9px;
+  }
+  .page-gmlist .gmlist-quick-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-left: auto;
+  }
+  .page-gmlist .gmlist-quick-controls label {
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 3px;
+    font-weight: 700;
+    letter-spacing: .3px;
+  }
+  .page-gmlist .gmlist-quick-controls input {
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 9px;
+    font-size: 12px;
+  }
+  .page-gmlist .gmlist-quick-controls .screener-actions button {
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+  .page-gmlist .screener-table {
+    font-size: 12px;
+  }
+  .page-gmlist .screener-table thead th {
+    font-size: 10px;
+    padding: 8px 10px;
+    letter-spacing: .45px;
+  }
+  .page-gmlist .screener-table tbody td {
+    padding: 8px 10px;
+  }
+  .page-gmlist .screener-panel-title {
+    font-size: 13px;
+  }
+  .page-gmlist .screener-panel-count {
+    font-size: 11px;
+  }
+  .page-gmlist .gmlist-tab {
+    padding: 8px 11px;
+    font-size: 11px;
+  }
+  .page-gmlist .gmlist-tab .gmlist-tab-count,
+  .page-gmlist .gmlist-subtab .gmlist-tab-count {
+    font-size: 10px;
+  }
+  .page-gmlist .gmlist-subtab {
+    padding: 7px 10px;
+    font-size: 11px;
   }
   .gmlist-coming-soon {
     padding: 18px;
@@ -3034,37 +3478,111 @@ HTML_PAGE = r"""
 <main>
   <section id="sectorPage" style="display:none;">
     <div class="mode-card">
-      <div class="mode-grid">
-        <div class="sector-controls">
-          <div>
-            <label for="sectorSelect">Choose a sector</label>
-            <select id="sectorSelect">
-              <option value="">Loading sectors...</option>
-            </select>
-          </div>
-          <div class="sector-actions">
-            <button id="sectorLoadBtn" onclick="loadSectorCharts()">Load Charts</button>
-          </div>
-          <div class="sector-shortcuts-wrap">
-            <div class="sector-shortcuts-head">
-              <div class="section-title" style="margin:0;">Top 15 Sectors</div>
-              <div class="sector-shortcuts-note">Click a sector to load its charts.</div>
+      <div class="sector-page-tabs" id="sectorPageTabs">
+        <button class="sector-page-tab active" type="button" data-sector-pane="charts">Charts</button>
+        <button class="sector-page-tab" type="button" data-sector-pane="editor">Editor</button>
+      </div>
+
+      <div class="sector-pane active" id="sectorChartsPane" data-sector-pane="charts">
+        <div class="mode-grid">
+          <div class="sector-controls">
+            <div>
+              <label for="sectorSelect">Choose a sector</label>
+              <select id="sectorSelect">
+                <option value="">Loading sectors...</option>
+              </select>
             </div>
-            <div class="sector-shortcuts" id="sectorShortcuts">
-              <div class="sector-shortcuts-note">Loading shortcuts...</div>
+            <div class="sector-actions">
+              <button id="sectorLoadBtn" onclick="loadSectorCharts()">Load Charts</button>
+            </div>
+            <div class="sector-shortcuts-wrap">
+              <div class="sector-shortcuts-head">
+                <div class="section-title" style="margin:0;">Top 15 Sectors</div>
+                <div class="sector-shortcuts-note">Click a sector to load its charts.</div>
+              </div>
+              <div class="sector-shortcuts" id="sectorShortcuts">
+                <div class="sector-shortcuts-note">Loading shortcuts...</div>
+              </div>
+            </div>
+          </div>
+          <div>
+            <div id="sectorSpinner" class="sector-spinner"></div>
+            <div class="sector-board">
+              <div class="sector-board-head">
+                <div class="section-title" style="margin:0;">Sector Chart Board</div>
+                <div class="sector-board-note" id="sectorBoardNote">Choose a sector to load chart cards.</div>
+              </div>
+              <div id="sectorBoardEmpty" class="sector-board-empty">No sector charts loaded yet.</div>
+              <div id="sectorBoardGrid" class="sector-chart-grid" style="display:none;"></div>
             </div>
           </div>
         </div>
-        <div>
-          <div id="sectorSpinner" class="sector-spinner"></div>
-          <div class="sector-board">
-            <div class="sector-board-head">
-              <div class="section-title" style="margin:0;">Sector Chart Board</div>
-              <div class="sector-board-note" id="sectorBoardNote">Choose a sector to load chart cards.</div>
+      </div>
+
+      <div class="sector-pane" id="sectorEditorPane" data-sector-pane="editor">
+        <div class="sector-editor-card">
+          <div class="sector-editor-head">
+            <div>
+              <div class="section-title" style="margin:0;">Sector Editor</div>
+              <div class="sector-editor-note">Search a symbol or sector, edit sector1/sector2/sector3 inline, or add a new row.</div>
             </div>
-            <div id="sectorBoardEmpty" class="sector-board-empty">No sector charts loaded yet.</div>
-            <div id="sectorBoardGrid" class="sector-chart-grid" style="display:none;"></div>
+            <div class="sector-editor-toolbar">
+              <div>
+                <label for="sectorEditorQuery">Search</label>
+                <input id="sectorEditorQuery" type="text" placeholder="Symbol or sector" autocomplete="off" spellcheck="false">
+              </div>
+              <div class="sector-editor-actions">
+                <button id="sectorEditorSearchBtn" type="button">Search</button>
+                <button id="sectorEditorResetBtn" type="button" class="secondary">Show All</button>
+              </div>
+            </div>
           </div>
+
+          <div id="sectorEditorStatus" class="sector-editor-status">Search existing rows, then edit inline or add a new symbol below.</div>
+
+          <div class="sector-editor-form">
+            <div class="sector-editor-field">
+              <label for="sectorEditorSymbol">Symbol</label>
+              <input id="sectorEditorSymbol" type="text" maxlength="256" placeholder="Example: HDFCBANK" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="sector-editor-field">
+              <label for="sectorEditorSector1">Sector 1</label>
+              <input id="sectorEditorSector1" type="text" maxlength="45" placeholder="Example: BANKING" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="sector-editor-field">
+              <label for="sectorEditorSector2">Sector 2</label>
+              <input id="sectorEditorSector2" type="text" maxlength="45" placeholder="Optional" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="sector-editor-field">
+              <label for="sectorEditorSector3">Sector 3</label>
+              <input id="sectorEditorSector3" type="text" maxlength="45" placeholder="Optional" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="sector-editor-actions sector-editor-form-actions">
+              <button id="sectorEditorSaveBtn" type="button">Save Row</button>
+              <button id="sectorEditorClearBtn" type="button" class="secondary">Clear</button>
+            </div>
+          </div>
+
+          <div class="sector-editor-results-head">
+            <div class="section-title" style="margin:0;">Matching Rows</div>
+            <div class="sector-editor-count" id="sectorEditorCount">0 rows</div>
+          </div>
+
+          <div class="sector-table-wrap sector-editor-table-wrap">
+            <table class="sector-editor-table">
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Sector 1</th>
+                  <th>Sector 2</th>
+                  <th>Sector 3</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="sectorEditorTbody"></tbody>
+            </table>
+          </div>
+          <div id="sectorEditorEmpty" class="sector-empty">Search to load sector rows.</div>
         </div>
       </div>
     </div>
@@ -3141,13 +3659,32 @@ HTML_PAGE = r"""
   </section>
 
   <section id="gmlistPage" style="display:none;">
-    <div class="screener-card">
-      <div class="screener-header">
-        <div>
-          <div class="section-title" style="margin:0;">GMList Screener</div>
-          <div class="section-note">Screens only the names in <code>gmlist/updated_gmlist.txt</code>. Use the date chooser, then switch between the four sub tabs.</div>
+    <div class="screener-card gmlist-card">
+      <div class="gmlist-head">
+        <div class="gmlist-brand-row">
+          <div class="gmlist-brand">GMLIST</div>
+          <div class="gmlist-tabs" id="gmlistTabs">
+            <button class="gmlist-tab active" type="button" data-tab="lv21">
+              lv21 <span class="gmlist-tab-count" id="gmlistCountTabLv21">0</span>
+            </button>
+            <button class="gmlist-tab" type="button" data-tab="lowvol21">
+              lowvol21 <span class="gmlist-tab-count" id="gmlistCountTabLowvol21">0</span>
+            </button>
+            <button class="gmlist-tab" type="button" data-tab="inside_days">
+              inside days <span class="gmlist-tab-count" id="gmlistCountTabInsideDays">0</span>
+            </button>
+            <button class="gmlist-tab" type="button" data-tab="hd">
+              hd <span class="gmlist-tab-count" id="gmlistCountTabHd">0</span>
+            </button>
+            <button class="gmlist-tab" type="button" data-tab="live">
+              live <span class="gmlist-tab-count" id="gmlistCountTabLive">0</span>
+            </button>
+            <button class="gmlist-tab" type="button" data-tab="strong_start">
+              strong start <span class="gmlist-tab-count" id="gmlistCountTabStrongStart">0</span>
+            </button>
+          </div>
         </div>
-        <div class="screener-controls">
+        <div class="gmlist-quick-controls">
           <div>
             <label for="gmlistAsOf">As of</label>
             <input id="gmlistAsOf" type="date">
@@ -3159,33 +3696,12 @@ HTML_PAGE = r"""
         </div>
       </div>
 
-      <div id="gmlistStatus" class="screener-status">Pick a date and click Run.</div>
+      <div id="gmlistStatus" class="screener-status"></div>
       <div id="gmlistMetaStrip" class="screener-meta-strip"></div>
-
-      <div class="gmlist-tabs" id="gmlistTabs">
-        <button class="gmlist-tab active" type="button" data-tab="lv21">
-          lv21 <span class="gmlist-tab-count" id="gmlistCountTabLv21">0</span>
-        </button>
-        <button class="gmlist-tab" type="button" data-tab="lowvol21">
-          lowvol21 <span class="gmlist-tab-count" id="gmlistCountTabLowvol21">0</span>
-        </button>
-        <button class="gmlist-tab" type="button" data-tab="inside_days">
-          inside days <span class="gmlist-tab-count" id="gmlistCountTabInsideDays">0</span>
-        </button>
-        <button class="gmlist-tab" type="button" data-tab="hd">
-          hd <span class="gmlist-tab-count" id="gmlistCountTabHd">0</span>
-        </button>
-        <button class="gmlist-tab" type="button" data-tab="live">
-          live <span class="gmlist-tab-count" id="gmlistCountTabLive">0</span>
-        </button>
-        <button class="gmlist-tab" type="button" data-tab="strong_start">
-          strong start <span class="gmlist-tab-count" id="gmlistCountTabStrongStart">0</span>
-        </button>
-      </div>
 
       <div class="gmlist-panel active" data-panel="lv21">
         <div class="screener-panel-head">
-          <div class="screener-panel-title">Least Volatile in 21 Days</div>
+          <div class="screener-panel-title">LV21</div>
           <div class="screener-panel-count"><span id="gmlistCountPanelLv21">0</span> stocks</div>
         </div>
         <div class="screener-table-wrap">
@@ -3203,7 +3719,7 @@ HTML_PAGE = r"""
 
       <div class="gmlist-panel" data-panel="lowvol21">
         <div class="screener-panel-head">
-          <div class="screener-panel-title">Lowest Volume in 21 Days</div>
+          <div class="screener-panel-title">LOWVOL21</div>
           <div class="screener-panel-count"><span id="gmlistCountPanelLowvol21">0</span> stocks</div>
         </div>
         <div class="screener-table-wrap">
@@ -3221,7 +3737,7 @@ HTML_PAGE = r"""
 
       <div class="gmlist-panel" data-panel="inside_days">
         <div class="screener-panel-head">
-          <div class="screener-panel-title">Inside Days</div>
+          <div class="screener-panel-title">INSIDE DAYS</div>
           <div class="screener-panel-count"><span id="gmlistCountPanelInsideDays">0</span> stocks</div>
         </div>
         <div class="screener-table-wrap">
@@ -3239,7 +3755,7 @@ HTML_PAGE = r"""
 
       <div class="gmlist-panel" data-panel="hd">
         <div class="screener-panel-head">
-          <div class="screener-panel-title">High Delivery 3D</div>
+          <div class="screener-panel-title">HD</div>
           <div class="screener-panel-count"><span id="gmlistCountPanelHd">0</span> stocks</div>
         </div>
         <div class="screener-table-wrap">
@@ -3257,8 +3773,6 @@ HTML_PAGE = r"""
 
       <div class="gmlist-panel" data-panel="live">
         <div class="screener-panel-head">
-          <div class="screener-panel-title">Live Intraday</div>
-          <div class="screener-panel-count"><span id="gmlistCountPanelLive">0</span> stocks</div>
         </div>
         <div class="screener-controls" style="margin-bottom:10px;">
           <div>
@@ -3271,59 +3785,50 @@ HTML_PAGE = r"""
           </div>
         </div>
         <div id="gmlistLiveStatus" class="gmlist-panel-note"></div>
-        <div id="gmlistLiveMetaStrip" class="screener-meta-strip"></div>
-        <div class="screener-grid">
-          <div class="screener-panel" id="gmlistLivePanelLv21">
-            <div class="screener-panel-head">
-              <div class="screener-panel-title">Live Least Volatile</div>
-              <div class="screener-panel-count"><span id="gmlistCountPanelLiveLv21">0</span> stocks</div>
-            </div>
-            <div class="screener-table-wrap">
-              <table class="screener-table">
-                <thead>
-                  <tr>
-                    <th>Symbol</th><th>Close</th><th>Volatility</th><th>21d Min</th><th>21d Turnover (cr)</th>
-                  </tr>
-                </thead>
-                <tbody id="gmlistLiveTbodyLv21"></tbody>
-              </table>
-            </div>
-            <div id="gmlistLiveEmptyLv21" class="screener-empty" style="display:none;">No live lv21 names found.</div>
+        <div class="gmlist-subtabs" id="gmlistLiveSubtabs">
+          <button class="gmlist-subtab active" type="button" data-live-tab="lv21">LV21 <span class="gmlist-tab-count" id="gmlistCountPanelLiveLv21">0</span></button>
+          <button class="gmlist-subtab" type="button" data-live-tab="lowvol21">LOWVOL21 <span class="gmlist-tab-count" id="gmlistCountPanelLiveLowvol21">0</span></button>
+          <button class="gmlist-subtab" type="button" data-live-tab="inside_days">INSIDE DAYS <span class="gmlist-tab-count" id="gmlistCountPanelLiveInsideDays">0</span></button>
+        </div>
+        <div class="screener-panel gmlist-live-panel active" id="gmlistLivePanelLv21" data-live-panel="lv21">
+          <div class="screener-table-wrap">
+            <table class="screener-table">
+              <thead>
+                <tr>
+                  <th>Symbol</th><th>Close</th><th>Volatility</th><th>21d Min</th><th>21d Turnover (cr)</th>
+                </tr>
+              </thead>
+              <tbody id="gmlistLiveTbodyLv21"></tbody>
+            </table>
           </div>
-          <div class="screener-panel" id="gmlistLivePanelLowvol21">
-            <div class="screener-panel-head">
-              <div class="screener-panel-title">Live Lowest Volume</div>
-              <div class="screener-panel-count"><span id="gmlistCountPanelLiveLowvol21">0</span> stocks</div>
-            </div>
-            <div class="screener-table-wrap">
-              <table class="screener-table">
-                <thead>
-                  <tr>
-                    <th>Symbol</th><th>Close</th><th>Volume</th><th>21d Min</th><th>21d Turnover (cr)</th>
-                  </tr>
-                </thead>
-                <tbody id="gmlistLiveTbodyLowvol21"></tbody>
-              </table>
-            </div>
-            <div id="gmlistLiveEmptyLowvol21" class="screener-empty" style="display:none;">No live lowvol21 names found.</div>
+          <div id="gmlistLiveEmptyLv21" class="screener-empty" style="display:none;">No lv21 names found.</div>
+        </div>
+        <div class="screener-panel gmlist-live-panel" id="gmlistLivePanelLowvol21" data-live-panel="lowvol21">
+          <div class="screener-table-wrap">
+            <table class="screener-table">
+              <thead>
+                <tr>
+                  <th>Symbol</th><th>Close</th><th>Volume</th><th>21d Min</th><th>21d Turnover (cr)</th>
+                </tr>
+              </thead>
+              <tbody id="gmlistLiveTbodyLowvol21"></tbody>
+            </table>
           </div>
-          <div class="screener-panel" id="gmlistLivePanelInsideDays">
-            <div class="screener-panel-head">
-              <div class="screener-panel-title">Live Inside Days</div>
-              <div class="screener-panel-count"><span id="gmlistCountPanelLiveInsideDays">0</span> stocks</div>
-            </div>
-            <div class="screener-table-wrap">
-              <table class="screener-table">
-                <thead>
-                  <tr>
-                    <th>Symbol</th><th>Close</th><th>High</th><th>Low</th><th>Prev High</th><th>Prev Low</th><th>21d Turnover (cr)</th>
-                  </tr>
-                </thead>
-                <tbody id="gmlistLiveTbodyInsideDays"></tbody>
-              </table>
-            </div>
-            <div id="gmlistLiveEmptyInsideDays" class="screener-empty" style="display:none;">No live inside-day names found.</div>
+          <div id="gmlistLiveEmptyLowvol21" class="screener-empty" style="display:none;">No lowvol21 names found.</div>
+        </div>
+        <div class="screener-panel gmlist-live-panel" id="gmlistLivePanelInsideDays" data-live-panel="inside_days">
+          <div class="screener-table-wrap">
+            <table class="screener-table">
+              <thead>
+                <tr>
+                  <th>Symbol</th><th>Close</th><th>High</th><th>Low</th><th>Prev High</th><th>Prev Low</th><th>21d Turnover (cr)</th>
+                </tr>
+              </thead>
+              <tbody id="gmlistLiveTbodyInsideDays"></tbody>
+            </table>
           </div>
+          <div id="gmlistLiveEmptyInsideDays" class="screener-empty" style="display:none;">No inside-day names found.</div>
+        </div>
         </div>
         <div class="gmlist-panel-note">Live scan uses Kite daily chart data and a volatility proxy from daily high/low range.</div>
       </div>
@@ -3493,10 +3998,26 @@ function closeAC() {
 const sectorSelect = document.getElementById('sectorSelect');
 const sectorSpinner = document.getElementById('sectorSpinner');
 const sectorPage = document.getElementById('sectorPage');
+const sectorPageTabs = document.getElementById('sectorPageTabs');
+const sectorChartsPane = document.getElementById('sectorChartsPane');
+const sectorEditorPane = document.getElementById('sectorEditorPane');
 const sectorShortcuts = document.getElementById('sectorShortcuts');
 const sectorBoardEmpty = document.getElementById('sectorBoardEmpty');
 const sectorBoardGrid = document.getElementById('sectorBoardGrid');
 const sectorBoardNote = document.getElementById('sectorBoardNote');
+const sectorEditorQueryEl = document.getElementById('sectorEditorQuery');
+const sectorEditorSearchBtn = document.getElementById('sectorEditorSearchBtn');
+const sectorEditorResetBtn = document.getElementById('sectorEditorResetBtn');
+const sectorEditorSaveBtn = document.getElementById('sectorEditorSaveBtn');
+const sectorEditorClearBtn = document.getElementById('sectorEditorClearBtn');
+const sectorEditorStatus = document.getElementById('sectorEditorStatus');
+const sectorEditorCount = document.getElementById('sectorEditorCount');
+const sectorEditorTbody = document.getElementById('sectorEditorTbody');
+const sectorEditorEmpty = document.getElementById('sectorEditorEmpty');
+const sectorEditorSymbol = document.getElementById('sectorEditorSymbol');
+const sectorEditorSector1 = document.getElementById('sectorEditorSector1');
+const sectorEditorSector2 = document.getElementById('sectorEditorSector2');
+const sectorEditorSector3 = document.getElementById('sectorEditorSector3');
 const sectorZoomOverlay = document.getElementById('sectorZoomOverlay');
 const sectorZoomTitle = document.getElementById('sectorZoomTitle');
 const sectorZoomSubtitle = document.getElementById('sectorZoomSubtitle');
@@ -3543,6 +4064,7 @@ const gmlistLiveRunBtn = document.getElementById('gmlistLiveRunBtn');
 const gmlistLiveTodayBtn = document.getElementById('gmlistLiveTodayBtn');
 const gmlistLiveStatus = document.getElementById('gmlistLiveStatus');
 const gmlistLiveMetaStrip = document.getElementById('gmlistLiveMetaStrip');
+const gmlistLiveSubtabs = document.getElementById('gmlistLiveSubtabs');
 const gmlistLiveTbodyLv21 = document.getElementById('gmlistLiveTbodyLv21');
 const gmlistLiveTbodyLowvol21 = document.getElementById('gmlistLiveTbodyLowvol21');
 const gmlistLiveTbodyInsideDays = document.getElementById('gmlistLiveTbodyInsideDays');
@@ -3581,6 +4103,9 @@ let sectorChartInstances = [];
 let sectorChartObservers = [];
 let sectorBoardObserver = null;
 let sectorBoardPayload = [];
+let sectorActivePane = 'charts';
+let sectorEditorRows = [];
+let sectorEditorLoadedQuery = '';
 let sectorZoomChart = null;
 let sectorZoomObserver = null;
 let sectorZoomIndex = -1;
@@ -3600,6 +4125,7 @@ let gmlistLivePreviewLoading = null;
 const gmlistLivePreviewCache = new Map();
 let gmlistData = null;
 let gmlistActiveTab = 'lv21';
+let gmlistLiveActiveTab = 'lv21';
 let gmlistLiveData = [];
 let gmlistLiveLoadedDate = '';
 let gmlistStrongStartData = [];
@@ -3663,12 +4189,87 @@ if (gmlistTabs) {
     switchGmListTab(btn.dataset.tab);
   });
 }
+if (gmlistLiveSubtabs) {
+  gmlistLiveSubtabs.addEventListener('click', (event) => {
+    const btn = event.target.closest('.gmlist-subtab');
+    if (!btn) return;
+    switchGmListLiveTab(btn.dataset.liveTab);
+  });
+}
+
+if (sectorPageTabs) {
+  sectorPageTabs.addEventListener('click', (event) => {
+    const btn = event.target.closest('.sector-page-tab');
+    if (!btn) return;
+    switchSectorPane(btn.dataset.sectorPane);
+  });
+}
+if (sectorEditorSearchBtn) {
+  sectorEditorSearchBtn.addEventListener('click', () => loadSectorEditorRows());
+}
+if (sectorEditorResetBtn) {
+  sectorEditorResetBtn.addEventListener('click', async () => {
+    if (sectorEditorQueryEl) sectorEditorQueryEl.value = '';
+    await loadSectorEditorRows('');
+  });
+}
+if (sectorEditorSaveBtn) {
+  sectorEditorSaveBtn.addEventListener('click', () => saveSectorEditorForm());
+}
+if (sectorEditorClearBtn) {
+  sectorEditorClearBtn.addEventListener('click', () => {
+    clearSectorEditorForm();
+    setSectorEditorStatus('Ready to save a new row or update an existing symbol.', '');
+  });
+}
+if (sectorEditorQueryEl) {
+  sectorEditorQueryEl.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      loadSectorEditorRows();
+    }
+  });
+}
+if (sectorEditorSymbol) {
+  sectorEditorSymbol.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      saveSectorEditorForm();
+    }
+  });
+}
+if (sectorEditorSector1) {
+  sectorEditorSector1.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      saveSectorEditorForm();
+    }
+  });
+}
+if (sectorEditorSector2) {
+  sectorEditorSector2.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      saveSectorEditorForm();
+    }
+  });
+}
+if (sectorEditorSector3) {
+  sectorEditorSector3.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      saveSectorEditorForm();
+    }
+  });
+}
 
 if (PAGE_MODE === 'sectors' && sectorPage) {
   sectorPage.style.display = 'block';
   clearSectorBoard();
   loadSectors();
   loadTopSectors();
+  const initialSectorPane = new URLSearchParams(window.location.search).get('tab') === 'editor' ? 'editor' : 'charts';
+  switchSectorPane(initialSectorPane);
 }
 
 if (PAGE_MODE === 'screener' && screenerPage) {
@@ -3743,6 +4344,215 @@ async function loadTopSectors() {
     highlightSectorShortcut(sectorSelect.value);
   } catch (e) {
     sectorShortcuts.innerHTML = `<div class="sector-shortcuts-note">Shortcut load failed: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function switchSectorPane(pane) {
+  const target = String(pane || 'charts').trim().toLowerCase() === 'editor' ? 'editor' : 'charts';
+  sectorActivePane = target;
+  if (sectorPageTabs) {
+    sectorPageTabs.querySelectorAll('.sector-page-tab').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.sectorPane === target);
+    });
+  }
+  if (sectorChartsPane) sectorChartsPane.classList.toggle('active', target === 'charts');
+  if (sectorEditorPane) sectorEditorPane.classList.toggle('active', target === 'editor');
+  if (target === 'editor') {
+    loadSectorEditorRows();
+  }
+}
+
+function setSectorEditorStatus(msg, kind) {
+  if (!sectorEditorStatus) return;
+  sectorEditorStatus.textContent = msg;
+  sectorEditorStatus.className = kind ? `sector-editor-status ${kind}` : 'sector-editor-status';
+}
+
+function clearSectorEditorForm() {
+  if (sectorEditorSymbol) sectorEditorSymbol.value = '';
+  if (sectorEditorSector1) sectorEditorSector1.value = '';
+  if (sectorEditorSector2) sectorEditorSector2.value = '';
+  if (sectorEditorSector3) sectorEditorSector3.value = '';
+}
+
+function fillSectorEditorForm(row) {
+  if (!row) return;
+  if (sectorEditorSymbol) sectorEditorSymbol.value = row.symbol || '';
+  if (sectorEditorSector1) sectorEditorSector1.value = row.sector1 || '';
+  if (sectorEditorSector2) sectorEditorSector2.value = row.sector2 || '';
+  if (sectorEditorSector3) sectorEditorSector3.value = row.sector3 || '';
+  if (sectorEditorSymbol) sectorEditorSymbol.focus();
+  setSectorEditorStatus(`Loaded ${row.symbol || ''} into the form.`, 'ok');
+}
+
+function hasAnySectorValue(row) {
+  return Boolean(
+    String(row?.sector1 || '').trim() ||
+    String(row?.sector2 || '').trim() ||
+    String(row?.sector3 || '').trim()
+  );
+}
+
+function renderSectorEditorRows(rows) {
+  if (!sectorEditorTbody) return 0;
+  if (!rows.length) {
+    sectorEditorTbody.innerHTML = '';
+    if (sectorEditorEmpty) sectorEditorEmpty.style.display = 'block';
+    return 0;
+  }
+  if (sectorEditorEmpty) sectorEditorEmpty.style.display = 'none';
+  sectorEditorTbody.innerHTML = rows.map(r => {
+    const symbol = escapeHtml(r.symbol || '');
+    const sector1 = escapeHtml(r.sector1 || '');
+    const sector2 = escapeHtml(r.sector2 || '');
+    const sector3 = escapeHtml(r.sector3 || '');
+    return `
+      <tr data-symbol="${symbol}">
+        <td><button class="screener-sym sector-editor-symbol" type="button">${symbol}</button></td>
+        <td><input type="text" maxlength="45" value="${sector1}" data-field="sector1"></td>
+        <td><input type="text" maxlength="45" value="${sector2}" data-field="sector2"></td>
+        <td><input type="text" maxlength="45" value="${sector3}" data-field="sector3"></td>
+        <td>
+          <div class="sector-editor-row-actions">
+            <button class="sector-editor-row-load" type="button">Load</button>
+            <button class="sector-editor-row-save" type="button">Save</button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  sectorEditorTbody.querySelectorAll('tr').forEach(tr => {
+    const loadBtn = tr.querySelector('.sector-editor-row-load');
+    const saveBtn = tr.querySelector('.sector-editor-row-save');
+    const symbolBtn = tr.querySelector('.sector-editor-symbol');
+    const getSnapshot = () => collectSectorEditorPayloadFromRow(tr);
+    if (loadBtn) loadBtn.addEventListener('click', () => fillSectorEditorForm(getSnapshot()));
+    if (symbolBtn) symbolBtn.addEventListener('click', () => fillSectorEditorForm(getSnapshot()));
+    if (saveBtn) saveBtn.addEventListener('click', () => saveSectorEditorRow(tr));
+    tr.querySelectorAll('input').forEach(inp => {
+      inp.addEventListener('keydown', e => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          saveSectorEditorRow(tr);
+        }
+      });
+    });
+  });
+  return rows.length;
+}
+
+async function loadSectorEditorRows(query = null) {
+  if (!sectorEditorTbody || !sectorEditorQueryEl) return;
+  const q = query === null ? sectorEditorQueryEl.value.trim() : String(query || '').trim();
+  sectorEditorQueryEl.value = q;
+  if (sectorEditorSearchBtn) sectorEditorSearchBtn.disabled = true;
+  if (sectorEditorResetBtn) sectorEditorResetBtn.disabled = true;
+  setSectorEditorStatus(q ? `Searching for "${q}"...` : 'Loading sector rows...', '');
+  try {
+    const qs = new URLSearchParams({ limit: '50' });
+    if (q) qs.set('q', q);
+    const res = await fetch('/api/sector-admin/search?' + qs.toString());
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+
+    sectorEditorRows = data.rows || [];
+    sectorEditorLoadedQuery = q;
+    const visibleRows = sectorEditorRows.filter(hasAnySectorValue);
+    const exactMatch = q ? sectorEditorRows.find(r => String(r.symbol || '').trim().toUpperCase() === q.toUpperCase()) : null;
+    if (exactMatch && !hasAnySectorValue(exactMatch)) {
+      fillSectorEditorForm(exactMatch);
+      setSectorEditorStatus(`${exactMatch.symbol} exists but has no sector values yet. Use the form above to add them.`, 'ok');
+    }
+    const count = renderSectorEditorRows(visibleRows);
+    if (sectorEditorCount) sectorEditorCount.textContent = `${count} row${count === 1 ? '' : 's'}`;
+    if (count) {
+      setSectorEditorStatus(q ? `Showing ${count} row${count === 1 ? '' : 's'} for "${q}".` : `Showing first ${count} sector rows.`, 'ok');
+    } else if (!exactMatch) {
+      setSectorEditorStatus(q ? `No sector rows with values matched "${q}".` : 'No sector rows with values found.', '');
+    }
+    if (!count && sectorEditorEmpty) {
+      sectorEditorEmpty.textContent = q
+        ? `No sector rows with values matched "${q}".`
+        : 'No sector rows with values available.';
+    }
+  } catch (e) {
+    if (sectorEditorEmpty) sectorEditorEmpty.textContent = 'Search to load sector rows.';
+    setSectorEditorStatus(`Error: ${e.message}`, 'err');
+  } finally {
+    if (sectorEditorSearchBtn) sectorEditorSearchBtn.disabled = false;
+    if (sectorEditorResetBtn) sectorEditorResetBtn.disabled = false;
+  }
+}
+
+function collectSectorEditorPayloadFromRow(tr) {
+  if (!tr) return null;
+  const symbol = String(tr.dataset.symbol || '').trim().toUpperCase();
+  if (!symbol) return null;
+  return {
+    symbol,
+    sector1: tr.querySelector('input[data-field="sector1"]')?.value || '',
+    sector2: tr.querySelector('input[data-field="sector2"]')?.value || '',
+    sector3: tr.querySelector('input[data-field="sector3"]')?.value || '',
+  };
+}
+
+async function saveSectorEditorRow(tr) {
+  const payload = collectSectorEditorPayloadFromRow(tr);
+  if (!payload) return;
+  setSectorEditorStatus(`Saving ${payload.symbol}...`, '');
+  try {
+    const res = await fetch('/api/sector-admin/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    setSectorEditorStatus(data.message || `Saved ${payload.symbol}`, 'ok');
+    await Promise.all([loadSectors(false), loadTopSectors()]);
+    if (sectorActivePane === 'charts' && sectorSelect.value) {
+      await loadSectorCharts();
+    }
+    const refreshQuery = (sectorEditorQueryEl && sectorEditorQueryEl.value.trim()) || payload.symbol;
+    await loadSectorEditorRows(refreshQuery);
+  } catch (e) {
+    setSectorEditorStatus(`Error: ${e.message}`, 'err');
+  }
+}
+
+async function saveSectorEditorForm() {
+  const payload = {
+    symbol: sectorEditorSymbol ? sectorEditorSymbol.value : '',
+    sector1: sectorEditorSector1 ? sectorEditorSector1.value : '',
+    sector2: sectorEditorSector2 ? sectorEditorSector2.value : '',
+    sector3: sectorEditorSector3 ? sectorEditorSector3.value : '',
+  };
+  if (!String(payload.symbol || '').trim()) {
+    setSectorEditorStatus('Symbol is required.', 'err');
+    if (sectorEditorSymbol) sectorEditorSymbol.focus();
+    return;
+  }
+  setSectorEditorStatus(`Saving ${String(payload.symbol).trim().toUpperCase()}...`, '');
+  try {
+    const res = await fetch('/api/sector-admin/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    setSectorEditorStatus(data.message || `Saved ${String(payload.symbol).trim().toUpperCase()}`, 'ok');
+    await Promise.all([loadSectors(false), loadTopSectors()]);
+    if (sectorActivePane === 'charts' && sectorSelect.value) {
+      await loadSectorCharts();
+    }
+    clearSectorEditorForm();
+    const refreshQuery = (sectorEditorQueryEl && sectorEditorQueryEl.value.trim()) || String(payload.symbol).trim().toUpperCase();
+    if (sectorEditorQueryEl) sectorEditorQueryEl.value = refreshQuery;
+    await loadSectorEditorRows(refreshQuery);
+  } catch (e) {
+    setSectorEditorStatus(`Error: ${e.message}`, 'err');
   }
 }
 
@@ -4140,6 +4950,19 @@ function switchGmListTab(tab) {
     if (gmlistStrongStartAsOfEl) gmlistStrongStartAsOfEl.value = localIsoDate();
     loadGmListStrongStart(true);
   }
+}
+
+function switchGmListLiveTab(tab) {
+  const target = String(tab || 'lv21').trim();
+  gmlistLiveActiveTab = target || 'lv21';
+  if (gmlistLiveSubtabs) {
+    gmlistLiveSubtabs.querySelectorAll('.gmlist-subtab').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.liveTab === gmlistLiveActiveTab);
+    });
+  }
+  document.querySelectorAll('#gmlistPage .gmlist-live-panel').forEach(panel => {
+    panel.classList.toggle('active', panel.dataset.livePanel === gmlistLiveActiveTab);
+  });
 }
 
 async function initGmListDefaults() {
@@ -4579,6 +5402,7 @@ async function loadGmListLive(force = false) {
 
     if (gmlistLiveAsOfEl && data.as_of) gmlistLiveAsOfEl.value = data.as_of;
     if (gmlistLiveStatus) gmlistLiveStatus.textContent = `OK — ${nLv21} live lv21 · ${nLowvol21} live lowvol21 · ${nInsideDays} live inside-day stocks.`;
+    switchGmListLiveTab(gmlistLiveActiveTab || 'lv21');
   } catch (e) {
     if (gmlistLiveStatus) gmlistLiveStatus.textContent = `Error: ${e.message}`;
   }
