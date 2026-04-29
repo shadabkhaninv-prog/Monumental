@@ -67,6 +67,12 @@ function todayStr() {
 function pkey(d) { return "tp_v3_" + d; }
 function normalizeSymbol(v) { return (v || "").toUpperCase().replace(/[^A-Z0-9]/g, ""); }
 function fi(v) { return Math.abs(Number(v || 0)).toLocaleString("en-IN", { maximumFractionDigits: 0 }); }
+function qtyText(v) {
+  if (v == null) return "-";
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "-";
+  return n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
+}
 function money(v) { return v == null ? "-" : "Rs " + fi(v); }
 function compactMoney(v) {
   if (v == null) return "-";
@@ -106,6 +112,13 @@ function pct(v) { return v == null ? "-" : Number(v).toFixed(1) + "%"; }
 function sgn(v) { return v >= 0 ? "+" : "-"; }
 function wait(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 function e(id) { return document.getElementById(id); }
+function setFieldValue(id, value) {
+  const node = e(id);
+  if (!node) return;
+  const next = value == null ? "" : String(value);
+  if ("value" in node) node.value = next;
+  else node.textContent = next;
+}
 function fmtDateLabel(value) {
   if (!value) return "";
   const [y, m, d] = value.split("-");
@@ -258,11 +271,14 @@ function legacyChecklistFieldsFromGroups(groups) {
   };
 }
 
-function migratePlanTacticalFields(pos) {
+function migrateLegacyIntradayFields(pos) {
   if (!pos || typeof pos !== "object") return pos;
-  if (pos.tacticalQty == null && pos.intraQty != null) pos.tacticalQty = pos.intraQty;
-  if (pos.tacticalEntry == null && pos.intraEntry != null) pos.tacticalEntry = pos.intraEntry;
-  if (pos.tacticalSL == null && pos.intraSL != null) pos.tacticalSL = pos.intraSL;
+  if (pos.tacticalQty == null && pos.overnightQty != null) pos.tacticalQty = pos.overnightQty;
+  if (pos.tacticalEntry == null && pos.overnightEntry != null) pos.tacticalEntry = pos.overnightEntry;
+  if (pos.tacticalSL == null && pos.overnightSL != null) pos.tacticalSL = pos.overnightSL;
+  if (pos.actualQty == null && pos.intraQty != null) pos.actualQty = pos.intraQty;
+  if (pos.actualEntry == null && pos.intraEntry != null) pos.actualEntry = pos.intraEntry;
+  if (pos.daySL == null && pos.intraSL != null) pos.daySL = pos.intraSL;
   if (pos.tacticalRiskPct == null && pos.intraRiskPct != null) pos.tacticalRiskPct = pos.intraRiskPct;
   delete pos.intraQty;
   delete pos.intraEntry;
@@ -283,6 +299,9 @@ function newPos() {
     tacticalEntry: null,
     tacticalSL: null,
     tacticalRiskPct: 30,
+    coreQty: null,
+    coreEntry: null,
+    coreSL: null,
     riskAmount: settings.per_position_risk != null ? Number(settings.per_position_risk) : null,
     actualEntry: null,
     overnightEntry: null,
@@ -323,7 +342,7 @@ function hydratePos(raw) {
   pos.thoughtTag = String(pos.thoughtTag || "NOTE").toUpperCase();
   pos.thoughtLog = normalizeThoughtLog(pos.thoughtLog);
   pos.symbol = normalizeSymbol(pos.symbol);
-  migratePlanTacticalFields(pos);
+  migrateLegacyIntradayFields(pos);
   return pos;
 }
 
@@ -498,7 +517,7 @@ async function saveSettings() {
 async function save(opts) {
   const options = Object.assign({ silent: false }, opts || {});
   const seq = ++saveSeq;
-  positions.forEach(migratePlanTacticalFields);
+  positions.forEach(migrateLegacyIntradayFields);
   localStorage.setItem(pkey(planDate), JSON.stringify(positions));
   if (!storageOnline) await loadStorageInfo();
   if (!storageOnline) {
@@ -665,8 +684,12 @@ function compute(p) {
   p._predRisk = p._predQty > 0 && coreRps ? +(p._predQty * coreRps).toFixed(2) : 0;
   p._tacticalRisk = p._tacticalQty > 0 && tacticalRps ? +(p._tacticalQty * tacticalRps).toFixed(2) : 0;
   p._planRisk = +(p._predRisk + p._tacticalRisk).toFixed(2);
-  p._avgTacticalEntry = getTacticalAverageEntry(p);
-  p._avgPlanEntry = p._avgTacticalEntry;
+  p._avgEntry = getCombinedAverageEntry(p);
+  p._avgQty = getAverageLegQty(p);
+  p._execAvgEntry = getExecutionCombinedAverageEntry(p);
+  p._execAvgQty = getExecutionAverageLegQty(p);
+  p._avgTacticalEntry = p._execAvgEntry;
+  p._avgPlanEntry = p._avgEntry;
   const ae = entry || p.planEntry;
   p.trims[0]._sug = ae ? +(ae * 1.03).toFixed(2) : null;
   p.trims[1]._sug = ae ? +(ae * 1.07).toFixed(2) : null;
@@ -696,10 +719,11 @@ function compute(p) {
 }
 
 function getTotalQty(p) {
-  const overnightQty = p.overnightQty != null ? Number(p.overnightQty) : null;
+  const coreQty = p.coreQty != null ? Number(p.coreQty) : null;
+  const tacticalQty = p.tacticalQty != null ? Number(p.tacticalQty) : (p.overnightQty != null ? Number(p.overnightQty) : null);
   const actualQty = p.actualQty != null ? Number(p.actualQty) : null;
-  if (overnightQty == null && actualQty == null) return null;
-  return (overnightQty || 0) + (actualQty || 0);
+  if (coreQty == null && tacticalQty == null && actualQty == null) return null;
+  return (coreQty || 0) + (tacticalQty || 0) + (actualQty || 0);
 }
 function getTrailStopOrderPreview(p, tickSize = 0.05) {
   const trigger = p.trailOverride != null ? Number(p.trailOverride) : null;
@@ -749,79 +773,118 @@ function getDisplayedRiskLabel(p) {
 }
 
 function getEffectiveEntry(p) {
-  const legs = [];
-  const overnightQty = p.overnightQty != null ? Number(p.overnightQty) : null;
-  const overnightEntry = p.overnightEntry != null ? Number(p.overnightEntry) : null;
-  const actualQty = p.actualQty != null ? Number(p.actualQty) : null;
-  const actualEntry = p.actualEntry != null ? Number(p.actualEntry) : null;
-  if (overnightQty != null && overnightQty > 0 && overnightEntry != null && overnightEntry > 0) {
-    legs.push({ qty: overnightQty, price: overnightEntry });
-  }
-  if (actualQty != null && actualQty > 0 && actualEntry != null && actualEntry > 0) {
-    legs.push({ qty: actualQty, price: actualEntry });
-  }
-  if (legs.length === 2) {
-    const totalQty = legs[0].qty + legs[1].qty;
-    if (totalQty > 0) {
-      const weighted = ((legs[0].qty * legs[0].price) + (legs[1].qty * legs[1].price)) / totalQty;
-      return +weighted.toFixed(2);
-    }
-  }
-  if (legs.length === 1) {
-    return +legs[0].price.toFixed(2);
-  }
-  return actualEntry != null ? actualEntry : (overnightEntry != null ? overnightEntry : null);
+  return getExecutionCombinedAverageEntry(p);
 }
 
-function getTacticalAverageEntry(p) {
+function getPlanSummaryLegs(p) {
   const planEntry = p.planEntry != null ? Number(p.planEntry) : null;
   const planQty = Number(p._predQty || 0);
   const tacticalEntry = p.tacticalEntry != null ? Number(p.tacticalEntry) : null;
   const tacticalQty = Number(p._tacticalQty || p.tacticalQty || 0);
+  const intradayEntry = p.actualEntry != null ? Number(p.actualEntry) : null;
+  const intradayQty = Number(p.actualQty || 0);
   const legs = [];
 
   if (planEntry != null && planEntry > 0 && planQty > 0) {
-    legs.push({ qty: planQty, price: planEntry });
+    legs.push({ key: "planned", qty: planQty, price: planEntry });
   }
   if (tacticalEntry != null && tacticalEntry > 0 && tacticalQty > 0) {
-    legs.push({ qty: tacticalQty, price: tacticalEntry });
+    legs.push({ key: "tactical", qty: tacticalQty, price: tacticalEntry });
+  }
+  if (intradayEntry != null && intradayEntry > 0 && intradayQty > 0) {
+    legs.push({ key: "intraday", qty: intradayQty, price: intradayEntry });
   }
 
-  if (legs.length === 2) {
-    const totalQty = legs[0].qty + legs[1].qty;
-    if (totalQty > 0) {
-      const weighted = ((legs[0].qty * legs[0].price) + (legs[1].qty * legs[1].price)) / totalQty;
-      return +weighted.toFixed(2);
-    }
+  return legs;
+}
+
+function getExecutionSummaryLegs(p) {
+  const coreEntry = p.coreEntry != null ? Number(p.coreEntry) : null;
+  const coreQty = p.coreQty != null ? Number(p.coreQty) : null;
+  const tacticalEntry = p.tacticalEntry != null ? Number(p.tacticalEntry) : null;
+  const tacticalQty = Number(p._tacticalQty || p.tacticalQty || 0);
+  const intradayEntry = p.actualEntry != null ? Number(p.actualEntry) : null;
+  const intradayQty = Number(p.actualQty || 0);
+  const legs = [];
+
+  if (coreEntry != null && coreEntry > 0 && coreQty > 0) {
+    legs.push({ key: "core", qty: coreQty, price: coreEntry });
   }
-  if (legs.length === 1) {
-    return +legs[0].price.toFixed(2);
+  if (tacticalEntry != null && tacticalEntry > 0 && tacticalQty > 0) {
+    legs.push({ key: "tactical", qty: tacticalQty, price: tacticalEntry });
   }
-  return planEntry != null && planEntry > 0 ? +planEntry.toFixed(2) : null;
+  if (intradayEntry != null && intradayEntry > 0 && intradayQty > 0) {
+    legs.push({ key: "intraday", qty: intradayQty, price: intradayEntry });
+  }
+
+  return legs;
+}
+
+function getCombinedAverageEntryFromLegs(legs) {
+  return getWeightedAverageFromLegs(legs, "price");
+}
+
+function getAverageLegQtyFromLegs(legs) {
+  if (!legs.length) return null;
+  const total = legs.reduce((sum, leg) => sum + (Number(leg.qty) || 0), 0);
+  return +total.toFixed(2);
+}
+
+function getWeightedAverageFromLegs(legs, key) {
+  const active = legs.filter(leg => {
+    const qty = Number(leg.qty);
+    const value = Number(leg[key]);
+    return Number.isFinite(qty) && qty > 0 && Number.isFinite(value) && value > 0;
+  });
+  if (!active.length) return null;
+  const totalQty = active.reduce((sum, leg) => sum + Number(leg.qty), 0);
+  if (!(totalQty > 0)) return null;
+  const weighted = active.reduce((sum, leg) => sum + (Number(leg.qty) * Number(leg[key])), 0) / totalQty;
+  return +weighted.toFixed(2);
+}
+
+function getCombinedAverageEntry(p) {
+  return getCombinedAverageEntryFromLegs(getPlanSummaryLegs(p));
+}
+
+function getExecutionCombinedAverageEntry(p) {
+  return getCombinedAverageEntryFromLegs(getExecutionSummaryLegs(p));
+}
+
+function getAverageLegQty(p) {
+  return getAverageLegQtyFromLegs(getPlanSummaryLegs(p));
+}
+
+function getExecutionAverageLegQty(p) {
+  return getAverageLegQtyFromLegs(getExecutionSummaryLegs(p));
+}
+
+function getTacticalAverageEntry(p) {
+  return getExecutionCombinedAverageEntry(p);
 }
 
 function getPlannedAverageEntry(p) {
-  return getTacticalAverageEntry(p);
+  return getCombinedAverageEntry(p);
 }
 
 function getAverageExecutionSL(p) {
   const legs = [];
-  const overnightQty = p.overnightQty != null ? Number(p.overnightQty) : null;
-  const overnightSL = p.overnightSL != null ? Number(p.overnightSL) : null;
+  const coreQty = p.coreQty != null ? Number(p.coreQty) : null;
+  const coreSL = p.coreSL != null ? Number(p.coreSL) : null;
+  const tacticalQty = p.tacticalQty != null ? Number(p.tacticalQty) : (p.overnightQty != null ? Number(p.overnightQty) : null);
+  const tacticalSL = p.tacticalSL != null ? Number(p.tacticalSL) : (p.overnightSL != null ? Number(p.overnightSL) : null);
   const dayQty = p.actualQty != null ? Number(p.actualQty) : null;
   const daySL = p.daySL != null ? Number(p.daySL) : null;
-  if (overnightQty != null && overnightQty > 0 && overnightSL != null && overnightSL > 0) {
-    legs.push({ qty: overnightQty, sl: overnightSL });
+  if (coreQty != null && coreQty > 0 && coreSL != null && coreSL > 0) {
+    legs.push({ qty: coreQty, sl: coreSL });
+  }
+  if (tacticalQty != null && tacticalQty > 0 && tacticalSL != null && tacticalSL > 0) {
+    legs.push({ qty: tacticalQty, sl: tacticalSL });
   }
   if (dayQty != null && dayQty > 0 && daySL != null && daySL > 0) {
     legs.push({ qty: dayQty, sl: daySL });
   }
-  if (!legs.length) return null;
-  if (legs.length === 1) return +legs[0].sl.toFixed(2);
-  const totalQty = legs[0].qty + legs[1].qty;
-  if (!(totalQty > 0)) return null;
-  const weighted = ((legs[0].qty * legs[0].sl) + (legs[1].qty * legs[1].sl)) / totalQty;
-  return +weighted.toFixed(2);
+  return getWeightedAverageFromLegs(legs, "sl");
 }
 function isPositioned(p) { return !!getEffectiveEntry(p); }
 function isOpenPosition(p) { return p._status === "active" || p._status === "partial"; }
@@ -843,7 +906,7 @@ function getHeaderMeta(p, bucketKey) {
   const sl = p._currentSL != null ? p._currentSL : p.planSL;
   const slHtml = sl != null ? `<strong>SL Rs ${priceSL(sl)}</strong>` : `<strong>SL</strong>`;
   if (isPositioned(p)) {
-    const openQty = p._rem != null ? p._rem : (p.actualQty != null ? p.actualQty : (p.overnightQty || 0));
+    const openQty = p._rem != null ? p._rem : (getTotalQty(p) != null ? getTotalQty(p) : 0);
     const entryTxt = entry ? `Entry Rs ${priceSL(entry)}` : "";
     if (bucketKey === "overnight") return `${entryTxt} | ${slHtml} | Open qty ${openQty}`;
     if (p._status === "closed") return `${entryTxt} | ${slHtml} | Flat by close`;
@@ -868,6 +931,200 @@ function getSectionNote(key, count) {
 
 function getDisplayBuckets() {
   return ["planning", "current", "exited", "overnight"];
+}
+
+function journalQueueBucketWeight(p) {
+  const bucket = getBucketKey(p);
+  if (bucket === "overnight") return 0;
+  if (bucket === "current") return 1;
+  if (bucket === "planning") return 2;
+  return 3;
+}
+
+function sortJournalQueue(a, b) {
+  const aw = journalQueueBucketWeight(a);
+  const bw = journalQueueBucketWeight(b);
+  if (aw !== bw) return aw - bw;
+  const ap = Number(a._openPnl || 0);
+  const bp = Number(b._openPnl || 0);
+  if (ap !== bp) return bp - ap;
+  return String(a.symbol || "").localeCompare(String(b.symbol || ""));
+}
+
+function getJournalOpenPositions() {
+  return positions
+    .filter(p => isPositioned(p) && p._status !== "closed")
+    .slice()
+    .sort(sortJournalQueue);
+}
+
+function getJournalPlannedTrades() {
+  return positions
+    .filter(p => getBucketKey(p) === "planning")
+    .slice()
+    .sort((a, b) => {
+      const av = Number(a.conviction || 0);
+      const bv = Number(b.conviction || 0);
+      if (av !== bv) return bv - av;
+      return String(a.symbol || "").localeCompare(String(b.symbol || ""));
+    });
+}
+
+function getCushionPct(p) {
+  const ltp = Number(p.cmp || 0);
+  const sl = Number(p._currentSL != null ? p._currentSL : p.planSL || 0);
+  if (!(ltp > 0 && sl > 0)) return null;
+  return +(((ltp - sl) / ltp) * 100).toFixed(1);
+}
+
+function getJournalOpenTag(p) {
+  const cushion = getCushionPct(p);
+  if (cushion == null) return "HOLD";
+  if (cushion >= 2) return "SAFE";
+  if (cushion >= 1) return "WATCH";
+  return "HOLD";
+}
+
+function getJournalOpenTagClass(p) {
+  const tag = getJournalOpenTag(p);
+  if (tag === "SAFE") return "tag-safe";
+  if (tag === "WATCH") return "tag-watch";
+  return "tag-hold";
+}
+
+function getJournalPlannedTagClass(p) {
+  if (p.tacticalEntry != null || p.tacticalSL != null) return "tag-trail";
+  return "tag-watch";
+}
+
+function renderJournalHero(openItems, plannedItems, selected) {
+  const openRisk = openItems.reduce((sum, p) => sum + Number(p._openPnl || 0), 0);
+  const plannedRisk = plannedItems.reduce((sum, p) => sum + Number(p._planRisk || p.riskAmount || 0), 0);
+  const selectedLabel = selected ? `${selected.symbol || "SELECTED"} working` : "No position selected";
+  const blurb = openItems.length
+    ? `Start with ${openItems.length} live position${openItems.length === 1 ? "" : "s"} and ${plannedItems.length} planned setup${plannedItems.length === 1 ? "" : "s"} on the board.`
+    : `Stage the morning from the plan queue, then move open positions into broker stops before the bell.`;
+  return `
+    <section class="journal-hero">
+      <div class="journal-hero-copy">
+        <div class="journal-kicker">Morning journal</div>
+        <h2>${fmtDateLabel(planDate)} · enter SLs first, then stage execution</h2>
+        <p>${blurb}</p>
+        <div class="journal-micro" id="journal-selected-label">${selectedLabel}</div>
+      </div>
+      <div class="journal-hero-stats">
+        <div class="journal-stat">
+          <div class="journal-stat-k">Open positions</div>
+          <div class="journal-stat-v" id="journal-open-count">${openItems.length}</div>
+        </div>
+        <div class="journal-stat">
+          <div class="journal-stat-k">Planned trades</div>
+          <div class="journal-stat-v" id="journal-planned-count">${plannedItems.length}</div>
+        </div>
+        <div class="journal-stat">
+          <div class="journal-stat-k">Open P&amp;L</div>
+          <div class="journal-stat-v ${openRisk >= 0 ? "pos" : "neg"}" id="journal-open-pnl">${sgn(openRisk)}Rs ${fi(openRisk)}</div>
+        </div>
+        <div class="journal-stat">
+          <div class="journal-stat-k">Planned risk</div>
+          <div class="journal-stat-v" id="journal-planned-risk">${plannedRisk ? money(plannedRisk) : "Rs 0"}</div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderJournalQueueCard(p, mode) {
+  const selected = selectedPositionId === p.id ? " on" : "";
+  const rootId = mode === "planned" ? `jq-plan-${p.id}` : `jq-open-${p.id}`;
+  const badgeClass = mode === "planned" ? getJournalPlannedTagClass(p) : getJournalOpenTagClass(p);
+  const badgeText = mode === "planned" ? "PLANNED" : getJournalOpenTag(p);
+  const qty = getTotalQty(p);
+  const openQty = p._rem != null ? p._rem : (qty != null ? qty : 0);
+  const sl = p._currentSL != null ? p._currentSL : (p.planSL != null ? p.planSL : null);
+  const ltp = p.cmp != null ? Number(p.cmp) : null;
+  const cushion = mode === "planned" ? null : getCushionPct(p);
+  const risk = p._planRisk != null && p._planRisk > 0 ? p._planRisk : (p.riskAmount != null ? Number(p.riskAmount) : null);
+  const nameLine = mode === "planned"
+    ? `${p._predQty > 0 ? qtyText(p._predQty) + " sh" : "Qty pending"}`
+    : `${qtyText(openQty)} sh${cushion != null ? ` · cushion ${cushion.toFixed(1)}%` : ""}${p._days != null ? ` · ${p._days}d` : ""}`;
+  const subLine = mode === "planned"
+    ? `${risk != null ? money(risk) : "Risk pending"}${p.planEntry != null ? ` · Entry Rs ${priceSL(p.planEntry)}` : ""}`
+    : `${p._status === "partial" ? "Partial position" : "Live position"}${p._openPnl != null ? ` · Open P&L ${sgn(p._openPnl)}Rs ${fi(p._openPnl)}` : ""}`;
+  const lowerLeft = mode === "planned"
+    ? `Entry ${priceSL(p.planEntry)}`
+    : `SL @ ${priceSL(sl)}`;
+  const lowerRight = mode === "planned"
+    ? `${p.tacticalEntry != null ? `Trigger ${priceSL(p.tacticalEntry)}` : `Stop ${priceSL(p.planSL)}`}`
+    : `${ltp != null ? `▲ LTP ${priceSL(ltp)}` : "Live price pending"}`;
+  const extraClass = mode === "planned" ? "planned" : "open";
+  return `
+    <button class="journal-queue-card ${extraClass}${selected}" id="${rootId}" type="button" onclick="selectPos('${p.id}')">
+      <div class="journal-queue-top">
+        <div>
+          <div class="journal-queue-name">${escHtml(p.symbol || "SYMBOL")}</div>
+          <div class="journal-queue-sub">${escHtml(nameLine)}</div>
+        </div>
+        <div class="journal-queue-badge ${badgeClass}">${badgeText}</div>
+      </div>
+      <div class="journal-queue-meta">${escHtml(subLine)}</div>
+      <div class="journal-queue-foot">
+        <div class="journal-queue-line">
+          <span>${escHtml(lowerLeft)}</span>
+        </div>
+        <div class="journal-queue-line ${mode === "planned" ? "plan" : (ltp != null && sl != null && ltp >= sl ? "pos" : "neg")}">
+          <span>${escHtml(lowerRight)}</span>
+        </div>
+      </div>
+    </button>
+  `;
+}
+
+function renderJournalQueueSection(title, note, items, mode, emptyCopy) {
+  const rootClass = mode === "planned" ? "planned" : "open";
+  const body = items.length
+    ? items.map(item => renderJournalQueueCard(item, mode)).join("")
+    : `<div class="journal-queue-empty">${escHtml(emptyCopy)}</div>`;
+  return `
+    <section class="journal-panel ${rootClass}">
+      <div class="journal-panel-head">
+        <div>
+          <div class="journal-panel-title">${escHtml(title)}</div>
+          <div class="journal-panel-sub">${escHtml(note)}</div>
+        </div>
+        <div class="journal-panel-count" id="journal-${mode}-count">${items.length}</div>
+      </div>
+      <div class="journal-queue">${body}</div>
+    </section>
+  `;
+}
+
+function refreshJournalOverview() {
+  const openItems = getJournalOpenPositions();
+  const plannedItems = getJournalPlannedTrades();
+  const openRisk = openItems.reduce((sum, p) => sum + Number(p._openPnl || 0), 0);
+  const plannedRisk = plannedItems.reduce((sum, p) => sum + Number(p._planRisk || p.riskAmount || 0), 0);
+  const selected = positions.find(p => p.id === selectedPositionId) || ensureSelectedPosition();
+  const selectedLabel = e("journal-selected-label");
+  if (selectedLabel) selectedLabel.textContent = selected ? `${selected.symbol || "SELECTED"} working` : "No position selected";
+  const openCount = e("journal-open-count");
+  if (openCount) openCount.textContent = String(openItems.length);
+  const plannedCount = e("journal-planned-count");
+  if (plannedCount) plannedCount.textContent = String(plannedItems.length);
+  const openPnl = e("journal-open-pnl");
+  if (openPnl) {
+    openPnl.textContent = `${sgn(openRisk)}Rs ${fi(openRisk)}`;
+    openPnl.className = `journal-stat-v ${openRisk >= 0 ? "pos" : "neg"}`;
+  }
+  const plannedRiskNode = e("journal-planned-risk");
+  if (plannedRiskNode) plannedRiskNode.textContent = plannedRisk ? money(plannedRisk) : "Rs 0";
+}
+
+function refreshJournalQueueCards(p) {
+  const openNode = e(`jq-open-${p.id}`);
+  if (openNode) openNode.outerHTML = renderJournalQueueCard(p, "open");
+  const plannedNode = e(`jq-plan-${p.id}`);
+  if (plannedNode) plannedNode.outerHTML = renderJournalQueueCard(p, "planned");
 }
 
 function ensureSelectedPosition() {
@@ -1228,7 +1485,7 @@ function paint(id, p) {
     if (text != null) node.textContent = text;
     if (cls != null) node.className = cls;
   };
-    const symInput = e("sym-" + id);
+  const symInput = e("sym-" + id);
   if (symInput && symInput.value !== p.symbol) symInput.value = p.symbol || "";
   const card = e("card-" + id);
   if (card) card.className = "pcard st-" + p._status;
@@ -1263,19 +1520,22 @@ function paint(id, p) {
   }
   const hm = e("hmeta-" + id);
   if (hm) hm.innerHTML = getHeaderMeta(p, getBucketKey(p));
-    const qtyEl = e("qty-" + id);
-    const planTotalQty = (Number(p._predQty || 0) + Number(p._tacticalQty || 0));
-    const plannedQtyEl = e("cmp-" + id);
-    if (plannedQtyEl) {
-      plannedQtyEl.value = p._predQty > 0 ? p._predQty : "-";
-      plannedQtyEl.style.color = p._predQty > 0 ? "var(--t1)" : "var(--t3)";
-      plannedQtyEl.style.fontSize = "16px";
-    }
-    if (qtyEl) {
-      qtyEl.textContent = planTotalQty > 0 ? planTotalQty : "-";
-      qtyEl.style.color = planTotalQty > 0 ? "var(--green)" : "var(--t3)";
-      qtyEl.style.fontSize = planTotalQty > 0 ? "22px" : "16px";
-    }
+  const avgEntry = p._avgEntry != null ? p._avgEntry : getCombinedAverageEntry(p);
+  const avgQty = p._avgQty != null ? p._avgQty : getAverageLegQty(p);
+  const execAvgEntry = p._execAvgEntry != null ? p._execAvgEntry : getExecutionCombinedAverageEntry(p);
+  const execAvgQty = p._execAvgQty != null ? p._execAvgQty : getExecutionAverageLegQty(p);
+  const qtyEl = e("qty-" + id);
+  const plannedQtyEl = e("cmp-" + id);
+  if (plannedQtyEl) {
+    plannedQtyEl.value = p._predQty > 0 ? qtyText(p._predQty) : "-";
+    plannedQtyEl.style.color = p._predQty > 0 ? "var(--t1)" : "var(--t3)";
+    plannedQtyEl.style.fontSize = "16px";
+  }
+  if (qtyEl) {
+    qtyEl.textContent = qtyText(avgQty);
+    qtyEl.style.color = avgQty > 0 ? "var(--green)" : "var(--t3)";
+    qtyEl.style.fontSize = avgQty > 0 ? "22px" : "16px";
+  }
   const rpsEl = e("rps-val-" + id);
   if (rpsEl) {
     const pctTxt = p._blendPct != null ? `${p._blendPct.toFixed(2)}%` : "";
@@ -1283,16 +1543,25 @@ function paint(id, p) {
       ? `<span style="color:#ff4d6d;font-size:15px;font-weight:700;line-height:1">${p._rps}</span>${pctTxt ? ` <span style="color:#fca5a5;font-size:12px;font-weight:700;line-height:1">${pctTxt}</span>` : ""}`
       : "-";
   }
-  set("ape-" + id, getTacticalAverageEntry(p) != null ? price2(getTacticalAverageEntry(p)) : "-");
+  set("ape-" + id, avgEntry != null ? price2(avgEntry) : "-");
   set("prisk-" + id, p._planRisk != null && p._planRisk > 0 ? price2(p._planRisk) : "-");
   const carriedQty = getTotalQty(p);
-  set("totq-" + id, carriedQty != null ? carriedQty : "-");
-  set("epx-" + id, getEffectiveEntry(p) != null ? price2(getEffectiveEntry(p)) : "-");
+  set("totq-" + id, qtyText(execAvgQty));
+  set("epx-" + id, execAvgEntry != null ? price2(execAvgEntry) : "-");
   const execRisk = getExecutionRisk(p);
   const execEntry = getEffectiveEntry(p);
   set("psize-" + id, execEntry != null && carriedQty != null ? fi(carriedQty * execEntry) : "-");
   set("erisk-" + id, execRisk != null ? price2(execRisk) : "-");
   set("rem-" + id, p._rem != null ? p._rem : (carriedQty != null ? carriedQty : "-"));
+  setFieldValue("plan-intra-qty-" + id, p.actualQty != null ? p.actualQty : "");
+  setFieldValue("plan-intra-entry-" + id, p.actualEntry != null ? p.actualEntry : "");
+  setFieldValue("plan-intra-sl-" + id, p.daySL != null ? p.daySL : "");
+  setFieldValue("exec-tactical-qty-" + id, p.tacticalQty != null ? p.tacticalQty : "");
+  setFieldValue("exec-tactical-entry-" + id, p.tacticalEntry != null ? p.tacticalEntry : "");
+  setFieldValue("exec-tactical-sl-" + id, p.tacticalSL != null ? p.tacticalSL : "");
+  setFieldValue("exec-core-qty-" + id, p.coreQty != null ? p.coreQty : "");
+  setFieldValue("exec-core-entry-" + id, p.coreEntry != null ? p.coreEntry : "");
+  setFieldValue("exec-core-sl-" + id, p.coreSL != null ? p.coreSL : "");
   const qty = carriedQty || p._qty || 0;
   const splits = [Math.ceil(qty * 0.33), Math.ceil(qty * 0.25), Math.floor(qty * 0.25), Math.floor(qty * 0.17)];
   ["sp0", "sp1", "sp2", "sp3"].forEach((name, i) => set(name + "-" + id, qty > 0 ? splits[i] : "-"));
@@ -1362,6 +1631,8 @@ function paint(id, p) {
     const mgmtNote = e("mgmt-note-" + id);
     if (mgmtNote && mgmtNoteDraft) mgmtNote.value = mgmtNoteDraft;
   }
+  refreshJournalQueueCards(p);
+  refreshJournalOverview();
   updateSummary();
 }
 
@@ -2183,7 +2454,10 @@ function clearPlanFields(id) {
 function clearExecutionFields(id) {
   const p = positions.find(x => x.id === id);
   if (!p) return;
-  if (!confirm("Clear the execution tactical fields for this position?")) return;
+  if (!confirm("Clear the execution core fields for this position?")) return;
+  p.coreQty = null;
+  p.coreEntry = null;
+  p.coreSL = null;
   p.actualEntry = null;
   p.overnightEntry = null;
   p.overnightQty = null;
@@ -2623,48 +2897,38 @@ function renderDayView() {
   syncChrome();
   const main = e("main");
   if (!main) return;
-  main.innerHTML = "";
-  const empty = document.createElement("div");
-  empty.className = "empty";
-  empty.id = "empty";
-  empty.style.display = positions.length === 0 ? "block" : "none";
-  empty.innerHTML = `<h3>No positions for ${fmtDateLabel(planDate)}</h3><p>Add a trade plan or let older open positions carry into this date.</p>`;
-  main.appendChild(empty);
-  if (e("btn-add")) e("btn-add").disabled = positions.length >= 5;
-  const buckets = { overnight: [], current: [], exited: [], planning: [] };
-  positions.forEach(p => {
-    compute(p);
-    buckets[getBucketKey(p)].push(p);
-  });
   const selected = ensureSelectedPosition();
   if (selected) selected.collapsed = false;
-  let num = 1;
-  let selectedNum = 1;
-  let listHtml = "";
-  getDisplayBuckets().forEach(key => {
-    if (!buckets[key].length) return;
-    listHtml += `<section class="list-group"><div class="group"><div class="group-h"><div><div class="group-t">${getSectionTitle(key)}</div><div class="group-n">${getSectionNote(key, buckets[key].length)}</div></div></div></div>`;
-    buckets[key].forEach(p => {
-      if (selected && p.id === selected.id) selectedNum = num;
-      const total = (p._realPnl || 0) + (p._openPnl || 0);
-      const primary = getPrimaryBadge(p);
-      const secondary = getSecondaryBadge(p);
-      listHtml += `<button class="plist-item st-${p._status}${selected && p.id === selected.id ? " on" : ""}" id="list-${p.id}" onclick="selectPos('${p.id}')"><div class="plist-top"><div class="plist-main"><div class="plist-title"><span class="plist-dot">${num}</span><span class="plist-sym" id="list-sym-${p.id}">${p.symbol || "SYMBOL"}</span></div><div class="plist-meta" id="list-meta-${p.id}">${getHeaderMeta(p, key)}</div><div class="plist-badges"><span class="badge badge-${primary}" id="list-pbadge-${p.id}">${primary.toUpperCase()}</span><span class="badge badge-${secondary || "ghost"}" id="list-sbadge-${p.id}" style="${secondary ? "" : "display:none"}">${secondary.toUpperCase()}</span></div></div><div class="plist-pnl ${total >= 0 ? "pos" : "neg"}" id="list-pnl-${p.id}">${total !== 0 ? sgn(total) + "Rs " + fi(total) : "-"}</div></div></button>`;
-      num += 1;
-    });
-    listHtml += `</section>`;
-  });
-  const layout = document.createElement("section");
-  layout.className = "day-layout";
+  positions.forEach(p => compute(p));
+  const openPositions = getJournalOpenPositions();
+  const plannedTrades = getJournalPlannedTrades();
+  const selectedNum = selected ? Math.max(1, positions.findIndex(p => p.id === selected.id) + 1) : 1;
+  if (e("btn-add")) e("btn-add").disabled = positions.length >= 5;
   const detailHtml = selected
     ? buildCard(selected, selectedNum)
-    : `<div class="plist-empty">Select a position from the left to edit it here.</div>`;
-  layout.innerHTML = `<div class="day-list">${listHtml || `<div class="plist-empty">No positions saved for this date yet.</div>`}</div><div class="day-detail" id="detail-pane">${selected ? `<div class="detail-shell">${detailHtml}</div>` : detailHtml}</div>${renderRightRail(selected)}`;
-  main.appendChild(layout);
-  if (selected) {
-    const detailHead = layout.querySelector(".detail-shell .phead");
-    if (detailHead) detailHead.removeAttribute("onclick");
-  }
+    : `<div class="journal-empty"><h3>No positions for ${fmtDateLabel(planDate)}</h3><p>Add a trade plan or let older open positions carry into this date.</p></div>`;
+  main.innerHTML = `
+    <section class="journal-view">
+      ${renderJournalHero(openPositions, plannedTrades, selected)}
+      <section class="journal-workbench">${detailHtml}</section>
+      <section class="journal-middle">
+        ${renderJournalQueueSection(
+          "Open Positions",
+          "Morning SL queue. Keep the live stops in the broker app before you touch new entries.",
+          openPositions,
+          "open",
+          "No open positions on this date."
+        )}
+        ${renderJournalQueueSection(
+          "Planned Trades",
+          "Keep entry, trigger, and stop-loss levels ready for the open.",
+          plannedTrades,
+          "planned",
+          "No planned trades saved for this date."
+        )}
+      </section>
+    </section>
+  `;
   updateSummary();
 }
 
@@ -3337,7 +3601,10 @@ function buildCard(p, num) {
   const secondaryBadge = getSecondaryBadge(p);
   const headerMeta = getHeaderMeta(p, getBucketKey(p));
   const entry = getEffectiveEntry(p);
-  const avgTacticalEntry = getTacticalAverageEntry(p);
+  const planAvgEntry = p._avgEntry != null ? p._avgEntry : getCombinedAverageEntry(p);
+  const planAvgQty = p._avgQty != null ? p._avgQty : getAverageLegQty(p);
+  const execAvgEntry = p._execAvgEntry != null ? p._execAvgEntry : getExecutionCombinedAverageEntry(p);
+  const execAvgQty = p._execAvgQty != null ? p._execAvgQty : getExecutionAverageLegQty(p);
   const closeNoteValue = p.mgmt && p.mgmt.note ? p.mgmt.note : "";
   const carriedQty = getTotalQty(p);
   const displayRisk = getDisplayedRisk(p);
@@ -3374,7 +3641,7 @@ function buildCard(p, num) {
     const trimQty = qty > 0 ? splits[i] : "-";
     const pnlTxt = t._pnl != null ? (t._pnl >= 0 ? "+" : "-") + "Rs " + fi(t._pnl) : "-";
     running -= (t.done && t.sq ? t.sq : 0);
-    trimRows += `<tr id="tr-${i}-${p.id}" class="${t.done ? "t-done" : ""}"><td><span class="t-label">T${i + 1}</span><span class="t-pct" style="color:${trimColors[i]}">${trimLabels[i]}</span></td><td><input type="date" class="t-in t-date" ${compactTrimStyle} value="${t.dt || ""}" oninput="updTrim('${p.id}',${i},'dt',this.value)"></td><td><span id="ts${i}-${p.id}" class="${t._sug ? "t-target" : "t-na"}">${sug}</span></td><td><span class="t-target">${trimQty}</span></td><td><input type="number" class="t-in" placeholder="Rs sell" ${compactTrimStyle} value="${t.ap != null ? t.ap : ""}" oninput="updTrim('${p.id}',${i},'ap',parseFloat(this.value)||null)"></td><td><input type="number" class="t-in" placeholder="qty" ${compactTrimStyle} value="${t.sq != null ? t.sq : ""}" oninput="updTrim('${p.id}',${i},'sq',parseInt(this.value)||null)"><span class="t-rem" id="tr${i}-${p.id}">${carriedQty != null ? running + " rem" : ""}</span></td><td><span id="tp${i}-${p.id}" class="${t._pnl != null ? "t-pl " + (t._pnl >= 0 ? "pos" : "neg") : "t-pl"}">${pnlTxt}</span></td><td style="text-align:center"><input type="checkbox" class="t-chk" ${t.done ? "checked" : ""} onchange="updTrim('${p.id}',${i},'done',this.checked)"></td></tr>`;
+        trimRows += `<tr id="tr-${i}-${p.id}" class="${t.done ? "t-done" : ""}"><td><span class="t-label">T${i + 1}</span><span class="t-pct" style="color:${trimColors[i]}">${trimLabels[i]}</span></td><td><input type="date" class="t-in t-date" ${compactTrimStyle} value="${t.dt || ""}" oninput="updTrim('${p.id}',${i},'dt',this.value)"></td><td><span id="ts${i}-${p.id}" class="${t._sug ? "t-target" : "t-na"}">${sug}</span></td><td><span class="t-target">${trimQty}</span></td><td><input type="number" step="any" inputmode="decimal" class="t-in" placeholder="Rs sell" ${compactTrimStyle} value="${t.ap != null ? t.ap : ""}" oninput="updTrim('${p.id}',${i},'ap',parseFloat(this.value)||null)"></td><td><input type="number" class="t-in" placeholder="qty" ${compactTrimStyle} value="${t.sq != null ? t.sq : ""}" oninput="updTrim('${p.id}',${i},'sq',parseInt(this.value)||null)"><span class="t-rem" id="tr${i}-${p.id}">${carriedQty != null ? running + " rem" : ""}</span></td><td><span id="tp${i}-${p.id}" class="${t._pnl != null ? "t-pl " + (t._pnl >= 0 ? "pos" : "neg") : "t-pl"}">${pnlTxt}</span></td><td style="text-align:center"><input type="checkbox" class="t-chk" ${t.done ? "checked" : ""} onchange="updTrim('${p.id}',${i},'done',this.checked)"></td></tr>`;
   });
   const hasTrim = p.trims.some(t => t.done);
   const net = (p._realPnl || 0) + (p._openPnl || 0);
@@ -3423,14 +3690,20 @@ function buildCard(p, num) {
               <div style="display:grid;grid-template-columns:140px 96px 1fr 1fr;gap:0;align-items:center;border-bottom:1px solid var(--line)">
                 <div style="padding:8px 12px;font-size:11px;font-weight:900;letter-spacing:.10em;color:#2ee6a5;background:rgba(30,214,141,.10);border-right:1px solid var(--line)">TACTICAL</div>
                 <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" class="fin num qty-mini" placeholder="tactical qty" value="${p.tacticalQty != null ? p.tacticalQty : ""}" oninput="upd('${p.id}','tacticalQty',this.value === "" ? null : (parseInt(this.value, 10) || 0))"></div>
-                <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" class="fin num en-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="tactical price" value="${p.tacticalEntry != null ? p.tacticalEntry : ""}" oninput="upd('${p.id}','tacticalEntry',parseFloat(this.value)||null)"></div>
-                <div style="padding:6px 8px"><input type="number" class="fin num sl-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="tactical sl" value="${p.tacticalSL != null ? p.tacticalSL : ""}" oninput="upd('${p.id}','tacticalSL',parseFloat(this.value)||null)"></div>
+                <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" step="any" inputmode="decimal" class="fin num en-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="tactical price" value="${p.tacticalEntry != null ? p.tacticalEntry : ""}" oninput="upd('${p.id}','tacticalEntry',parseFloat(this.value)||null)"></div>
+                <div style="padding:6px 8px"><input type="number" step="any" inputmode="decimal" class="fin num sl-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="tactical sl" value="${p.tacticalSL != null ? p.tacticalSL : ""}" oninput="upd('${p.id}','tacticalSL',parseFloat(this.value)||null)"></div>
               </div>
               <div style="display:grid;grid-template-columns:140px 96px 1fr 1fr;gap:0;align-items:center;">
                 <div style="padding:8px 12px;font-size:11px;font-weight:900;letter-spacing:.10em;color:#7ea0ff;background:rgba(34,57,120,.14);border-right:1px solid var(--line)">PLANNED</div>
                 <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="text" class="fin num qty-mini" id="cmp-${p.id}" value="${p._predQty > 0 ? Math.floor(Number(p._predQty)) : "-"}" readonly></div>
-                <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" class="fin num en-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="0.00" value="${p.planEntry != null ? p.planEntry : ""}" oninput="upd('${p.id}','planEntry',parseFloat(this.value)||null)"></div>
-                <div style="padding:6px 8px"><input type="number" class="fin num sl-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="0.00" value="${p.planSL != null ? p.planSL : ""}" oninput="upd('${p.id}','planSL',parseFloat(this.value)||null)"></div>
+                <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" step="any" inputmode="decimal" class="fin num en-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="0.00" value="${p.planEntry != null ? p.planEntry : ""}" oninput="upd('${p.id}','planEntry',parseFloat(this.value)||null)"></div>
+                <div style="padding:6px 8px"><input type="number" step="any" inputmode="decimal" class="fin num sl-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="0.00" value="${p.planSL != null ? p.planSL : ""}" oninput="upd('${p.id}','planSL',parseFloat(this.value)||null)"></div>
+              </div>
+              <div style="display:grid;grid-template-columns:140px 96px 1fr 1fr;gap:0;align-items:center;border-top:1px solid var(--line)">
+                <div style="padding:8px 12px;font-size:11px;font-weight:900;letter-spacing:.10em;color:#f7b84b;background:rgba(247,184,75,.10);border-right:1px solid var(--line)">INTRADAY</div>
+                <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="text" class="fin num qty-mini" id="plan-intra-qty-${p.id}" value="${p.actualQty != null ? p.actualQty : ""}" readonly></div>
+                <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="text" class="fin num en-f" id="plan-intra-entry-${p.id}" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px;background:rgba(11,18,34,.58)" value="${p.actualEntry != null ? p.actualEntry : ""}" readonly></div>
+                <div style="padding:6px 8px"><input type="text" class="fin num sl-f" id="plan-intra-sl-${p.id}" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px;background:rgba(11,18,34,.58)" value="${p.daySL != null ? p.daySL : ""}" readonly></div>
               </div>
               <div style="border-top:1px solid var(--line);padding:7px 8px 8px;background:linear-gradient(180deg, rgba(22,28,45,.82), rgba(13,17,30,.94));">
                 <div class="g4" style="grid-template-columns:repeat(4,minmax(0,1fr));gap:0;align-items:stretch;">
@@ -3439,12 +3712,12 @@ function buildCard(p, num) {
                     <div class="fcomp mini-val" id="rps-val-${p.id}" style="display:flex;align-items:baseline;gap:6px;flex-wrap:nowrap;white-space:nowrap;color:#ff4d6d;margin-top:3px;cursor:default">${p._rps != null ? `<span style="color:#ff4d6d;font-size:12px;font-weight:700;line-height:1">${p._rps}</span>${p._blendPct != null ? ` <span style="color:#fca5a5;font-size:10px;font-weight:700;line-height:1">${p._blendPct.toFixed(2)}%</span>` : ""}` : "-"}</div>
                   </div>
                   <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
-                    <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">AVG TACTICAL ENTRY</div>
-                    <div class="fcomp mini-val" id="ape-${p.id}" style="color:var(--green);margin-top:5px">${avgTacticalEntry != null ? price2(avgTacticalEntry) : "-"}</div>
+                    <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">AVG ENTRY</div>
+                    <div class="fcomp mini-val" id="ape-${p.id}" style="color:var(--green);margin-top:5px">${planAvgEntry != null ? price2(planAvgEntry) : "-"}</div>
                   </div>
                   <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
-                    <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">TOTAL POSITION QTY</div>
-                    <div class="fcomp mini-val" id="qty-${p.id}" style="color:${(p._predQty + (p._tacticalQty || 0)) > 0 ? "var(--t1)" : "var(--t3)"};margin-top:5px">${(p._predQty + (p._tacticalQty || 0)) > 0 ? (p._predQty + (p._tacticalQty || 0)) : "-"}</div>
+                    <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">TOTAL QTY</div>
+                    <div class="fcomp mini-val" id="qty-${p.id}" style="color:${planAvgQty > 0 ? "var(--green)" : "var(--t3)"};margin-top:5px">${qtyText(planAvgQty)}</div>
                   </div>
                   <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;">
                     <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">TOTAL RISK</div>
@@ -3472,26 +3745,32 @@ function buildCard(p, num) {
               </div>
               <div style="display:grid;grid-template-columns:140px 96px 1fr 1fr;gap:0;align-items:center;border-bottom:1px solid var(--line)">
                 <div style="padding:8px 12px;font-size:11px;font-weight:900;letter-spacing:.10em;color:#2ee6a5;background:rgba(30,214,141,.10);border-right:1px solid var(--line)">TACTICAL</div>
-                <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" class="fin num qty-mini" placeholder="tactical qty" value="${p.overnightQty != null ? p.overnightQty : ""}" oninput="upd('${p.id}','overnightQty',parseInt(this.value)||null)"></div>
-                <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" class="fin num en-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="tactical fill" value="${p.overnightEntry != null ? p.overnightEntry : ""}" oninput="upd('${p.id}','overnightEntry',parseFloat(this.value)||null)"></div>
-                <div style="padding:6px 8px"><input type="number" class="fin num sl-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="tactical sl" value="${p.overnightSL != null ? p.overnightSL : ""}" oninput="upd('${p.id}','overnightSL',parseFloat(this.value)||null)"></div>
+                <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="text" class="fin num qty-mini" id="exec-tactical-qty-${p.id}" value="${p.tacticalQty != null ? p.tacticalQty : ""}" readonly></div>
+                <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="text" class="fin num en-f" id="exec-tactical-entry-${p.id}" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px;background:rgba(11,18,34,.58)" value="${p.tacticalEntry != null ? p.tacticalEntry : ""}" readonly></div>
+                <div style="padding:6px 8px"><input type="text" class="fin num sl-f" id="exec-tactical-sl-${p.id}" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px;background:rgba(11,18,34,.58)" value="${p.tacticalSL != null ? p.tacticalSL : ""}" readonly></div>
               </div>
               <div style="display:grid;grid-template-columns:140px 96px 1fr 1fr;gap:0;align-items:center;">
                 <div style="padding:8px 12px;font-size:11px;font-weight:900;letter-spacing:.10em;color:#7ea0ff;background:rgba(34,57,120,.14);border-right:1px solid var(--line)">CORE</div>
-                <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" class="fin num qty-mini" placeholder="qty" value="${p.actualQty != null ? p.actualQty : ""}" oninput="upd('${p.id}','actualQty',parseInt(this.value)||null)"></div>
-                <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" class="fin num en-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="same-day fill" value="${p.actualEntry != null ? p.actualEntry : ""}" oninput="upd('${p.id}','actualEntry',parseFloat(this.value)||null)"></div>
-                <div style="padding:6px 8px"><input type="number" class="fin num sl-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="day sl" value="${p.daySL != null ? p.daySL : ""}" oninput="upd('${p.id}','daySL',parseFloat(this.value)||null)"></div>
+                <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" class="fin num qty-mini" id="exec-core-qty-${p.id}" placeholder="core qty" value="${p.coreQty != null ? p.coreQty : ""}" oninput="upd('${p.id}','coreQty',this.value === '' ? null : (parseInt(this.value, 10) || 0))"></div>
+                <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" step="any" inputmode="decimal" class="fin num en-f" id="exec-core-entry-${p.id}" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="core fill" value="${p.coreEntry != null ? p.coreEntry : ""}" oninput="upd('${p.id}','coreEntry',parseFloat(this.value)||null)"></div>
+                <div style="padding:6px 8px"><input type="number" step="any" inputmode="decimal" class="fin num sl-f" id="exec-core-sl-${p.id}" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="core sl" value="${p.coreSL != null ? p.coreSL : ""}" oninput="upd('${p.id}','coreSL',parseFloat(this.value)||null)"></div>
+              </div>
+              <div style="display:grid;grid-template-columns:140px 96px 1fr 1fr;gap:0;align-items:center;border-top:1px solid var(--line)">
+                <div style="padding:8px 12px;font-size:11px;font-weight:900;letter-spacing:.10em;color:#f7b84b;background:rgba(247,184,75,.10);border-right:1px solid var(--line)">INTRADAY</div>
+                <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" class="fin num qty-mini" placeholder="intraday qty" value="${p.actualQty != null ? p.actualQty : ""}" oninput="upd('${p.id}','actualQty',parseInt(this.value)||null)"></div>
+                <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="number" step="any" inputmode="decimal" class="fin num en-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="intraday fill" value="${p.actualEntry != null ? p.actualEntry : ""}" oninput="upd('${p.id}','actualEntry',parseFloat(this.value)||null)"></div>
+                <div style="padding:6px 8px"><input type="number" step="any" inputmode="decimal" class="fin num sl-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="intraday sl" value="${p.daySL != null ? p.daySL : ""}" oninput="upd('${p.id}','daySL',parseFloat(this.value)||null)"></div>
               </div>
             </div>
             <div style="margin-top:4px;padding:6px 8px 7px;border:1px solid rgba(92,227,141,.14);border-radius:10px;background:linear-gradient(180deg, rgba(22,28,45,.82), rgba(13,17,30,.94));box-shadow:inset 0 1px 0 rgba(255,255,255,.03);">
               <div class="g4" style="grid-template-columns:minmax(0,.95fr) minmax(0,1fr) minmax(150px,1.15fr) minmax(0,.95fr);gap:0;align-items:stretch;">
                 <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
                   <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">TOTAL QTY</div>
-                  <div class="fcomp" id="totq-${p.id}" style="${compactBigValueStyle};color:var(--t1);margin-top:5px">${getTotalQty(p) != null ? getTotalQty(p) : "-"}</div>
+                  <div class="fcomp" id="totq-${p.id}" style="${compactBigValueStyle};color:var(--t1);margin-top:5px">${qtyText(execAvgQty)}</div>
                 </div>
                 <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
                   <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">AVG ENTRY</div>
-                  <div class="fcomp" id="epx-${p.id}" style="${compactBigValueStyle};color:var(--green);margin-top:5px">${entry != null ? price2(entry) : "-"}</div>
+                  <div class="fcomp" id="epx-${p.id}" style="${compactBigValueStyle};color:var(--green);margin-top:5px">${execAvgEntry != null ? price2(execAvgEntry) : "-"}</div>
                 </div>
                 <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
                   <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">POSITION SIZE</div>
@@ -3524,7 +3803,7 @@ function buildCard(p, num) {
                 <div><div class="tc-label">Initial SL</div><div class="tc-val trail-num sl-c"><strong>Rs ${priceSL(p.planSL)}</strong></div></div>
                 <div><div class="tc-label">Current SL</div><div class="tc-val trail-num sl-c" id="tsl-${p.id}"><strong>Rs ${priceSL(p._currentSL)}</strong></div></div>
                 <div><div class="tc-label">Breakeven</div><div class="tc-val trail-num ${p.movedBE ? "ok-c" : ""}" id="bec-${p.id}" style="display:${p.movedBE ? "block" : "none"}">${p.movedBE ? "Rs " + priceSL(entry || p.actualEntry || p.overnightEntry) : ""}</div><div class="tc-val trail-num" ${p.movedBE ? 'style="display:none"' : ""}>${(entry || p.actualEntry || p.overnightEntry) ? "Rs " + priceSL(entry || p.actualEntry || p.overnightEntry) : "-"}</div></div>
-                <div><div class="tc-label">Override SL</div><div style="display:flex;gap:6px;align-items:center;margin-top:4px;flex-wrap:wrap"><input type="number" class="t-in" id="toi-${p.id}" style="width:92px" placeholder="manual" value="${p.trailOverride != null ? p.trailOverride : ""}" oninput="upd('${p.id}','trailOverride',parseFloat(this.value)||null)"><button class="be-btn" type="button" onclick="updateTrailSL('${p.id}')">Update SL</button>${slOrderButton}</div></div>
+ <div><div class="tc-label">Override SL</div><div style="display:flex;gap:6px;align-items:center;margin-top:4px;flex-wrap:wrap"><input type="number" step="any" inputmode="decimal" class="t-in" id="toi-${p.id}" style="width:92px" placeholder="manual" value="${p.trailOverride != null ? p.trailOverride : ""}" oninput="upd('${p.id}','trailOverride',parseFloat(this.value)||null)"><button class="be-btn" type="button" onclick="updateTrailSL('${p.id}')">Update SL</button>${slOrderButton}</div></div>
               </div>
               ${beBanner}
               <div class="trail-mile">

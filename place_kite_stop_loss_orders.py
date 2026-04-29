@@ -167,9 +167,18 @@ def as_float(value: object) -> float:
 
 
 def total_qty(position: Dict[str, object]) -> int:
-    overnight_qty = int(as_float(position.get("overnightQty")))
+    core_raw = position.get("coreQty")
+    if core_raw not in (None, ""):
+        core_qty = int(as_float(core_raw))
+    else:
+        core_qty = 0
+    tactical_raw = position.get("tacticalQty")
+    if tactical_raw not in (None, ""):
+        tactical_qty = int(as_float(tactical_raw))
+    else:
+        tactical_qty = int(as_float(position.get("overnightQty")))
     actual_qty = int(as_float(position.get("actualQty")))
-    return overnight_qty + actual_qty
+    return core_qty + tactical_qty + actual_qty
 
 
 def remaining_qty(position: Dict[str, object]) -> int:

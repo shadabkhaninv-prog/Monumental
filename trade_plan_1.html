@@ -68,11 +68,70 @@
     .db-quick-btn{background:var(--s2);border:1px solid var(--b1);border-radius:999px;padding:6px 10px;font-size:11px;color:var(--t2);cursor:pointer;font-family:var(--sans)}
     .db-quick-btn:hover{border-color:var(--b2);color:var(--t1)}
   </style>
+  <style>
+    .journal-view{display:flex;flex-direction:column;gap:14px;flex:1;min-height:0;overflow:auto;padding-right:4px;padding-bottom:12px}
+    .journal-hero{display:flex;justify-content:space-between;gap:18px;align-items:stretch;padding:16px 18px;background:linear-gradient(135deg,rgba(0,200,122,.08),rgba(85,153,255,.06));border:1px solid rgba(255,255,255,.06);border-radius:16px;box-shadow:0 1px 0 rgba(255,255,255,.02) inset}
+    .journal-hero-copy{min-width:0}
+    .journal-kicker{font-size:10px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:#6dd5ff;margin-bottom:8px}
+    .journal-hero h2{font-size:22px;line-height:1.2;letter-spacing:-.7px;margin:0;color:var(--t1);max-width:820px}
+    .journal-hero p{margin-top:8px;color:var(--t2);line-height:1.6;max-width:760px}
+    .journal-micro{margin-top:12px;font-family:var(--mono);font-size:11px;color:var(--green);letter-spacing:.08em;text-transform:uppercase}
+    .journal-hero-stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;min-width:320px;align-content:start}
+    .journal-stat{background:rgba(255,255,255,.03);border:1px solid var(--b1);border-radius:12px;padding:12px 14px}
+    .journal-stat-k{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--t3)}
+    .journal-stat-v{font-family:var(--mono);font-size:18px;font-weight:700;margin-top:5px;color:var(--t1)}
+    .journal-stat-v.pos{color:var(--green)}
+    .journal-stat-v.neg{color:var(--red)}
+    .journal-workbench{display:block}
+    .journal-workbench .pcard{box-shadow:0 18px 48px rgba(0,0,0,.28)}
+    .journal-middle{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:start;padding-bottom:8px}
+    .journal-panel{background:var(--s1);border:1px solid var(--b1);border-radius:16px;padding:14px 14px 12px;box-shadow:0 1px 0 rgba(255,255,255,.02) inset}
+    .journal-panel.open{border-left:3px solid rgba(85,153,255,.75)}
+    .journal-panel.planned{border-left:3px solid rgba(245,166,35,.75)}
+    .journal-panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}
+    .journal-panel-title{font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--t3)}
+    .journal-panel-sub{font-size:12px;color:var(--t2);line-height:1.45;margin-top:4px;max-width:560px}
+    .journal-panel-count{min-width:30px;height:24px;padding:0 8px;border-radius:999px;border:1px solid var(--b1);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:11px;font-weight:700;color:var(--t2);background:rgba(255,255,255,.02)}
+    .journal-queue{display:flex;flex-direction:column;gap:10px}
+    .journal-queue-card{width:100%;text-align:left;background:linear-gradient(180deg,rgba(15,19,33,.95),rgba(11,14,20,.98));border:1px solid var(--b1);border-radius:14px;padding:12px 13px;color:var(--t1);cursor:pointer;transition:border-color .15s,transform .15s,box-shadow .15s;font-family:var(--sans);appearance:none;display:block}
+    .journal-queue-card:hover{transform:translateY(-1px);border-color:var(--b2)}
+    .journal-queue-card.on{box-shadow:0 0 0 1px rgba(0,200,122,.14) inset;border-color:rgba(0,200,122,.32)}
+    .journal-queue-card.open{border-left:3px solid rgba(85,153,255,.75)}
+    .journal-queue-card.planned{border-left:3px solid rgba(245,166,35,.75)}
+    .journal-queue-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+    .journal-queue-name{font-family:var(--mono);font-size:18px;font-weight:700;letter-spacing:.4px}
+    .journal-queue-sub{margin-top:4px;font-size:11px;color:var(--t2);line-height:1.4}
+    .journal-queue-badge{font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;padding:4px 8px;border-radius:999px;white-space:nowrap}
+    .tag-safe{background:rgba(0,200,122,.12);color:var(--green);border:1px solid rgba(0,200,122,.28)}
+    .tag-watch{background:rgba(245,166,35,.12);color:var(--amb);border:1px solid rgba(245,166,35,.28)}
+    .tag-hold{background:rgba(85,153,255,.12);color:var(--blu);border:1px solid rgba(85,153,255,.28)}
+    .tag-trail{background:rgba(124,92,191,.14);color:#a98de8;border:1px solid rgba(124,92,191,.28)}
+    .journal-queue-meta{margin-top:10px;font-size:12px;color:var(--t2);line-height:1.5}
+    .journal-queue-foot{display:flex;gap:10px;justify-content:space-between;align-items:center;margin-top:12px;padding-top:10px;border-top:1px solid var(--b1);font-family:var(--mono);font-size:12px}
+    .journal-queue-line{color:var(--t2)}
+    .journal-queue-line.pos{color:var(--green)}
+    .journal-queue-line.neg{color:var(--red)}
+    .journal-queue-line.plan{color:var(--amb)}
+    .journal-queue-empty,.journal-empty{padding:20px;border:1px dashed var(--b1);border-radius:14px;color:var(--t3);background:rgba(255,255,255,.015)}
+    .journal-empty h3{font-size:18px;color:var(--t1);margin-bottom:8px}
+    .journal-empty p{font-size:12px;line-height:1.6;color:var(--t2);max-width:720px}
+    @media (max-width:980px){
+      .journal-hero{flex-direction:column}
+      .journal-hero-stats{min-width:0;grid-template-columns:repeat(2,minmax(0,1fr))}
+      .journal-middle{grid-template-columns:1fr}
+    }
+    @media (max-width:680px){
+      .journal-hero,.journal-panel{padding:12px}
+      .journal-hero-stats{grid-template-columns:1fr}
+      .journal-queue-name{font-size:16px}
+      .journal-queue-foot{flex-direction:column;align-items:flex-start}
+    }
+  </style>
 </head>
 <body>
  <header class="hdr"><div class="hdr-left"><div class="app-name">Trade<span>Plan</span></div><div class="topnav"><button class="nav-btn on" id="nav-dashboard" onclick="goDashboard()">Journal</button><button class="nav-btn" id="nav-day" onclick="goDay()">Positions</button><button class="nav-btn" id="nav-exposure" onclick="goExposure()">Goal Tracker</button><button class="nav-btn" id="nav-settings" onclick="goSettings()">Settings</button></div><div class="date-row" id="date-row"><button class="dnav" onclick="shiftDate(-1)">&lt;</button><input type="date" class="date-in" id="plan-date" onchange="changeDate(this.value)"><button class="dnav" onclick="shiftDate(1)">&gt;</button></div></div><div class="hdr-right"><div class="sumbar" id="hdr-sumbar"><div class="si"><div class="sl">Open</div><div class="sv neu" id="s-pos">0</div></div><div class="si"><div class="sl">Exposure</div><div class="sv neu" id="s-exp">-</div></div><div class="si"><div class="sl">% Exposure</div><div class="sv neu" id="s-expct">-</div></div><div class="si"><div class="sl">Realized P&amp;L</div><div class="sv neu" id="s-real">-</div></div><div class="si"><div class="sl">Open P&amp;L</div><div class="sv neu" id="s-open">-</div></div><div class="si"><div class="sl">Net P&amp;L</div><div class="sv neu" id="s-net">-</div></div></div><button class="btn-sec" id="btn-collapse-all" onclick="collapseAll()">Collapse all</button><button class="btn-add" id="btn-add" onclick="addPos()">+ Add position</button></div></header>
 <main class="main" id="main"><div class="empty" id="empty"><h3>No positions yet</h3><p>Click "Add position" to start building your trade plan.<br>Up to 5 positions per day. Saves through the local API.</p></div></main>
 <div class="savebar"><div class="save-st" id="save-st">Ready</div><div class="savebar-r"></div></div><datalist id="symbol-suggestions"></datalist>
-<script src="/static/trade_plan_app.js?v=20260429j"></script>
+<script src="/static/trade_plan_app.js?v=20260429m"></script>
 </body>
 </html>

@@ -512,7 +512,8 @@ class TradePlanStore:
                 normalize_symbol(str(position.get("symbol") or "")),
                 str(position.get("entryDate") or ""),
                 str(position.get("actualEntry") or ""),
-                str(position.get("overnightEntry") or ""),
+                str(position.get("coreEntry") or ""),
+                str(position.get("tacticalEntry") or position.get("overnightEntry") or ""),
                 str(position.get("planSL") or ""),
                 str(position.get("trailOverride") or ""),
             ]
@@ -1366,16 +1367,7 @@ class TradePlanStore:
                     continue
                 pid = str(position.get("id") or "").strip()
                 if not pid:
-                    pid = "|".join(
-                        [
-                            symbol,
-                            str(position.get("entryDate") or ""),
-                            str(position.get("actualEntry") or ""),
-                            str(position.get("overnightEntry") or ""),
-                            str(position.get("planSL") or ""),
-                            str(position.get("trailOverride") or ""),
-                        ]
-                    )
+                    pid = self._trim_position_key(position)
                 if pid not in first_seen:
                     first_seen[pid] = {
                         "position": position,
@@ -1752,16 +1744,7 @@ class TradePlanStore:
                         continue
                     pid = str(position.get("id") or "").strip()
                     if not pid:
-                        pid = "|".join(
-                            [
-                                symbol,
-                                str(position.get("entryDate") or ""),
-                                str(position.get("actualEntry") or ""),
-                                str(position.get("overnightEntry") or ""),
-                                str(position.get("planSL") or ""),
-                                str(position.get("trailOverride") or ""),
-                            ]
-                        )
+                        pid = self._trim_position_key(position)
                     if pid not in seen_first:
                         seen_first[pid] = {"position": position, "plan_date": plan_date}
                     seen_last[pid] = {"position": position, "plan_date": plan_date}
@@ -1786,9 +1769,9 @@ class TradePlanStore:
                 remaining_qty = self._as_float(last_pos.get("_rem"))
                 status_raw = str(last_pos.get("_status") or "").strip().lower()
                 initial_sl = self._as_float(first_pos.get("planSL"))
-                tactical_sl = self._as_float(last_pos.get("tacticalSL"))
+                tactical_sl = self._primary_tactical_sl(last_pos)
                 if tactical_sl <= 0:
-                    tactical_sl = self._as_float(first_pos.get("tacticalSL"))
+                    tactical_sl = self._primary_tactical_sl(first_pos)
                 trail_sl = self._as_float(last_pos.get("_currentSL"))
                 plan_days = int(self._as_float(last_pos.get("_days")))
                 moved_be = bool(last_pos.get("movedBE"))
@@ -1841,16 +1824,7 @@ class TradePlanStore:
                     continue
                 pid = str(position.get("id") or "").strip()
                 if not pid:
-                    pid = "|".join(
-                        [
-                            symbol,
-                            str(position.get("entryDate") or ""),
-                            str(position.get("actualEntry") or ""),
-                            str(position.get("overnightEntry") or ""),
-                            str(position.get("planSL") or ""),
-                            str(position.get("trailOverride") or ""),
-                        ]
-                    )
+                    pid = self._trim_position_key(position)
                 if pid not in first_seen:
                     first_seen[pid] = {"position": position, "plan_date": plan_date}
                 last_seen[pid] = {"position": position, "plan_date": plan_date}
@@ -1917,9 +1891,9 @@ class TradePlanStore:
             status_raw = str(last_pos.get("_status") or "").strip().lower()
             remaining_qty = self._as_float(last_pos.get("_rem"))
             initial_sl = self._as_float(first_pos.get("planSL"))
-            tactical_sl = self._as_float(last_pos.get("tacticalSL"))
+            tactical_sl = self._primary_tactical_sl(last_pos)
             if tactical_sl <= 0:
-                tactical_sl = self._as_float(first_pos.get("tacticalSL"))
+                tactical_sl = self._primary_tactical_sl(first_pos)
             trail_sl = self._as_float(last_pos.get("_currentSL"))
             plan_days = int(self._as_float(last_pos.get("_days")))
             moved_be = bool(last_pos.get("movedBE"))
@@ -2779,36 +2753,41 @@ class TradePlanStore:
         return None
 
     def _total_qty(self, position: Dict[str, object]) -> Optional[float]:
-        overnight_qty = self._as_float(position.get("overnightQty"))
+        core_qty = self._primary_core_qty(position)
+        tactical_qty = self._primary_tactical_qty(position)
         actual_qty = self._as_float(position.get("actualQty"))
-        if overnight_qty <= 0 and actual_qty <= 0:
+        if core_qty <= 0 and tactical_qty <= 0 and actual_qty <= 0:
             return None
-        return overnight_qty + actual_qty
+        return core_qty + tactical_qty + actual_qty
 
     def _entry_value(self, position: Dict[str, object]) -> Optional[object]:
-        overnight_qty = self._as_float(position.get("overnightQty"))
-        overnight_entry = self._as_float(position.get("overnightEntry"))
+        core_qty = self._primary_core_qty(position)
+        core_entry = self._primary_core_entry(position)
+        tactical_qty = self._primary_tactical_qty(position)
+        tactical_entry = self._primary_tactical_entry(position)
         actual_qty = self._as_float(position.get("actualQty"))
         actual_entry = self._as_float(position.get("actualEntry"))
 
         legs: List[Tuple[float, float]] = []
-        if overnight_qty > 0 and overnight_entry > 0:
-            legs.append((overnight_qty, overnight_entry))
+        if core_qty > 0 and core_entry > 0:
+            legs.append((core_qty, core_entry))
+        if tactical_qty > 0 and tactical_entry > 0:
+            legs.append((tactical_qty, tactical_entry))
         if actual_qty > 0 and actual_entry > 0:
             legs.append((actual_qty, actual_entry))
 
-        if len(legs) == 2:
-            total_qty = legs[0][0] + legs[1][0]
+        if legs:
+            total_qty = sum(qty for qty, _ in legs)
             if total_qty > 0:
-                weighted = ((legs[0][0] * legs[0][1]) + (legs[1][0] * legs[1][1])) / total_qty
+                weighted = sum(qty * price for qty, price in legs) / total_qty
                 return round(weighted, 2)
-        if len(legs) == 1:
-            return round(legs[0][1], 2)
 
         if actual_entry > 0:
             return round(actual_entry, 2)
-        if overnight_entry > 0:
-            return round(overnight_entry, 2)
+        if core_entry > 0:
+            return round(core_entry, 2)
+        if tactical_entry > 0:
+            return round(tactical_entry, 2)
         return None
 
     def _is_meaningful_position(self, position: Dict[str, object]) -> bool:
@@ -2820,6 +2799,9 @@ class TradePlanStore:
             "merits",
             "planEntry",
             "planSL",
+            "coreEntry",
+            "coreQty",
+            "coreSL",
             "tacticalEntry",
             "tacticalQty",
             "tacticalSL",
@@ -2862,19 +2844,63 @@ class TradePlanStore:
         except (TypeError, ValueError):
             return 0.0
 
+    def _primary_tactical_qty(self, position: Dict[str, object]) -> float:
+        raw = position.get("tacticalQty")
+        if raw not in (None, ""):
+            return max(0.0, self._as_float(raw))
+        return max(0.0, self._as_float(position.get("overnightQty")))
+
+    def _primary_core_qty(self, position: Dict[str, object]) -> float:
+        raw = position.get("coreQty")
+        if raw not in (None, ""):
+            return max(0.0, self._as_float(raw))
+        return 0.0
+
+    def _primary_tactical_entry(self, position: Dict[str, object]) -> float:
+        raw = position.get("tacticalEntry")
+        if raw not in (None, ""):
+            return self._as_float(raw)
+        return self._as_float(position.get("overnightEntry"))
+
+    def _primary_core_entry(self, position: Dict[str, object]) -> float:
+        raw = position.get("coreEntry")
+        if raw not in (None, ""):
+            return self._as_float(raw)
+        return 0.0
+
+    def _primary_tactical_sl(self, position: Dict[str, object]) -> float:
+        raw = position.get("tacticalSL")
+        if raw not in (None, ""):
+            return self._as_float(raw)
+        return self._as_float(position.get("overnightSL"))
+
+    def _primary_core_sl(self, position: Dict[str, object]) -> float:
+        raw = position.get("coreSL")
+        if raw not in (None, ""):
+            return self._as_float(raw)
+        return 0.0
+
     def _actual_deployed_risk(self, position: Dict[str, object]) -> float:
         plan_sl = self._as_float(position.get("planSL"))
-        tactical_sl = self._as_float(position.get("tacticalSL")) or plan_sl
-        total_qty = self._total_qty(position)
-        entry_value = self._entry_value(position)
-        if not (total_qty and total_qty > 0 and entry_value and entry_value > 0 and plan_sl > 0):
-            return 0.0
+        risk = 0.0
 
-        tactical_qty = round(total_qty * 0.30)
-        core_qty = max(0.0, total_qty - tactical_qty)
-        risk = max(0.0, (entry_value - plan_sl) * core_qty)
-        if tactical_sl > 0:
-            risk += max(0.0, (entry_value - tactical_sl) * tactical_qty)
+        core_qty = self._primary_core_qty(position)
+        core_entry = self._primary_core_entry(position)
+        core_sl = self._primary_core_sl(position) or plan_sl
+        if core_qty > 0 and core_entry > 0 and core_sl > 0:
+            risk += max(0.0, (core_entry - core_sl) * core_qty)
+
+        tactical_qty = self._primary_tactical_qty(position)
+        tactical_entry = self._primary_tactical_entry(position)
+        tactical_sl = self._primary_tactical_sl(position) or plan_sl
+        if tactical_qty > 0 and tactical_entry > 0 and tactical_sl > 0:
+            risk += max(0.0, (tactical_entry - tactical_sl) * tactical_qty)
+
+        actual_qty = self._as_float(position.get("actualQty"))
+        actual_entry = self._as_float(position.get("actualEntry"))
+        day_sl = self._as_float(position.get("daySL")) or plan_sl
+        if actual_qty > 0 and actual_entry > 0 and day_sl > 0:
+            risk += max(0.0, (actual_entry - day_sl) * actual_qty)
 
         return round(risk, 2)
 
@@ -2977,7 +3003,12 @@ class TradePlanStore:
                 continue
             entry = self._entry_value(position)
             if entry is None or entry <= 0:
-                entry = self._as_float(position.get("actualEntry")) or self._as_float(position.get("overnightEntry")) or self._as_float(position.get("planEntry"))
+                entry = (
+                    self._as_float(position.get("actualEntry"))
+                    or self._primary_core_entry(position)
+                    or self._primary_tactical_entry(position)
+                    or self._as_float(position.get("planEntry"))
+                )
             sl = self._as_float(position.get("_currentSL"))
             if sl <= 0:
                 sl = self._as_float(position.get("planSL"))
@@ -3207,18 +3238,7 @@ class TradePlanStore:
         for position in positions:
             if not isinstance(position, dict):
                 continue
-            pid = str(position.get("id") or "").strip()
-            if not pid:
-                pid = "|".join(
-                    [
-                        normalize_symbol(str(position.get("symbol") or "")),
-                        str(position.get("entryDate") or ""),
-                        str(position.get("actualEntry") or ""),
-                        str(position.get("overnightEntry") or ""),
-                        str(position.get("planSL") or ""),
-                        str(position.get("trailOverride") or ""),
-                    ]
-                )
+            pid = self._trim_position_key(position)
             deduped[pid] = position
         return list(deduped.values())
 
