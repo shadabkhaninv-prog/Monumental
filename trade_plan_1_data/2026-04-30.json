@@ -1,6 +1,6 @@
 {
   "date": "2026-04-30",
-  "saved_at": "2026-04-29T20:38:53",
+  "saved_at": "2026-04-30T12:04:15",
   "positions": [
     {
       "id": "p17770254578501mo0",
@@ -26,7 +26,7 @@
       "tacticalQty": 25,
       "entryDate": "2026-04-27",
       "posHigh": null,
-      "trailOverride": 3524,
+      "trailOverride": 3539.8,
       "trailNote": "Made a new high if it breaks day's low , out of here.",
       "thoughtTag": "NOTE",
       "thoughtLog": [
@@ -44,6 +44,11 @@
           "ts": "2026-04-27T05:06:08.934Z",
           "tag": "NOTE",
           "text": "reversing back 3479 should be protected"
+        },
+        {
+          "ts": "2026-04-30T05:56:43.204Z",
+          "tag": "NOTE",
+          "text": "took some profits . now wait till sl hits or close below 5ema"
         }
       ],
       "movedBE": false,
@@ -56,17 +61,17 @@
           "dt": "2026-04-24",
           "done": true,
           "_sug": 3577.76,
-          "_pnl": 1000
+          "_pnl": 1169
         },
         {
           "pct": 10,
           "type": "trail",
-          "ap": null,
-          "sq": null,
-          "dt": "",
-          "done": false,
+          "ap": 3583.88,
+          "sq": 24,
+          "dt": "2026-04-30",
+          "done": true,
           "_sug": 3716.7,
-          "_pnl": null
+          "_pnl": 2648
         },
         {
           "pct": 15,
@@ -118,11 +123,11 @@
       "_predRisk": 2990.4,
       "_planRisk": 3795.4,
       "_suggestedQty": 20,
-      "_rem": 54,
-      "_realPnl": 1000,
-      "_openPnl": 8756,
-      "_currentSL": 3524,
-      "_days": 2,
+      "_rem": 30,
+      "_realPnl": 3817,
+      "_openPnl": 4864,
+      "_currentSL": 3539.8,
+      "_days": 3,
       "_beSug": true,
       "_status": "partial",
       "_avgPlanEntry": 3476.91,
@@ -268,7 +273,7 @@
       "_realPnl": 1628,
       "_openPnl": 2988,
       "_currentSL": 2829,
-      "_days": 2,
+      "_days": 3,
       "_beSug": true,
       "_status": "partial",
       "_blendPct": 1.49,
@@ -319,6 +324,11 @@
           "ts": "2026-04-29T10:01:56.553Z",
           "tag": "NOTE",
           "text": "power sector pulled back"
+        },
+        {
+          "ts": "2026-04-30T04:47:56.460Z",
+          "tag": "NOTE",
+          "text": "unable to sell due to short delivery"
         }
       ],
       "movedBE": false,
@@ -399,7 +409,7 @@
       "_realPnl": -1746,
       "_openPnl": -470,
       "_currentSL": 817.9,
-      "_days": 0,
+      "_days": 1,
       "_beSug": false,
       "_status": "partial",
       "_tacticalRps": 5.2000000000000455,
@@ -427,30 +437,36 @@
       "coreEntry": null,
       "coreSL": null,
       "riskAmount": 3000,
-      "actualEntry": 2345,
+      "actualEntry": null,
       "overnightEntry": 2334.14,
       "overnightQty": 25,
       "overnightSL": 2291.9,
-      "daySL": 2362,
-      "actualQty": 45,
+      "daySL": null,
+      "actualQty": null,
       "tacticalQty": 25,
       "entryDate": "2026-04-30",
       "posHigh": null,
       "trailOverride": null,
       "trailNote": "",
       "thoughtTag": "NOTE",
-      "thoughtLog": [],
+      "thoughtLog": [
+        {
+          "ts": "2026-04-30T05:57:31.345Z",
+          "tag": "NOTE",
+          "text": "busted anticipated postion"
+        }
+      ],
       "movedBE": false,
       "trims": [
         {
           "pct": 3,
           "type": "fixed",
-          "ap": null,
-          "sq": null,
+          "ap": 2291.9,
+          "sq": 25,
           "dt": "2026-04-30",
-          "done": false,
-          "_sug": 2411.35,
-          "_pnl": null
+          "done": true,
+          "_sug": 2404.16,
+          "_pnl": -1056
         },
         {
           "pct": 10,
@@ -459,7 +475,7 @@
           "sq": null,
           "dt": "",
           "done": false,
-          "_sug": 2505,
+          "_sug": 2497.53,
           "_pnl": null
         },
         {
@@ -469,7 +485,7 @@
           "sq": null,
           "dt": "",
           "done": false,
-          "_sug": 2692.29,
+          "_sug": 2684.26,
           "_pnl": null
         },
         {
@@ -479,7 +495,7 @@
           "sq": null,
           "dt": "",
           "done": false,
-          "_sug": 2926.4,
+          "_sug": 2917.67,
           "_pnl": null
         }
       ],
@@ -512,24 +528,24 @@
       "_predQty": 71,
       "_predRisk": 2996.2,
       "_planRisk": 4051.2,
-      "_avgPlanEntry": 2337.59,
-      "_suggestedQty": 21,
-      "_rem": 70,
-      "_realPnl": 0,
-      "_openPnl": -190,
+      "_avgPlanEntry": 2334.11,
+      "_suggestedQty": 8,
+      "_rem": 0,
+      "_realPnl": -1056,
+      "_openPnl": null,
       "_currentSL": 2291.9,
-      "_days": -1,
+      "_days": 0,
       "_beSug": false,
-      "_status": "active",
+      "_status": "closed",
       "_tacticalRps": 42.19999999999982,
       "_tacticalQty": 25,
       "_tacticalRisk": 1055,
-      "_avgTacticalEntry": 2341.12,
+      "_avgTacticalEntry": 2334.14,
       "_suggestedTacticalQty": 21,
-      "_avgEntry": 2337.59,
-      "_avgQty": 141,
-      "_execAvgEntry": 2341.12,
-      "_execAvgQty": 70
+      "_avgEntry": 2334.11,
+      "_avgQty": 96,
+      "_execAvgEntry": 2334.14,
+      "_execAvgQty": 25
     }
   ]
 }

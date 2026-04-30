@@ -8,6 +8,7 @@ import concurrent.futures
 import math
 import json
 import re
+import traceback
 import urllib.error
 import urllib.request
 from datetime import date, datetime, time as dt_time, timedelta
@@ -3247,6 +3248,11 @@ class TradePlanHandler(BaseHTTPRequestHandler):
     repo: BhavRepository
     store: TradePlanStore
 
+    def _log_debug(self, message: str) -> None:
+        logger = getattr(self.store, "_log_debug", None)
+        if callable(logger):
+            logger(message)
+
     def _kite_scan_targets(self, body: dict) -> dict:
         raw_date = str(body.get("date") or "").strip()
         if raw_date:
@@ -3502,13 +3508,14 @@ class TradePlanHandler(BaseHTTPRequestHandler):
                 tag=tag,
             )
         except Exception as exc:
-            msg = str(exc) or exc.__class__.__name__
-            lower = msg.lower()
-            if "no ips configured" in lower or "allowed ips" in lower or ("ip" in lower and "configured" in lower):
-                raise ValueError(
-                    "Kite blocked the order because no allowed IPs are configured for this app. "
-                    "Add your current public IP in the Kite developer console, then retry."
-                ) from exc
+            code = getattr(exc, "code", None)
+            detail = f"{exc.__class__.__name__}"
+            if code is not None:
+                detail += f" ({code})"
+            detail += f": {exc}"
+            self._log_debug(
+                "kite SL order failed: " + detail + "\n" + traceback.format_exc()
+            )
             raise
         remembered[tag] = {
             "order_id": order_id,
@@ -3719,7 +3726,12 @@ class TradePlanHandler(BaseHTTPRequestHandler):
             try:
                 return self._send_json(self._place_kite_sl_order(body))
             except Exception as exc:
-                return self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+                code = getattr(exc, "code", None)
+                message = f"{exc.__class__.__name__}"
+                if code is not None:
+                    message += f" ({code})"
+                message += f": {exc}"
+                return self._send_error_json(HTTPStatus.BAD_REQUEST, message)
 
         if parsed.path == "/api/kite/opening-bar":
             if not isinstance(body, dict):

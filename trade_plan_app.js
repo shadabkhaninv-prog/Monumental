@@ -701,7 +701,7 @@ function compute(p) {
   p._rem = carriedQty != null ? Math.max(0, carriedQty - totalSold) : null;
   p._realPnl = 0;
   p.trims.forEach(t => {
-    t._pnl = (t.done && t.sq && t.ap && p.actualEntry) ? +((t.ap - p.actualEntry) * t.sq).toFixed(0) : null;
+    t._pnl = (t.done && t.sq && t.ap && entry) ? +((t.ap - entry) * t.sq).toFixed(0) : null;
     if (t._pnl != null) p._realPnl += t._pnl;
   });
   p._openPnl = (p.cmp && entry && p._rem > 0) ? +((p.cmp - entry) * p._rem).toFixed(0) : null;
@@ -931,200 +931,6 @@ function getSectionNote(key, count) {
 
 function getDisplayBuckets() {
   return ["planning", "current", "exited", "overnight"];
-}
-
-function journalQueueBucketWeight(p) {
-  const bucket = getBucketKey(p);
-  if (bucket === "overnight") return 0;
-  if (bucket === "current") return 1;
-  if (bucket === "planning") return 2;
-  return 3;
-}
-
-function sortJournalQueue(a, b) {
-  const aw = journalQueueBucketWeight(a);
-  const bw = journalQueueBucketWeight(b);
-  if (aw !== bw) return aw - bw;
-  const ap = Number(a._openPnl || 0);
-  const bp = Number(b._openPnl || 0);
-  if (ap !== bp) return bp - ap;
-  return String(a.symbol || "").localeCompare(String(b.symbol || ""));
-}
-
-function getJournalOpenPositions() {
-  return positions
-    .filter(p => isPositioned(p) && p._status !== "closed")
-    .slice()
-    .sort(sortJournalQueue);
-}
-
-function getJournalPlannedTrades() {
-  return positions
-    .filter(p => getBucketKey(p) === "planning")
-    .slice()
-    .sort((a, b) => {
-      const av = Number(a.conviction || 0);
-      const bv = Number(b.conviction || 0);
-      if (av !== bv) return bv - av;
-      return String(a.symbol || "").localeCompare(String(b.symbol || ""));
-    });
-}
-
-function getCushionPct(p) {
-  const ltp = Number(p.cmp || 0);
-  const sl = Number(p._currentSL != null ? p._currentSL : p.planSL || 0);
-  if (!(ltp > 0 && sl > 0)) return null;
-  return +(((ltp - sl) / ltp) * 100).toFixed(1);
-}
-
-function getJournalOpenTag(p) {
-  const cushion = getCushionPct(p);
-  if (cushion == null) return "HOLD";
-  if (cushion >= 2) return "SAFE";
-  if (cushion >= 1) return "WATCH";
-  return "HOLD";
-}
-
-function getJournalOpenTagClass(p) {
-  const tag = getJournalOpenTag(p);
-  if (tag === "SAFE") return "tag-safe";
-  if (tag === "WATCH") return "tag-watch";
-  return "tag-hold";
-}
-
-function getJournalPlannedTagClass(p) {
-  if (p.tacticalEntry != null || p.tacticalSL != null) return "tag-trail";
-  return "tag-watch";
-}
-
-function renderJournalHero(openItems, plannedItems, selected) {
-  const openRisk = openItems.reduce((sum, p) => sum + Number(p._openPnl || 0), 0);
-  const plannedRisk = plannedItems.reduce((sum, p) => sum + Number(p._planRisk || p.riskAmount || 0), 0);
-  const selectedLabel = selected ? `${selected.symbol || "SELECTED"} working` : "No position selected";
-  const blurb = openItems.length
-    ? `Start with ${openItems.length} live position${openItems.length === 1 ? "" : "s"} and ${plannedItems.length} planned setup${plannedItems.length === 1 ? "" : "s"} on the board.`
-    : `Stage the morning from the plan queue, then move open positions into broker stops before the bell.`;
-  return `
-    <section class="journal-hero">
-      <div class="journal-hero-copy">
-        <div class="journal-kicker">Morning journal</div>
-        <h2>${fmtDateLabel(planDate)} · enter SLs first, then stage execution</h2>
-        <p>${blurb}</p>
-        <div class="journal-micro" id="journal-selected-label">${selectedLabel}</div>
-      </div>
-      <div class="journal-hero-stats">
-        <div class="journal-stat">
-          <div class="journal-stat-k">Open positions</div>
-          <div class="journal-stat-v" id="journal-open-count">${openItems.length}</div>
-        </div>
-        <div class="journal-stat">
-          <div class="journal-stat-k">Planned trades</div>
-          <div class="journal-stat-v" id="journal-planned-count">${plannedItems.length}</div>
-        </div>
-        <div class="journal-stat">
-          <div class="journal-stat-k">Open P&amp;L</div>
-          <div class="journal-stat-v ${openRisk >= 0 ? "pos" : "neg"}" id="journal-open-pnl">${sgn(openRisk)}Rs ${fi(openRisk)}</div>
-        </div>
-        <div class="journal-stat">
-          <div class="journal-stat-k">Planned risk</div>
-          <div class="journal-stat-v" id="journal-planned-risk">${plannedRisk ? money(plannedRisk) : "Rs 0"}</div>
-        </div>
-      </div>
-    </section>
-  `;
-}
-
-function renderJournalQueueCard(p, mode) {
-  const selected = selectedPositionId === p.id ? " on" : "";
-  const rootId = mode === "planned" ? `jq-plan-${p.id}` : `jq-open-${p.id}`;
-  const badgeClass = mode === "planned" ? getJournalPlannedTagClass(p) : getJournalOpenTagClass(p);
-  const badgeText = mode === "planned" ? "PLANNED" : getJournalOpenTag(p);
-  const qty = getTotalQty(p);
-  const openQty = p._rem != null ? p._rem : (qty != null ? qty : 0);
-  const sl = p._currentSL != null ? p._currentSL : (p.planSL != null ? p.planSL : null);
-  const ltp = p.cmp != null ? Number(p.cmp) : null;
-  const cushion = mode === "planned" ? null : getCushionPct(p);
-  const risk = p._planRisk != null && p._planRisk > 0 ? p._planRisk : (p.riskAmount != null ? Number(p.riskAmount) : null);
-  const nameLine = mode === "planned"
-    ? `${p._predQty > 0 ? qtyText(p._predQty) + " sh" : "Qty pending"}`
-    : `${qtyText(openQty)} sh${cushion != null ? ` · cushion ${cushion.toFixed(1)}%` : ""}${p._days != null ? ` · ${p._days}d` : ""}`;
-  const subLine = mode === "planned"
-    ? `${risk != null ? money(risk) : "Risk pending"}${p.planEntry != null ? ` · Entry Rs ${priceSL(p.planEntry)}` : ""}`
-    : `${p._status === "partial" ? "Partial position" : "Live position"}${p._openPnl != null ? ` · Open P&L ${sgn(p._openPnl)}Rs ${fi(p._openPnl)}` : ""}`;
-  const lowerLeft = mode === "planned"
-    ? `Entry ${priceSL(p.planEntry)}`
-    : `SL @ ${priceSL(sl)}`;
-  const lowerRight = mode === "planned"
-    ? `${p.tacticalEntry != null ? `Trigger ${priceSL(p.tacticalEntry)}` : `Stop ${priceSL(p.planSL)}`}`
-    : `${ltp != null ? `▲ LTP ${priceSL(ltp)}` : "Live price pending"}`;
-  const extraClass = mode === "planned" ? "planned" : "open";
-  return `
-    <button class="journal-queue-card ${extraClass}${selected}" id="${rootId}" type="button" onclick="selectPos('${p.id}')">
-      <div class="journal-queue-top">
-        <div>
-          <div class="journal-queue-name">${escHtml(p.symbol || "SYMBOL")}</div>
-          <div class="journal-queue-sub">${escHtml(nameLine)}</div>
-        </div>
-        <div class="journal-queue-badge ${badgeClass}">${badgeText}</div>
-      </div>
-      <div class="journal-queue-meta">${escHtml(subLine)}</div>
-      <div class="journal-queue-foot">
-        <div class="journal-queue-line">
-          <span>${escHtml(lowerLeft)}</span>
-        </div>
-        <div class="journal-queue-line ${mode === "planned" ? "plan" : (ltp != null && sl != null && ltp >= sl ? "pos" : "neg")}">
-          <span>${escHtml(lowerRight)}</span>
-        </div>
-      </div>
-    </button>
-  `;
-}
-
-function renderJournalQueueSection(title, note, items, mode, emptyCopy) {
-  const rootClass = mode === "planned" ? "planned" : "open";
-  const body = items.length
-    ? items.map(item => renderJournalQueueCard(item, mode)).join("")
-    : `<div class="journal-queue-empty">${escHtml(emptyCopy)}</div>`;
-  return `
-    <section class="journal-panel ${rootClass}">
-      <div class="journal-panel-head">
-        <div>
-          <div class="journal-panel-title">${escHtml(title)}</div>
-          <div class="journal-panel-sub">${escHtml(note)}</div>
-        </div>
-        <div class="journal-panel-count" id="journal-${mode}-count">${items.length}</div>
-      </div>
-      <div class="journal-queue">${body}</div>
-    </section>
-  `;
-}
-
-function refreshJournalOverview() {
-  const openItems = getJournalOpenPositions();
-  const plannedItems = getJournalPlannedTrades();
-  const openRisk = openItems.reduce((sum, p) => sum + Number(p._openPnl || 0), 0);
-  const plannedRisk = plannedItems.reduce((sum, p) => sum + Number(p._planRisk || p.riskAmount || 0), 0);
-  const selected = positions.find(p => p.id === selectedPositionId) || ensureSelectedPosition();
-  const selectedLabel = e("journal-selected-label");
-  if (selectedLabel) selectedLabel.textContent = selected ? `${selected.symbol || "SELECTED"} working` : "No position selected";
-  const openCount = e("journal-open-count");
-  if (openCount) openCount.textContent = String(openItems.length);
-  const plannedCount = e("journal-planned-count");
-  if (plannedCount) plannedCount.textContent = String(plannedItems.length);
-  const openPnl = e("journal-open-pnl");
-  if (openPnl) {
-    openPnl.textContent = `${sgn(openRisk)}Rs ${fi(openRisk)}`;
-    openPnl.className = `journal-stat-v ${openRisk >= 0 ? "pos" : "neg"}`;
-  }
-  const plannedRiskNode = e("journal-planned-risk");
-  if (plannedRiskNode) plannedRiskNode.textContent = plannedRisk ? money(plannedRisk) : "Rs 0";
-}
-
-function refreshJournalQueueCards(p) {
-  const openNode = e(`jq-open-${p.id}`);
-  if (openNode) openNode.outerHTML = renderJournalQueueCard(p, "open");
-  const plannedNode = e(`jq-plan-${p.id}`);
-  if (plannedNode) plannedNode.outerHTML = renderJournalQueueCard(p, "planned");
 }
 
 function ensureSelectedPosition() {
@@ -1631,8 +1437,6 @@ function paint(id, p) {
     const mgmtNote = e("mgmt-note-" + id);
     if (mgmtNote && mgmtNoteDraft) mgmtNote.value = mgmtNoteDraft;
   }
-  refreshJournalQueueCards(p);
-  refreshJournalOverview();
   updateSummary();
 }
 
@@ -2897,38 +2701,48 @@ function renderDayView() {
   syncChrome();
   const main = e("main");
   if (!main) return;
+  main.innerHTML = "";
+  const empty = document.createElement("div");
+  empty.className = "empty";
+  empty.id = "empty";
+  empty.style.display = positions.length === 0 ? "block" : "none";
+  empty.innerHTML = `<h3>No positions for ${fmtDateLabel(planDate)}</h3><p>Add a trade plan or let older open positions carry into this date.</p>`;
+  main.appendChild(empty);
+  if (e("btn-add")) e("btn-add").disabled = positions.length >= 5;
+  const buckets = { overnight: [], current: [], exited: [], planning: [] };
+  positions.forEach(p => {
+    compute(p);
+    buckets[getBucketKey(p)].push(p);
+  });
   const selected = ensureSelectedPosition();
   if (selected) selected.collapsed = false;
-  positions.forEach(p => compute(p));
-  const openPositions = getJournalOpenPositions();
-  const plannedTrades = getJournalPlannedTrades();
-  const selectedNum = selected ? Math.max(1, positions.findIndex(p => p.id === selected.id) + 1) : 1;
-  if (e("btn-add")) e("btn-add").disabled = positions.length >= 5;
+  let num = 1;
+  let selectedNum = 1;
+  let listHtml = "";
+  getDisplayBuckets().forEach(key => {
+    if (!buckets[key].length) return;
+    listHtml += `<section class="list-group"><div class="group"><div class="group-h"><div><div class="group-t">${getSectionTitle(key)}</div><div class="group-n">${getSectionNote(key, buckets[key].length)}</div></div></div></div>`;
+    buckets[key].forEach(p => {
+      if (selected && p.id === selected.id) selectedNum = num;
+      const total = (p._realPnl || 0) + (p._openPnl || 0);
+      const primary = getPrimaryBadge(p);
+      const secondary = getSecondaryBadge(p);
+      listHtml += `<button class="plist-item st-${p._status}${selected && p.id === selected.id ? " on" : ""}" id="list-${p.id}" onclick="selectPos('${p.id}')"><div class="plist-top"><div class="plist-main"><div class="plist-title"><span class="plist-dot">${num}</span><span class="plist-sym" id="list-sym-${p.id}">${p.symbol || "SYMBOL"}</span></div><div class="plist-meta" id="list-meta-${p.id}">${getHeaderMeta(p, key)}</div><div class="plist-badges"><span class="badge badge-${primary}" id="list-pbadge-${p.id}">${primary.toUpperCase()}</span><span class="badge badge-${secondary || "ghost"}" id="list-sbadge-${p.id}" style="${secondary ? "" : "display:none"}">${secondary.toUpperCase()}</span></div></div><div class="plist-pnl ${total >= 0 ? "pos" : "neg"}" id="list-pnl-${p.id}">${total !== 0 ? sgn(total) + "Rs " + fi(total) : "-"}</div></div></button>`;
+      num += 1;
+    });
+    listHtml += `</section>`;
+  });
+  const layout = document.createElement("section");
+  layout.className = "day-layout";
   const detailHtml = selected
     ? buildCard(selected, selectedNum)
-    : `<div class="journal-empty"><h3>No positions for ${fmtDateLabel(planDate)}</h3><p>Add a trade plan or let older open positions carry into this date.</p></div>`;
-  main.innerHTML = `
-    <section class="journal-view">
-      ${renderJournalHero(openPositions, plannedTrades, selected)}
-      <section class="journal-workbench">${detailHtml}</section>
-      <section class="journal-middle">
-        ${renderJournalQueueSection(
-          "Open Positions",
-          "Morning SL queue. Keep the live stops in the broker app before you touch new entries.",
-          openPositions,
-          "open",
-          "No open positions on this date."
-        )}
-        ${renderJournalQueueSection(
-          "Planned Trades",
-          "Keep entry, trigger, and stop-loss levels ready for the open.",
-          plannedTrades,
-          "planned",
-          "No planned trades saved for this date."
-        )}
-      </section>
-    </section>
-  `;
+    : `<div class="plist-empty">Select a position from the left to edit it here.</div>`;
+  layout.innerHTML = `<div class="day-list">${listHtml || `<div class="plist-empty">No positions saved for this date yet.</div>`}</div><div class="day-detail" id="detail-pane">${selected ? `<div class="detail-shell">${detailHtml}</div>` : detailHtml}</div>${renderRightRail(selected)}`;
+  main.appendChild(layout);
+  if (selected) {
+    const detailHead = layout.querySelector(".detail-shell .phead");
+    if (detailHead) detailHead.removeAttribute("onclick");
+  }
   updateSummary();
 }
 

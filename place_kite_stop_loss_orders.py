@@ -23,9 +23,12 @@ import argparse
 import os
 import json
 import re
+import traceback
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+import urllib3.util.connection as urllib3_connection
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_TOKEN_FILE = BASE_DIR / "kite_token.txt"
@@ -33,6 +36,16 @@ DEFAULT_SAVE_DIR = Path.home() / "Downloads" / "trade_plan_1_data"
 DEFAULT_TAG_PREFIX = "TP-SL"
 DEFAULT_STATE_FILE = DEFAULT_SAVE_DIR / ".kite_stop_loss_orders_state.json"
 _TICK_SIZE_CACHE: Dict[str, Tuple[Dict[str, float], Dict[str, float]]] = {}
+
+
+def _prefer_ipv4_for_requests() -> None:
+    # KiteConnect should use the whitelisted IPv4 on this machine.
+    # Some consumer IPv6 links rotate temporary privacy addresses, which
+    # makes exact-IP whitelisting brittle.
+    try:
+        urllib3_connection.HAS_IPV6 = False
+    except Exception:
+        pass
 
 
 def read_kite_token_file(token_file: Path) -> Dict[str, str]:
@@ -59,6 +72,7 @@ def get_kite_client(token_file: Path):
         raise SystemExit("kiteconnect is not installed. Install it first.") from exc
 
     creds = read_kite_token_file(token_file)
+    _prefer_ipv4_for_requests()
     for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
         os.environ.pop(key, None)
     kite = KiteConnect(api_key=creds["API_KEY"])
@@ -125,15 +139,12 @@ def resolve_tick_size(kite, symbol: str, exchange: Optional[str] = None, fallbac
     return fallback if fallback and fallback > 0 else 0.05
 
 
-def friendly_kite_error(exc: Exception) -> str:
-    msg = str(exc) or exc.__class__.__name__
-    lower = msg.lower()
-    if "no ips configured" in lower or "allowed ips" in lower or "ip" in lower and "configured" in lower:
-        return (
-            "Kite blocked the order because no allowed IPs are configured for this app. "
-            "Add your current public IP in the Kite developer console, then retry."
-        )
-    return msg
+def describe_kite_error(exc: Exception) -> str:
+    msg = str(exc) or getattr(exc, "message", "") or exc.__class__.__name__
+    code = getattr(exc, "code", None)
+    if code is not None:
+        return f"{exc.__class__.__name__} ({code}): {msg}"
+    return f"{exc.__class__.__name__}: {msg}"
 
 
 def parse_plan_date_from_name(path: Path) -> Optional[date]:
@@ -415,7 +426,10 @@ def main() -> int:
             state_changed = True
             placed += 1
         except Exception as exc:
-            print(f"  !! failed: {friendly_kite_error(exc)}")
+            print(f"  !! failed: {describe_kite_error(exc)}")
+            print("     traceback:")
+            for line in traceback.format_exc().rstrip().splitlines():
+                print(f"     {line}")
 
     if args.place and state_changed:
         state["last_run"] = {
