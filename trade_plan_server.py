@@ -30,7 +30,7 @@ DB_CONFIG = {
     "database": "bhav",
 }
 
-DEFAULT_HTML_PATH = Path(__file__).resolve().parent / "trade_plan_1.html"
+DEFAULT_HTML_PATH = Path(__file__).resolve().parent / "TRADEP_12_1.htm"
 PUBLIC_IPV4_PROBES = (
     "https://api.ipify.org?format=json",
     "https://checkip.amazonaws.com",
@@ -3017,6 +3017,7 @@ class TradePlanStore:
             "ok": True,
             "date": plan_date,
             "positions": day_positions,
+            "briefing": self.load_plan(plan_date).get("briefing", {}),
             "raw_path": str(self.plan_path(plan_date)),
             "open_positions_count": len(carried_positions),
             "exited_today_count": len(exited_today_positions),
@@ -3231,6 +3232,23 @@ class TradePlanStore:
         }
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         self._trim_date_hints_cache = None
+        return {"ok": True, "date": plan_date, "path": str(path), "saved_at": payload["saved_at"]}
+
+    def save_day_briefing(self, plan_date: str, briefing: dict) -> Dict[str, object]:
+        path = self.plan_path(plan_date)
+        payload = self.load_plan_raw(plan_date)
+        if not isinstance(payload, dict):
+            payload = {}
+        existing_briefing = payload.get("briefing")
+        merged_briefing = dict(existing_briefing) if isinstance(existing_briefing, dict) else {}
+        if isinstance(briefing, dict):
+            merged_briefing.update(briefing)
+        payload["date"] = plan_date
+        payload["saved_at"] = datetime.now().isoformat(timespec="seconds")
+        payload["briefing"] = merged_briefing
+        if "positions" not in payload or not isinstance(payload.get("positions"), list):
+            payload["positions"] = []
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return {"ok": True, "date": plan_date, "path": str(path), "saved_at": payload["saved_at"]}
 
     def _dedupe_positions(self, positions: Sequence[dict]) -> List[dict]:
@@ -3576,6 +3594,34 @@ class TradePlanHandler(BaseHTTPRequestHandler):
             self.wfile.write(blob)
             return
 
+        if parsed.path == "/trade_plan_1.html":
+            html_path = self.store.base_dir / "trade_plan_1.html"
+            if not html_path.exists():
+                return self._send_error_json(HTTPStatus.NOT_FOUND, "trade_plan_1.html not found.")
+            blob = html_path.read_bytes()
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Content-Length", str(len(blob)))
+            self.end_headers()
+            self.wfile.write(blob)
+            return
+
+        if parsed.path == "/TRADEP_12_1.htm":
+            html_path = self.store.base_dir / "TRADEP_12_1.htm"
+            if not html_path.exists():
+                return self._send_error_json(HTTPStatus.NOT_FOUND, "TRADEP_12_1.htm not found.")
+            blob = html_path.read_bytes()
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Content-Length", str(len(blob)))
+            self.end_headers()
+            self.wfile.write(blob)
+            return
+
         if parsed.path == "/api/health":
             return self._send_json(
                 {
@@ -3704,7 +3750,7 @@ class TradePlanHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path not in {"/api/plan", "/api/settings", "/api/kite/place-sl-order", "/api/kite/opening-bar", "/api/kite/scan-targets"}:
+        if parsed.path not in {"/api/plan", "/api/day-view", "/api/settings", "/api/kite/place-sl-order", "/api/kite/opening-bar", "/api/kite/scan-targets"}:
             return self._send_error_json(HTTPStatus.NOT_FOUND, "Route not found.")
 
         content_length = int(self.headers.get("Content-Length", "0"))
@@ -3718,6 +3764,17 @@ class TradePlanHandler(BaseHTTPRequestHandler):
             if not isinstance(body, dict):
                 return self._send_error_json(HTTPStatus.BAD_REQUEST, "Settings body must be an object.")
             return self._send_json(self.store.save_settings(body))
+
+        if parsed.path == "/api/day-view":
+            if not isinstance(body, dict):
+                return self._send_error_json(HTTPStatus.BAD_REQUEST, "Request body must be an object.")
+            plan_date = self._require_date(str(body.get("date") or ""))
+            if plan_date is None:
+                return self._send_error_json(HTTPStatus.BAD_REQUEST, "Missing or invalid date.")
+            briefing = body.get("briefing") or {}
+            if not isinstance(briefing, dict):
+                return self._send_error_json(HTTPStatus.BAD_REQUEST, "`briefing` must be an object.")
+            return self._send_json(self.store.save_day_briefing(plan_date.isoformat(), briefing))
 
         if parsed.path == "/api/kite/place-sl-order":
             if not isinstance(body, dict):

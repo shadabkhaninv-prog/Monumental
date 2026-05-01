@@ -13,6 +13,7 @@ let latestDashboardDate = todayStr();
 let dashboardMonth = "";
 let dashboardMode = "cal";
 let dashboardSummary = null;
+let briefingSnapshot = null;
 let dayMeta = { open_positions_count: 0, exited_today_count: 0, planning_count: 0, exposure: 0, exposure_pct: null };
 let settings = {
   available_capital: null,
@@ -55,6 +56,8 @@ let portfolioSimReport = {
 let goalTrackerTab = "exposure";
 let kitePublicIpV4 = "";
 let kitePublicIpV6 = "";
+const startupView = new URLSearchParams(location.search).get("view") || "";
+const startupDate = new URLSearchParams(location.search).get("date") || "";
 const QUIET = new Set(["symbol", "merits", "trailNote", "mgmt.fe", "mgmt.fsl", "mgmt.ft", "mgmt.fbe", "mgmt.note"]);
 
 function todayStr() {
@@ -571,11 +574,13 @@ async function loadDashboard() {
       dashboardMonth = monthKeyFromDate(latestDashboardDate || todayStr());
     }
     if (!planDate) planDate = latestDashboardDate;
+    await loadBriefingSnapshot(planDate || latestDashboardDate || todayStr());
     setSaveState("Ready", "saved", "Autosave active");
   } catch (_err) {
     dashboardItems = [];
     latestDashboardDate = todayStr();
     dashboardSummary = null;
+    briefingSnapshot = null;
     setSaveState("Dashboard load failed", "", "API unavailable");
   }
 }
@@ -2587,10 +2592,410 @@ function dashboardShiftMonth(delta) {
   renderApp();
 }
 
+function briefingThemeFromText(text) {
+  const value = String(text || "").toLowerCase();
+  if (/bank|sbin|hdfc|finance|nbfc/.test(value)) return "PSU Banks";
+  if (/defence|bel|bharat|ammo|army/.test(value)) return "Defence";
+  if (/power/.test(value)) return "Power";
+  if (/cap\s*goods|capital goods|infra|engineering/.test(value)) return "Cap Goods";
+  if (/data centre|it\b|tech|software/.test(value)) return "IT";
+  if (/rail|rvnl|irfc|railway/.test(value)) return "Rail";
+  if (/ev|auto|energy|battery/.test(value)) return "EV";
+  if (/metal|steel|mining/.test(value)) return "Metals";
+  return "Core";
+}
+
+function briefingThemeList(positionsList) {
+  const counts = new Map();
+  (Array.isArray(positionsList) ? positionsList : []).forEach(pos => {
+    const theme = briefingThemeFromText(`${pos.symbol || ""} ${pos.merits || ""}`);
+    counts.set(theme, (counts.get(theme) || 0) + 1);
+  });
+  return Array.from(counts.entries())
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+    .slice(0, 5);
+}
+
+function briefingStatusChip(status) {
+  const value = String(status || "").toLowerCase();
+  if (value === "safe" || value === "active") return { label: "SAFE", cls: "safe" };
+  if (value === "watch") return { label: "WATCH", cls: "watch" };
+  if (value === "hold" || value === "partial") return { label: "HOLD", cls: "hold" };
+  if (value === "plan") return { label: "PLAN", cls: "plan" };
+  if (value === "cond") return { label: "COND", cls: "cond" };
+  return { label: value ? value.toUpperCase() : "NOTE", cls: "watch" };
+}
+
+function briefingTrackPct(value, min, max) {
+  const n = Number(value);
+  const lo = Number(min);
+  const hi = Number(max);
+  if (!Number.isFinite(n) || !Number.isFinite(lo) || !Number.isFinite(hi)) return 50;
+  const span = Math.max(hi - lo, 0.01);
+  return Math.max(0, Math.min(100, ((n - lo) / span) * 100));
+}
+
+function briefingTrackHtml(values, labels, fillStartIndex, fillEndIndex, tone) {
+  const pairs = values.filter(item => item && Number.isFinite(Number(item.value)));
+  if (!pairs.length) return `<div class="briefing-track"><div class="briefing-track-line"></div></div>`;
+  const min = Math.min(...pairs.map(item => Number(item.value)));
+  const max = Math.max(...pairs.map(item => Number(item.value)));
+  const fillStart = briefingTrackPct(pairs[Math.max(0, Math.min(fillStartIndex, pairs.length - 1))].value, min, max);
+  const fillEnd = briefingTrackPct(pairs[Math.max(0, Math.min(fillEndIndex, pairs.length - 1))].value, min, max);
+  const left = Math.min(fillStart, fillEnd);
+  const width = Math.max(4, Math.abs(fillEnd - fillStart));
+  return `
+    <div class="briefing-track ${tone || ""}">
+      <div class="briefing-track-line"></div>
+      <div class="briefing-track-fill" style="left:${left}%;width:${width}%"></div>
+      ${pairs.map((item, idx) => {
+        const pct = briefingTrackPct(item.value, min, max);
+        const cls = item.cls || "";
+        const label = labels && labels[idx] != null ? labels[idx] : pricePlain(item.value);
+        return `<span class="briefing-marker ${cls}" style="left:${pct}%"></span><span class="briefing-label ${cls}" style="left:${pct}%">${escHtml(label)}</span>`;
+      }).join("")}
+    </div>
+  `;
+}
+
+function briefingRowAccent(position) {
+  const status = String(position && position._status || "").toLowerCase();
+  if (status === "safe" || status === "active") return "var(--green)";
+  if (status === "watch") return "var(--amb)";
+  if (status === "hold" || status === "partial") return "#a98de8";
+  if (status === "plan") return "var(--blu)";
+  if (status === "cond") return "var(--red)";
+  return "var(--t3)";
+}
+
+function briefingLeadCopy(snapshot) {
+  const list = Array.isArray(snapshot && snapshot.positions) ? snapshot.positions : [];
+  if (!list.length) return "No live position snapshot yet. Load the latest day to fill the briefing.";
+  const themes = briefingThemeList(list);
+  const topTheme = themes.length ? themes[0].label : "Core";
+  const openCount = Number(snapshot.openPositionsCount || 0);
+  const risk = money(snapshot.carriedRiskTotal || 0);
+  return `${openCount} open positions, ${risk} carried risk, and ${topTheme.toLowerCase()} still leading. Keep the bar tight, let the strongest names breathe, and avoid noise outside the plan.`;
+}
+
+function briefingGoalCards(snapshot) {
+  const list = Array.isArray(snapshot && snapshot.positions) ? snapshot.positions.slice() : [];
+  const topWin = list.slice().sort((a, b) => ((Number(b._realPnl || 0) + Number(b._openPnl || 0)) - (Number(a._realPnl || 0) + Number(a._openPnl || 0))))[0] || null;
+  const lastNotes = list.filter(pos => String(pos.trailNote || pos.merits || "").trim()).slice(0, 4);
+  const blocks = [
+    {
+      title: "Discipline",
+      check: "OK",
+      text: lastNotes[0] ? String(lastNotes[0].trailNote || lastNotes[0].merits || "") : "Hold the stop exactly where the plan says."
+    },
+    {
+      title: "Process",
+      check: "OK",
+      text: lastNotes[1] ? String(lastNotes[1].trailNote || lastNotes[1].merits || "") : "Stay with the sequence, not the noise."
+    },
+    {
+      title: "Patience",
+      check: "O",
+      text: lastNotes[2] ? String(lastNotes[2].trailNote || lastNotes[2].merits || "") : "Wait for clean continuation and avoid forcing entries."
+    },
+    {
+      title: "Execution",
+      check: "OK",
+      text: lastNotes[3] ? String(lastNotes[3].trailNote || lastNotes[3].merits || "") : "Size the trade the way the plan allows."
+    }
+  ];
+  const bestTicker = topWin ? `${topWin.symbol || "TICKER"} - ${topWin._openPnl >= 0 ? "+" : "-"}${fi(topWin._openPnl || 0)} open` : "No winner yet";
+  const bestCopy = topWin ? (topWin.trailNote || topWin.merits || "Trade the strongest name, then protect it.") : "Wait for the best setup to line up.";
+  const affirmation = (settings.checklist_groups && settings.checklist_groups[1] && settings.checklist_groups[1].items && settings.checklist_groups[1].items[0]) || "Trust the prep and let the process do the work.";
+  return { blocks, bestTicker, bestCopy, affirmation };
+}
+
+function briefingRowHtml(position, mode, index) {
+  const symbol = String(position.symbol || "SYMBOL");
+  const status = briefingStatusChip(position._status);
+  const accent = briefingRowAccent(position);
+  const qty = mode === "execute" ? (position.actualQty != null && Number(position.actualQty) > 0 ? position.actualQty : position._qty || position._predQty || position.actualQty || 0) : (position.actualQty != null ? position.actualQty : position._qty || 0);
+  const sl = Number(position.planSL != null ? position.planSL : (position.daySL != null ? position.daySL : position._currentSL || 0));
+  const buy = Number(position.planEntry != null ? position.planEntry : (position.actualEntry != null ? position.actualEntry : position.cmp || 0));
+  const cmp = Number(position.cmp != null ? position.cmp : buy);
+  const pdl = Number(position.planSL != null ? position.planSL : sl) * 0.995;
+  const risk = Number(position.riskAmount != null ? position.riskAmount : position._planRisk != null ? position._planRisk : 0);
+  const change = buy ? ((cmp - buy) / buy) * 100 : null;
+  const baseTrack = mode === "execute"
+    ? briefingTrackHtml(
+      [
+        { value: pdl, cls: "sl" },
+        { value: sl, cls: "sl" },
+        { value: cmp, cls: "cmp" },
+        { value: buy, cls: "buy" }
+      ],
+      [pricePlain(pdl), pricePlain(sl), pricePlain(cmp), pricePlain(buy)],
+      0,
+      3,
+      "exec"
+    )
+    : briefingTrackHtml(
+      [
+        { value: sl, cls: "sl" },
+        { value: buy, cls: "buy" },
+        { value: cmp, cls: "cmp" }
+      ],
+      [pricePlain(sl), pricePlain(buy), pricePlain(cmp)],
+      0,
+      2,
+      "prot"
+    );
+  const leftSub = mode === "execute"
+    ? `${money(risk)} risk - ${pricePlain(sl)} SL`
+    : `${pricePlain(sl)} SL`;
+  const rightHtml = mode === "execute"
+    ? `<div class="briefing-exec-cols"><div class="briefing-exec-col"><div class="briefing-exec-k">QTY</div><div class="briefing-exec-v qty">${qtyText(qty)}</div></div><div class="briefing-exec-col"><div class="briefing-exec-k">BUY</div><div class="briefing-exec-v buy">${pricePlain(buy)}</div></div><div class="briefing-exec-col"><div class="briefing-exec-k">SL</div><div class="briefing-exec-v sl">${pricePlain(sl)}</div></div><div class="briefing-exec-col"><div class="briefing-exec-k">RISK</div><div class="briefing-exec-v risk">${money(risk)}</div></div></div>`
+    : `<div class="briefing-protect-right"><div class="briefing-protect-price">${pricePlain(cmp)}</div><div class="briefing-protect-change ${change == null || change >= 0 ? "pos" : "neg"}">${change == null ? "-" : pct(change)}</div></div><div class="briefing-exec-col"><div class="briefing-exec-k">QTY</div><div class="briefing-exec-v qty">${qtyText(qty)}</div></div><div class="briefing-exec-col"><div class="briefing-exec-k">SL</div><div class="briefing-exec-v sl">${pricePlain(sl)}</div></div>`;
+  return `
+    <div class="briefing-row ${mode === "execute" ? "exec" : "protect"}">
+      <div class="briefing-left">
+        <span class="briefing-check ${index % 3 === 0 ? "on" : ""}" style="border-color:${accent}"></span>
+        <span class="briefing-accent" style="background:${accent}"></span>
+        <div class="briefing-symbol-wrap">
+          <div class="briefing-symbol">${escHtml(symbol)}${mode === "execute" ? "" : ` <span class="briefing-pill ${status.cls}">${status.label}</span>`}</div>
+          <div class="briefing-sub">${escHtml(leftSub)}</div>
+        </div>
+      </div>
+      <div class="briefing-mid">${baseTrack}</div>
+      ${rightHtml}
+    </div>
+  `;
+}
+
+async function loadBriefingSnapshot(date) {
+  const targetDate = date || planDate || latestDashboardDate || todayStr();
+  briefingSnapshot = null;
+  if (!storageOnline) await loadStorageInfo();
+  if (!storageOnline) return;
+  try {
+    const payload = await api("/day-view?date=" + encodeURIComponent(targetDate));
+    briefingSnapshot = {
+      date: payload.date || targetDate,
+      positions: Array.isArray(payload.positions) ? payload.positions.map(hydratePos) : [],
+      carriedRiskTotal: Number(payload.carried_risk_total || 0),
+      exposure: Number(payload.exposure || 0),
+      exposurePct: payload.exposure_pct != null ? Number(payload.exposure_pct) : null,
+      openPnl: Number(payload.open_pnl || 0),
+      realizedPnl: Number(payload.realized_pnl || 0),
+      openPositionsCount: Number(payload.open_positions_count || 0),
+      planningCount: Number(payload.planning_count || 0),
+      exitedTodayCount: Number(payload.exited_today_count || 0),
+      closedCount: Number(payload.closed_count || 0),
+      winCount: Number(payload.win_count || 0),
+      lossCount: Number(payload.loss_count || 0)
+    };
+  } catch (_err) {
+    briefingSnapshot = null;
+  }
+}
+
 function renderDashboardView() {
   syncChrome();
   const main = e("main");
   if (!main) return;
+  {
+  const selectedMonth = dashboardMonth || monthKeyFromDate(latestDashboardDate || todayStr());
+  const monthItems = dashboardMonthItems(selectedMonth);
+  const summary = dashboardSummaryForMonth(monthItems);
+  const year = String(selectedMonth).slice(0, 4);
+  const monthName = monthLabelFromKey(selectedMonth);
+  const monthMap = new Map(monthItems.map(item => [String(item.date || ""), item]));
+  const years = dashboardYearsList();
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const monthsNav = months.map((label, idx) => `
+    <button class="db-nav-btn ${Number(String(selectedMonth).slice(5, 7)) === idx + 1 ? "on" : ""}" onclick="setDashboardMonthIndex(${idx})">${label}</button>
+  `).join("");
+  const yearsNav = years.map(y => `
+    <button class="db-nav-btn ${year === String(y) ? "on" : ""}" onclick="setDashboardYear('${y}')">${y}</button>
+  `).join("");
+  const monthCells = dashboardCalendarCells(selectedMonth, monthMap);
+  const latestGlobal = dashboardItems.length ? dashboardItems[dashboardItems.length - 1] : null;
+  const accountExposure = latestGlobal ? Number(latestGlobal.exposure || 0) : 0;
+  const openRisk = briefingSnapshot ? Number(briefingSnapshot.carriedRiskTotal || 0) : (latestGlobal ? Number(latestGlobal.carried_risk_total || 0) : 0);
+  const exposurePct = briefingSnapshot && briefingSnapshot.exposurePct != null ? Number(briefingSnapshot.exposurePct) : (latestGlobal && latestGlobal.exposure_pct != null ? Number(latestGlobal.exposure_pct) : (Number(settings.available_capital || 0) > 0 ? (accountExposure / Number(settings.available_capital || 0)) * 100 : null));
+  const progressWidth = exposurePct != null ? Math.max(0, Math.min(100, exposurePct)) : 0;
+  const monthExposureClass = summary.latestExposure > 0 ? "pos" : "neu";
+  const winRate = summary.closed > 0 ? (summary.wins / summary.closed) * 100.0 : null;
+  const avgRiskPct = Number(settings.per_position_risk || 0) > 0 ? (summary.avgRiskTrade / Number(settings.per_position_risk || 1)) * 100.0 : null;
+  const sidebarLegend = `
+    <div class="dsb-row"><span>Trade Days</span><strong>${summary.tradeDays}</strong></div>
+    <div class="dsb-row"><span>Win Days</span><strong>${summary.winDays}</strong></div>
+    <div class="dsb-row"><span>Loss Days</span><strong>${summary.lossDays}</strong></div>
+    <div class="dsb-row"><span>Total Trades</span><strong>${summary.totalTrades}</strong></div>
+  `;
+  const sidebarYears = yearsNav || "";
+  const briefing = briefingSnapshot || {
+    date: latestDashboardDate || todayStr(),
+    positions: [],
+    carriedRiskTotal: 0,
+    exposure: 0,
+    exposurePct: null,
+    openPnl: 0,
+    realizedPnl: 0,
+    openPositionsCount: 0,
+    planningCount: 0,
+    exitedTodayCount: 0,
+    closedCount: 0,
+    winCount: 0,
+    lossCount: 0
+  };
+  const briefingDateLabel = fmtDateLabel(briefing.date || latestDashboardDate || todayStr());
+  const last5 = dashboardItems.slice(-5).map(item => {
+    const net = Number(item.realized_pnl || 0) + Number(item.open_pnl || 0);
+    return { label: net >= 0 ? "W" : "L", cls: net >= 0 ? "on" : "off" };
+  });
+  const themes = briefingThemeList(briefing.positions).map(item => `
+    <span class="briefing-chip ${item.count > 1 ? "on" : ""}">${escHtml(item.label)} <b>${item.count}</b></span>
+  `).join("");
+  const sortedPositions = briefing.positions.slice().sort((a, b) => {
+    const aw = Math.abs(Number(a._realPnl || 0)) + Math.abs(Number(a._openPnl || 0)) + Number(a.conviction || 0) * 10;
+    const bw = Math.abs(Number(b._realPnl || 0)) + Math.abs(Number(b._openPnl || 0)) + Number(b.conviction || 0) * 10;
+    return bw - aw;
+  });
+  const protectRows = sortedPositions.slice(0, 7).map((pos, idx) => briefingRowHtml(pos, "protect", idx)).join("") || `<div class="briefing-empty">No protect rows for this date.</div>`;
+  const executeRows = sortedPositions.slice(0, 7).map((pos, idx) => briefingRowHtml(pos, "execute", idx)).join("") || `<div class="briefing-empty">No execute rows for this date.</div>`;
+  const planLead = briefingLeadCopy(briefing);
+  const goalCards = briefingGoalCards(briefing);
+  const recentTrend = last5.map(item => `<span class="briefing-trend ${item.cls}">${item.label}</span>`).join("");
+  main.innerHTML = `
+    <section class="dashboard-shell briefing-shell">
+      <aside class="dashboard-sidebar">
+        <div class="dsb-card">
+          <div class="dsb-title">Account</div>
+          <div class="dsb-row"><div><div class="dsb-k">Capital</div><div class="dsb-v">${money(settings.available_capital)}</div></div></div>
+          <div class="dsb-row"><div><div class="dsb-k">Daily Risk</div><div class="dsb-v">${money(settings.daily_risk)}</div></div></div>
+          <div class="dsb-row"><div><div class="dsb-k">Per-Position</div><div class="dsb-v">${money(settings.per_position_risk)}</div></div></div>
+          <div class="dsb-row"><div><div class="dsb-k">Today Exposure</div><div class="dsb-v">${money(accountExposure)}</div></div></div>
+          <div class="dsb-muted">Exposure vs capital</div>
+          <div class="prog-track" style="margin-top:8px"><div class="prog-fill" style="width:${progressWidth}%"></div></div>
+          <div class="dsb-row"><span class="dsb-k">% Exposure</span><strong>${exposurePct != null ? pct(exposurePct) : "-"}</strong></div>
+        </div>
+        <div class="dsb-card">
+          <div class="dsb-title">Navigate</div>
+          <div class="db-nav-grid">${sidebarYears}</div>
+          <div class="db-nav-grid" style="margin-top:8px">${monthsNav}</div>
+        </div>
+        <div class="dsb-card">
+          <div class="dsb-title">${monthName} Legend</div>
+          ${sidebarLegend}
+        </div>
+      </aside>
+      <section class="dashboard-main">
+        <div class="briefing-view">
+          <section class="briefing-hero">
+            <div class="briefing-hero-copy">
+              <div class="briefing-kicker">TradePlan | Morning Briefing</div>
+              <h2>${briefingDateLabel}</h2>
+              <p>${escHtml(planLead)}</p>
+              <div class="briefing-micro">Last 5 ${recentTrend}</div>
+              <div class="briefing-stance-row">
+                <span class="briefing-stance">BULLISH</span>
+                <span class="briefing-stance on">NEUTRAL - TWO-WAY</span>
+                <span class="briefing-stance">BEARISH</span>
+                <span class="briefing-stance state">Standard</span>
+              </div>
+            </div>
+            <div class="briefing-hero-stats">
+              <div class="briefing-stat"><div class="briefing-stat-k">Open Risk</div><div class="briefing-stat-v neg">${money(openRisk)}</div></div>
+              <div class="briefing-stat"><div class="briefing-stat-k">Capital</div><div class="briefing-stat-v">${money(settings.available_capital)}</div></div>
+              <div class="briefing-stat"><div class="briefing-stat-k">Free</div><div class="briefing-stat-v pos">${money((Number(settings.available_capital || 0) - Number(briefing.exposure || 0)))}</div></div>
+              <div class="briefing-stat"><div class="briefing-stat-k">Open / Planned</div><div class="briefing-stat-v">${briefing.openPositionsCount} / ${briefing.planningCount}</div></div>
+            </div>
+          </section>
+
+          <section class="briefing-topgrid">
+            <div class="briefing-panel briefing-plan">
+              <div class="briefing-panel-head">
+                <div>
+                  <div class="briefing-panel-k">Plan</div>
+                  <div class="briefing-panel-sub">Game plan, active themes, and what stands out today</div>
+                </div>
+                <div class="briefing-panel-badge">${briefingDateLabel}</div>
+              </div>
+              <div class="briefing-note">${escHtml(planLead)}</div>
+              <div class="briefing-chip-row">${themes || `<span class="briefing-chip">No theme data yet</span>`}</div>
+              <div class="briefing-plan-grid">
+                <div class="briefing-plan-box"><div class="briefing-plan-k">Open positions</div><div class="briefing-plan-v">${briefing.openPositionsCount}</div></div>
+                <div class="briefing-plan-box"><div class="briefing-plan-k">Planning</div><div class="briefing-plan-v">${briefing.planningCount}</div></div>
+                <div class="briefing-plan-box"><div class="briefing-plan-k">Exposure</div><div class="briefing-plan-v">${pct(briefing.exposurePct != null ? briefing.exposurePct : exposurePct)}</div></div>
+              </div>
+            </div>
+            <div class="briefing-panel briefing-watch">
+              <div class="briefing-panel-head">
+                <div>
+                  <div class="briefing-panel-k">Stocks standing out</div>
+                  <div class="briefing-panel-sub">The names with the cleanest risk / reward today</div>
+                </div>
+                <div class="briefing-panel-badge">tap to edit</div>
+              </div>
+              <div class="briefing-watchlist">
+                ${sortedPositions.slice(0, 4).map((pos, idx) => {
+                  const net = Number(pos._realPnl || 0) + Number(pos._openPnl || 0);
+                  return `
+                    <div class="briefing-watch-item ${idx === 0 ? "on" : ""}">
+                      <div class="briefing-watch-name">${escHtml(String(pos.symbol || "TICKER"))}</div>
+                      <div class="briefing-watch-copy">${escHtml(String(pos.merits || pos.trailNote || "No note added yet."))}</div>
+                      <div class="briefing-watch-foot">
+                        <span class="briefing-watch-net ${net >= 0 ? "pos" : "neg"}">${net >= 0 ? "+" : "-"}${fi(net)}</span>
+                        <span class="briefing-watch-cmp">${pricePlain(pos.cmp)}</span>
+                      </div>
+                    </div>
+                  `;
+                }).join("")}
+              </div>
+            </div>
+          </section>
+
+          <section class="briefing-midgrid">
+            <div class="briefing-panel briefing-protect-panel">
+              <div class="briefing-panel-head compact">
+                <div class="briefing-sec-left"><span class="briefing-sec-num">2</span><span class="briefing-panel-k">Protect</span></div>
+                <div class="briefing-head-cols protect"><span>QTY</span><span>SL</span></div>
+              </div>
+              <div class="briefing-rows">${protectRows}</div>
+            </div>
+            <div class="briefing-panel briefing-exec-panel">
+              <div class="briefing-panel-head compact">
+                <div class="briefing-sec-left"><span class="briefing-sec-num">3</span><span class="briefing-panel-k">Execute</span></div>
+                <div class="briefing-head-cols exec"><span>QTY</span><span>BUY</span><span>SL</span><span>RISK</span></div>
+              </div>
+              <div class="briefing-track-hdr"><span class="pdl">PDL</span><span class="sl">SL</span><span class="cmp">CMP</span><span class="buy">BUY</span></div>
+              <div class="briefing-rows">${executeRows}</div>
+            </div>
+          </section>
+
+          <section class="briefing-bottom">
+            <div class="briefing-bottom-grid">
+              ${goalCards.blocks.map(card => `
+                <div class="briefing-win-card ${card.title.toLowerCase()}">
+                  <div class="briefing-win-top"><span class="briefing-win-badge">${escHtml(card.title)}</span><span class="briefing-win-check">${card.check}</span></div>
+                  <div class="briefing-win-text">${escHtml(card.text)}</div>
+                </div>
+              `).join("")}
+            </div>
+            <div class="briefing-rightcol">
+              <div class="briefing-best">
+                <div class="briefing-best-head"><span class="briefing-best-star">*</span><span class="briefing-best-lbl">Best moment</span><span class="briefing-best-pill">${escHtml(goalCards.bestTicker)}</span></div>
+                <div class="briefing-best-text">${escHtml(goalCards.bestCopy)}</div>
+              </div>
+              <div class="briefing-affirm">
+                <div class="briefing-affirm-head">Today's affirmation <span class="briefing-affirm-mark">-> regenerated</span></div>
+                <div class="briefing-affirm-text">${escHtml(goalCards.affirmation)}</div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+    </section>
+  `;
+  return;
+  }
   const selectedMonth = dashboardMonth || monthKeyFromDate(latestDashboardDate || todayStr());
   const monthItems = dashboardMonthItems(selectedMonth);
   const summary = dashboardSummaryForMonth(monthItems);
@@ -3672,14 +4077,29 @@ function buildCard(p, num) {
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
-  planDate = todayStr();
+  planDate = normalizeIsoDate(startupDate, todayStr()) || todayStr();
   if (e("plan-date")) e("plan-date").value = planDate;
   ensureSimulationNav();
   ensureStreaksNav();
   ensurePortfolioNav();
   await loadStorageInfo();
-  await loadDashboard();
-  renderApp();
+  const view = String(startupView || "").toLowerCase();
+  if (view === "day") {
+    await openDay(planDate);
+  } else if (view === "exposure") {
+    await goExposure();
+  } else if (view === "simulation") {
+    await goSimulation();
+  } else if (view === "streaks") {
+    await goStreaks();
+  } else if (view === "portfolio") {
+    await goPortfolio();
+  } else if (view === "settings") {
+    await goSettings();
+  } else {
+    await loadDashboard();
+    renderApp();
+  }
 });
 
 

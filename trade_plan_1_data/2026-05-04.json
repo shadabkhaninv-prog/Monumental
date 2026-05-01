@@ -1,6 +1,6 @@
 {
   "date": "2026-05-04",
-  "saved_at": "2026-05-01T12:45:24",
+  "saved_at": "2026-05-01T22:32:32",
   "positions": [
     {
       "id": "p17770254578501mo0",
@@ -436,20 +436,20 @@
       "merits": "DATA CENTRE THEME . HAD A STRONG CLOSE IN WEAK MARKET",
       "conviction": 3,
       "cmp": 1295.35,
-      "planEntry": 1315.1,
-      "planSL": 1270.9,
+      "planEntry": null,
+      "planSL": null,
       "tacticalEntry": 1294.41,
-      "tacticalSL": 1270.9,
+      "tacticalSL": 1290.9,
       "tacticalRiskPct": 30,
-      "coreQty": 42,
-      "coreEntry": 1316,
-      "coreSL": 0.127,
+      "coreQty": null,
+      "coreEntry": null,
+      "coreSL": null,
       "riskAmount": 3500,
       "actualEntry": null,
       "daySL": null,
       "actualQty": null,
       "tacticalQty": 69,
-      "entryDate": "2026-05-01",
+      "entryDate": "2026-05-04",
       "posHigh": null,
       "trailOverride": null,
       "trailNote": "",
@@ -462,9 +462,9 @@
           "type": "fixed",
           "ap": null,
           "sq": null,
-          "dt": "2026-05-01",
+          "dt": "",
           "done": false,
-          "_sug": 1341.66,
+          "_sug": 1333.24,
           "_pnl": null
         },
         {
@@ -474,7 +474,7 @@
           "sq": null,
           "dt": "",
           "done": false,
-          "_sug": 1393.76,
+          "_sug": 1385.02,
           "_pnl": null
         },
         {
@@ -484,7 +484,7 @@
           "sq": null,
           "dt": "",
           "done": false,
-          "_sug": 1497.97,
+          "_sug": 1488.57,
           "_pnl": null
         },
         {
@@ -494,7 +494,7 @@
           "sq": null,
           "dt": "",
           "done": false,
-          "_sug": 1628.22,
+          "_sug": 1618.01,
           "_pnl": null
         }
       ],
@@ -519,36 +519,36 @@
         "note": ""
       },
       "collapsed": false,
-      "_coreRps": 44.19999999999982,
-      "_tacticalRps": 23.50999999999999,
-      "_blendRps": 31.34,
-      "_blendPct": 2.41,
-      "_rps": 31.34,
-      "_suggestedTacticalQty": 13,
-      "_qty": 111,
+      "_coreRps": null,
+      "_tacticalRps": 3.509999999999991,
+      "_blendRps": 3.51,
+      "_blendPct": 0.27,
+      "_rps": 3.51,
+      "_suggestedTacticalQty": null,
+      "_qty": 69,
       "_tacticalQty": 69,
-      "_predQty": 42,
-      "_predRisk": 1856.4,
-      "_tacticalRisk": 1622.19,
-      "_planRisk": 3478.59,
-      "_avgEntry": 1302.24,
-      "_avgQty": 111,
-      "_execAvgEntry": 1302.58,
-      "_execAvgQty": 111,
-      "_avgTacticalEntry": 1302.58,
-      "_avgPlanEntry": 1302.24,
-      "_suggestedQty": 33,
-      "_rem": 111,
+      "_predQty": 0,
+      "_predRisk": 0,
+      "_tacticalRisk": 242.19,
+      "_planRisk": 242.19,
+      "_avgEntry": 1294.41,
+      "_avgQty": 69,
+      "_execAvgEntry": 1294.41,
+      "_execAvgQty": 69,
+      "_avgTacticalEntry": 1294.41,
+      "_avgPlanEntry": 1294.41,
+      "_suggestedQty": 21,
+      "_rem": 69,
       "_realPnl": 0,
-      "_openPnl": -803,
-      "_currentSL": 1270.9,
-      "_days": 0,
+      "_openPnl": 65,
+      "_currentSL": null,
+      "_days": -3,
       "_beSug": false,
       "_status": "active",
       "_actualRisk": 0,
-      "_avgSL": 1270.9,
+      "_avgSL": 1290.9,
       "_actualRps": null,
-      "_availableRisk": 1877.8100000000006
+      "_availableRisk": 3257.8100000000004
     },
     {
       "id": "p1777551064332shma",
@@ -670,5 +670,67 @@
       "_beSug": false,
       "_status": "active"
     }
-  ]
+  ],
+  "path": "C:\\Users\\shada\\Monumental\\trade_plan_1_data\\2026-05-04.json",
+  "exists": true,
+  "briefing": {
+    "gamePlan": "open after long weekend . wait for the first 5 mins .watch the tone . atherenerg most likely gaps up  if it does sell and get out overnight qty .krn will wait after 5 min orb add small , if breaks out later in the day it will better.",
+    "aggression": 2,
+    "stance": "Bullish",
+    "timing": "09:30",
+    "watchlist": [
+      {
+        "symbol": "CGPOWER",
+        "why": "TML . but bit of a drag ,tracking BSE"
+      },
+      {
+        "symbol": "KRN",
+        "why": "DATA CENTRE THEME . HAD A STRONG CLOSE IN WEAK MARKET"
+      },
+      {
+        "symbol": "ATHERENERG",
+        "why": "ev play . awesome expecting a big gap up"
+      },
+      {
+        "symbol": "",
+        "why": ""
+      },
+      {
+        "symbol": "",
+        "why": ""
+      }
+    ],
+    "closing": {
+      "cards": [
+        {
+          "title": "DAY STARTS AT 9:16",
+          "desc": "PUT ALL STOPS AFTER 9:16"
+        },
+        {
+          "title": "Process with MCX",
+          "desc": "Trail SL updated to Rs 2829"
+        },
+        {
+          "title": "Patience with CGPOWER",
+          "desc": "HOTTEST SECTOR .POWER SECTOR . BULL FLAG .TIGHT TWO DAYS"
+        },
+        {
+          "title": "Execution with KRN",
+          "desc": "DATA CENTRE THEME . HAD A STRONG CLOSE IN WEAK MARKET"
+        }
+      ],
+      "bestMoment": "Made a new high if it breaks day's low , out of here."
+    },
+    "executeChecks": {
+      "P1777549077930PIU7": false,
+      "P1777551064332SHMA": false
+    },
+    "protectChecks": {
+      "P17770254578501MO0": false,
+      "P1777275356085EBJU": false,
+      "P1777372385419PQW8": false,
+      "P1777549077930PIU7": false,
+      "P1777551064332SHMA": false
+    }
+  }
 }
