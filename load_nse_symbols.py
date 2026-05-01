@@ -9,6 +9,7 @@ Usage:
 
 import argparse
 import csv
+import os
 from pathlib import Path
 import mysql.connector
 
@@ -18,13 +19,24 @@ DEFAULT_CSV = Path(__file__).parent / "EQUITY_L (1).csv"
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--csv", default=str(DEFAULT_CSV), help="Path to EQUITY_L.csv")
+    ap.add_argument("--host", default=DB["host"], help="MySQL host")
+    ap.add_argument("--port", default=DB["port"], type=int, help="MySQL port")
+    ap.add_argument("--user", default=DB["user"], help="MySQL user")
+    ap.add_argument("--db", default=DB["database"], help="MySQL database")
+    ap.add_argument("--password", default=os.environ.get("MYSQL_PASSWORD", DB["password"]), help="MySQL password")
     args = ap.parse_args()
 
     csv_path = Path(args.csv)
     if not csv_path.exists():
         raise FileNotFoundError(f"CSV not found: {csv_path}")
 
-    conn = mysql.connector.connect(**DB)
+    conn = mysql.connector.connect(
+        host=args.host,
+        port=args.port,
+        user=args.user,
+        password=args.password,
+        database=args.db,
+    )
     cur  = conn.cursor()
 
     cur.execute("DROP TABLE IF EXISTS nse_symbols")

@@ -12,9 +12,6 @@
                           "planSL":  718.9,
                           "riskAmount":  3000,
                           "actualEntry":  740.2,
-                          "overnightEntry":  722,
-                          "overnightQty":  30,
-                          "overnightSL":  709.9,
                           "daySL":  null,
                           "actualQty":  155,
                           "entryDate":  "2026-04-23",
@@ -130,8 +127,9 @@
                           "_status":  "partial",
                           "_blendPct":  3.11,
                           "_avgPlanEntry":  742,
-                          "tacticalEntry":  null,
-                          "tacticalSL":  null
+                          "tacticalQty":  30,
+                          "tacticalEntry":  722,
+                          "tacticalSL":  709.9
                       },
                       {
                           "id":  "p17769441158332q6h",
@@ -143,9 +141,6 @@
                           "planSL":  1419.9,
                           "riskAmount":  3000,
                           "actualEntry":  null,
-                          "overnightEntry":  1459.57,
-                          "overnightQty":  15,
-                          "overnightSL":  null,
                           "daySL":  null,
                           "actualQty":  null,
                           "entryDate":  "2026-04-23",
@@ -237,8 +232,9 @@
                           "_status":  "closed",
                           "_blendPct":  4.77,
                           "_avgPlanEntry":  1491,
-                          "tacticalEntry":  null,
-                          "tacticalSL":  null
+                          "tacticalSL":  null,
+                          "tacticalQty":  15,
+                          "tacticalEntry":  1459.57
                       },
                       {
                           "id":  "p17768445300488kdi",
@@ -250,9 +246,6 @@
                           "planSL":  1182.9,
                           "riskAmount":  4000,
                           "actualEntry":  1208.2,
-                          "overnightEntry":  1205.2,
-                          "overnightQty":  20,
-                          "overnightSL":  null,
                           "daySL":  null,
                           "actualQty":  50,
                           "entryDate":  "2026-04-23",
@@ -387,8 +380,9 @@
                           "_status":  "closed",
                           "_blendPct":  3.52,
                           "_avgPlanEntry":  1226.1,
-                          "tacticalEntry":  null,
-                          "tacticalSL":  null
+                          "tacticalSL":  null,
+                          "tacticalQty":  20,
+                          "tacticalEntry":  1205.2
                       },
                       {
                           "id":  "p17769527464429sro",
@@ -400,9 +394,6 @@
                           "planSL":  383.9,
                           "riskAmount":  3000,
                           "actualEntry":  null,
-                          "overnightEntry":  null,
-                          "overnightQty":  null,
-                          "overnightSL":  null,
                           "daySL":  null,
                           "actualQty":  null,
                           "entryDate":  "",

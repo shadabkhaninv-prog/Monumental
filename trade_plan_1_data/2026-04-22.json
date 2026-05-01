@@ -12,9 +12,6 @@
                           "planSL":  575.9,
                           "riskAmount":  3000,
                           "actualEntry":  589.76,
-                          "overnightEntry":  576.3,
-                          "overnightQty":  15,
-                          "overnightSL":  569,
                           "actualQty":  182,
                           "entryDate":  "2026-04-21",
                           "posHigh":  null,
@@ -121,7 +118,10 @@
                           "_suggestedQty":  59,
                           "_coreRps":  14.200000000000045,
                           "_blendRps":  11.800000000000045,
-                          "_planRisk":  3467.4
+                          "_planRisk":  3467.4,
+                          "tacticalQty":  15,
+                          "tacticalEntry":  576.3,
+                          "tacticalSL":  569
                       },
                       {
                           "id":  "p1776776111073hm92",
@@ -133,9 +133,6 @@
                           "planSL":  3494.9,
                           "riskAmount":  3000,
                           "actualEntry":  3521,
-                          "overnightEntry":  3521,
-                          "overnightQty":  12,
-                          "overnightSL":  null,
                           "actualQty":  5,
                           "entryDate":  "2026-04-22",
                           "posHigh":  null,
@@ -256,7 +253,9 @@
                           "_currentSL":  3494.9,
                           "_days":  4,
                           "_beSug":  true,
-                          "_status":  "active"
+                          "_status":  "active",
+                          "tacticalQty":  12,
+                          "tacticalEntry":  3521
                       }
                   ]
 }

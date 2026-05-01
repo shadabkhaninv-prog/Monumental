@@ -1,5 +1,5 @@
 """
-NSE BHAV Stock Viewer — standalone Flask app
+NSE BHAV Stock Viewer Ã¢â‚¬â€ standalone Flask app
 Queries: bhav2024, bhav2025, bhav2026, mktdatecalendar  in localhost/bhav
 
 Run:  python app.py
@@ -9,9 +9,12 @@ Open: http://localhost:5000
 from __future__ import annotations
 import json
 import math
+import os
 import re
 import subprocess
+import threading
 import time
+import uuid
 import sys
 from html import escape as html_escape
 from functools import lru_cache
@@ -22,7 +25,7 @@ from flask import Flask, request, jsonify, render_template_string, send_from_dir
 
 import mysql.connector
 
-# ── DB config (mirrors neo_liquid_momentum_scanner.py) ─────────────────────
+# Ã¢â€â‚¬Ã¢â€â‚¬ DB config (mirrors neo_liquid_momentum_scanner.py) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 DB_CONFIG = dict(host="localhost", port=3306, user="root",
                  password="root", database="bhav")
 
@@ -35,16 +38,18 @@ GMLIST_FILE = Path(__file__).resolve().parent / "gmlist" / "updated_gmlist.txt"
 KITE_TOKEN_FILE = Path(__file__).resolve().parent / "kite_token.txt"
 SQL_BATCH_DIR = Path(r"C:\Users\shada\workspace\sql")
 MAINTENANCE_DB = dict(host="localhost", port=3306, user="root", password="root", database="bhav")
+ADMIN_JOB_RUNS = {}
+ADMIN_JOB_RUNS_LOCK = threading.Lock()
 
 
-# ── helpers ──────────────────────────────────────────────────────────────────
+# Ã¢â€â‚¬Ã¢â€â‚¬ helpers Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 def get_conn():
     return mysql.connector.connect(**DB_CONFIG)
 
 
 def to_date(v):
-    """Coerce a value to datetime.date — handles both date objects and ISO strings."""
+    """Coerce a value to datetime.date Ã¢â‚¬â€ handles both date objects and ISO strings."""
     if v is None:
         return None
     if isinstance(v, datetime):
@@ -296,7 +301,7 @@ def convert_stock_rating_workbook_to_html(xlsx_path: Path, html_path: Path) -> P
     html_path.parent.mkdir(parents=True, exist_ok=True)
 
     sheet_names = wb.sheetnames
-    preferred = "🏦 Institutional Picks"
+    preferred = "Ã°Å¸ÂÂ¦ Institutional Picks"
     active_sheet = preferred if preferred in sheet_names else (sheet_names[0] if sheet_names else "")
 
     def iter_row_cells(ws):
@@ -357,7 +362,7 @@ def convert_stock_rating_workbook_to_html(xlsx_path: Path, html_path: Path) -> P
                   <div class="report-sheet-title">{html_escape(sheet_name)}</div>
                   <div class="report-sheet-subtitle">{html_escape(xlsx_path.name)}</div>
                 </div>
-                <div class="report-sheet-meta">{ws.max_row} rows · {ws.max_column} cols</div>
+                <div class="report-sheet-meta">{ws.max_row} rows Ã‚Â· {ws.max_column} cols</div>
               </div>
               <div class="report-table-wrap">
                 <table class="report-table">
@@ -486,7 +491,7 @@ def run_liquid_momentum_report_job(payload: dict) -> dict:
     as_of_date = _parse_iso_date_field(as_of_raw)
     reset_date = _parse_iso_date_field(reset_raw)
 
-    source = str(payload.get("source") or "kite").strip() or "kite"
+    source = str(payload.get("source") or "").strip()
     debug_symbol = str(payload.get("debug_symbol") or "").strip()
     run_mode = str(payload.get("mode") or "").strip().lower()
     use_full_mode = bool(payload.get("full_mode")) or run_mode == "full"
@@ -655,7 +660,7 @@ def get_admin_jobs_payload():
     return jobs
 
 
-def run_maintenance_job(job_key: str, payload: dict) -> dict:
+def build_maintenance_job_command(job_key: str, payload: dict) -> tuple[dict, Path, list[str]]:
     job = MAINTENANCE_JOBS.get(job_key)
     if not job:
         raise ValueError("Unknown maintenance job.")
@@ -664,7 +669,7 @@ def run_maintenance_job(job_key: str, payload: dict) -> dict:
     if not script.exists():
         raise FileNotFoundError(f"Script not found: {script}")
 
-    cmd = [sys.executable, str(script)]
+    cmd = [sys.executable, "-u", str(script)]
 
     if job_key == "bhav_sql_batch":
         run_date = str(payload.get("date") or "").strip()
@@ -715,6 +720,12 @@ def run_maintenance_job(job_key: str, payload: dict) -> dict:
         if min_year:
             cmd.extend(["--min-year", min_year])
 
+    return job, script, cmd
+
+
+def run_maintenance_job(job_key: str, payload: dict) -> dict:
+    job, script, cmd = build_maintenance_job_command(job_key, payload)
+
     proc = subprocess.run(
         cmd,
         cwd=str(BASE_DIR),
@@ -722,6 +733,7 @@ def run_maintenance_job(job_key: str, payload: dict) -> dict:
         text=True,
         encoding="utf-8",
         errors="replace",
+        env={**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"},
     )
     return {
         "ok": proc.returncode == 0,
@@ -730,6 +742,98 @@ def run_maintenance_job(job_key: str, payload: dict) -> dict:
         "stdout": proc.stdout[-20000:],
         "stderr": proc.stderr[-20000:],
     }
+
+
+def _admin_job_worker(run_id: str, cmd: list[str]) -> None:
+    output = ""
+    try:
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+        env["PYTHONIOENCODING"] = "utf-8"
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(BASE_DIR),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            env=env,
+        )
+
+        if proc.stdout is not None:
+            for chunk in iter(proc.stdout.readline, ""):
+                if chunk == "" and proc.poll() is not None:
+                    break
+                output = (output + chunk)[-40000:]
+                with ADMIN_JOB_RUNS_LOCK:
+                    record = ADMIN_JOB_RUNS.get(run_id)
+                    if record is not None:
+                        record["stdout"] = output
+                        record["updated_at"] = safe(datetime.now())
+
+        returncode = proc.wait()
+        with ADMIN_JOB_RUNS_LOCK:
+            record = ADMIN_JOB_RUNS.get(run_id)
+            if record is not None:
+                record["returncode"] = returncode
+                record["ok"] = returncode == 0
+                record["status"] = "completed" if returncode == 0 else "failed"
+                record["finished_at"] = safe(datetime.now())
+                record["updated_at"] = safe(datetime.now())
+    except Exception as exc:
+        with ADMIN_JOB_RUNS_LOCK:
+            record = ADMIN_JOB_RUNS.get(run_id)
+            if record is not None:
+                record["status"] = "failed"
+                record["error"] = str(exc)
+                record["finished_at"] = safe(datetime.now())
+                record["updated_at"] = safe(datetime.now())
+
+
+def start_admin_job_run(job_key: str, payload: dict) -> dict:
+    job, _, cmd = build_maintenance_job_command(job_key, payload)
+    run_id = uuid.uuid4().hex
+    now = safe(datetime.now())
+    record = {
+        "run_id": run_id,
+        "job_key": job_key,
+        "label": job["label"],
+        "status": "running",
+        "ok": None,
+        "returncode": None,
+        "command": cmd,
+        "stdout": f"Started {job['label']}...\nCommand: {' '.join(cmd)}\n",
+        "stderr": "",
+        "error": None,
+        "started_at": now,
+        "updated_at": now,
+        "finished_at": None,
+    }
+    with ADMIN_JOB_RUNS_LOCK:
+        ADMIN_JOB_RUNS[run_id] = record
+
+    thread = threading.Thread(target=_admin_job_worker, args=(run_id, cmd), daemon=True)
+    thread.start()
+
+    return {
+        "ok": True,
+        "run_id": run_id,
+        "job_key": job_key,
+        "label": job["label"],
+        "status": "running",
+        "command": cmd,
+        "started_at": now,
+    }
+
+
+def get_admin_job_run(run_id: str) -> dict | None:
+    with ADMIN_JOB_RUNS_LOCK:
+        record = ADMIN_JOB_RUNS.get(run_id)
+        if record is None:
+            return None
+        return dict(record)
 
 
 def read_kite_token_file(token_file=KITE_TOKEN_FILE):
@@ -1869,7 +1973,7 @@ def build_sector_chart_card(sym, sector, chart_from, latest_date, min_avg_turnov
             conn.close()
 
 
-# ── routes ───────────────────────────────────────────────────────────────────
+# Ã¢â€â‚¬Ã¢â€â‚¬ routes Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 def render_page(page_mode: str = "stocks"):
     return render_template_string(
@@ -1912,6 +2016,11 @@ def admin_page():
 @app.route("/reports")
 def reports_page():
     return render_page("reports")
+
+
+@app.route("/earnings")
+def earnings_page():
+    return render_page("earnings")
 
 
 @app.route("/report-files/<path:filename>")
@@ -1968,11 +2077,18 @@ def api_admin_jobs():
 def api_admin_run_job(job_key: str):
     try:
         payload = request.get_json(force=True, silent=False) or {}
-        result = run_maintenance_job(job_key, payload)
-        status = 200 if result["ok"] else 500
-        return jsonify(result), status
+        result = start_admin_job_run(job_key, payload)
+        return jsonify(result), 202
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/admin/jobs/runs/<run_id>")
+def api_admin_job_run_status(run_id: str):
+    result = get_admin_job_run(run_id)
+    if result is None:
+        return jsonify({"found": False, "error": "Job run not found"}), 404
+    return jsonify({"found": True, **result})
 
 
 @app.route("/api/symbols")
@@ -2062,6 +2178,32 @@ def api_top_sectors():
         rows = [{"sector": r[0], "count": int(r[1])} for r in cursor.fetchall()]
         cursor.close(); conn.close()
         return jsonify(rows)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/earnings-announcement-dates")
+def api_earnings_announcement_dates():
+    """Return the compact earnings announcement table."""
+    try:
+        conn = get_conn()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT symbol, quarter_end, announcement_date, status
+            FROM earnings_announcement_dates
+            ORDER BY symbol
+        """)
+        rows = []
+        for row in cursor.fetchall():
+            rows.append({
+                "symbol": row.get("symbol"),
+                "quarter_end": safe(row.get("quarter_end")),
+                "announcement_date": safe(row.get("announcement_date")),
+                "status": row.get("status") or "",
+            })
+        cursor.close()
+        conn.close()
+        return jsonify({"rows": rows, "count": len(rows)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -2329,10 +2471,12 @@ def api_screener():
         d15_set = set(d15)
         d252_set = set(d252)
         agg = {}
+        rows_by_symbol = {}
         for r in rows:
             sym = (r.get("symbol") or "").strip().upper()
             if not sym or sym in excluded_symbols:
                 continue
+            rows_by_symbol.setdefault(sym, []).append(r)
             mdate = to_date(r.get("mktdate"))
             if mdate is None:
                 continue
@@ -2391,6 +2535,7 @@ def api_screener():
 
         low_volume = []
         low_volatility = []
+        inside_days = []
         for sym, a in agg.items():
             if a["turn_cnt"] == 0 or a["today_vol"] is None:
                 continue
@@ -2435,6 +2580,7 @@ def api_screener():
                 "high_15d_gap": safe(round(high_15d_gap, 2)) if high_15d_gap is not None else None,
                 "near_high_52w": near_high_52w,
                 "near_recent_high": near_recent_high,
+                "inside_day": False,
             }
 
             if (row_out["min_vol_21d"] is not None
@@ -2447,8 +2593,31 @@ def api_screener():
                     and float(row_out["volatility"]) <= float(row_out["min_vlt_21d"])):
                 low_volatility.append(row_out)
 
+            current_date = a["today_date"]
+            rows_for_symbol = rows_by_symbol.get(sym, [])
+            if current_date is not None and len(rows_for_symbol) >= 2:
+                rows_for_symbol = [rr for rr in rows_for_symbol if to_date(rr.get("mktdate")) is not None]
+                rows_for_symbol.sort(key=lambda rr: to_date(rr.get("mktdate")) or date.min)
+                current_row = None
+                previous_row = None
+                for idx in range(len(rows_for_symbol) - 1, -1, -1):
+                    if to_date(rows_for_symbol[idx].get("mktdate")) == current_date:
+                        current_row = rows_for_symbol[idx]
+                        previous_row = rows_for_symbol[idx - 1] if idx > 0 else None
+                        break
+                if current_row and previous_row:
+                    current_high = current_row.get("high")
+                    current_low = current_row.get("low")
+                    prev_high = previous_row.get("high")
+                    prev_low = previous_row.get("low")
+                    if (current_high is not None and current_low is not None and prev_high is not None and prev_low is not None
+                            and float(current_high) < float(prev_high) and float(current_low) > float(prev_low)):
+                        row_out["inside_day"] = True
+                        inside_days.append(row_out)
+
         low_volume.sort(key=lambda r: (float(r["volume"] or 0), r["symbol"]))
         low_volatility.sort(key=lambda r: (float(r["volatility"] or 0), r["symbol"]))
+        inside_days.sort(key=lambda r: (r["symbol"]))
 
         return jsonify({
             "as_of": safe(as_of),
@@ -2462,6 +2631,7 @@ def api_screener():
                             and max((hi for hi, _ in a["highs_252d"]), default=None) is not None),
             "low_volume": low_volume[:limit],
             "low_volatility": low_volatility[:limit],
+            "inside_days": inside_days[:limit],
         })
     except Exception as e:
         import traceback
@@ -2647,21 +2817,21 @@ def api_stock():
         conn = get_conn()
         cursor = conn.cursor(dictionary=True)
 
-        # ── 1. max(mktdate) → @yesterday (upper bound / "to" date) ──────────
+        # Ã¢â€â‚¬Ã¢â€â‚¬ 1. max(mktdate) Ã¢â€ â€™ @yesterday (upper bound / "to" date) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         cursor.execute("SELECT MAX(mktdate) AS d FROM mktdatecalendar")
         row = cursor.fetchone()
         db_max = to_date(row["d"])
         if db_max is None:
             return jsonify({"error": "mktdatecalendar is empty"}), 500
 
-        # ── resolve to_date / from_date from request params ──────────────────
+        # Ã¢â€â‚¬Ã¢â€â‚¬ resolve to_date / from_date from request params Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         to_date_param  = request.args.get("to_date",   "").strip()
         from_date_param = request.args.get("from_date", "").strip()
 
         yesterday = to_date(to_date_param)   if to_date_param   else db_max
         from_date = to_date(from_date_param) if from_date_param else (yesterday - timedelta(days=100))
 
-        # ── 2. 21-trading-day lookback start ─────────────────────────────────
+        # Ã¢â€â‚¬Ã¢â€â‚¬ 2. 21-trading-day lookback start Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         cursor.execute("""
             SELECT mktdate FROM (
                 SELECT DISTINCT mktdate FROM mktdatecalendar
@@ -2671,7 +2841,7 @@ def api_stock():
         row21 = cursor.fetchone()
         start_21d = to_date(row21["mktdate"]) if row21 else yesterday
 
-        # ── 3. 63-trading-day lookback start ─────────────────────────────────
+        # Ã¢â€â‚¬Ã¢â€â‚¬ 3. 63-trading-day lookback start Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         cursor.execute("""
             SELECT mktdate FROM (
                 SELECT DISTINCT mktdate FROM mktdatecalendar
@@ -2681,7 +2851,7 @@ def api_stock():
         row63 = cursor.fetchone()
         start_63d = to_date(row63["mktdate"]) if row63 else yesterday
 
-        # ── 4. Build archiverollingperiod equivalent ──────────────────────────
+        # Ã¢â€â‚¬Ã¢â€â‚¬ 4. Build archiverollingperiod equivalent Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         #   Only query the bhavYYYY tables that overlap with [from_date, yesterday].
         select_block = """
             SELECT
@@ -2784,7 +2954,7 @@ def api_stock():
 
         clean_rows.reverse()
 
-        # ── 5. minvol63: MIN(VOLATILITY) over 63-day window (excl. yesterday) ─
+        # Ã¢â€â‚¬Ã¢â€â‚¬ 5. minvol63: MIN(VOLATILITY) over 63-day window (excl. yesterday) Ã¢â€â‚¬
         #    minvol21: MIN(VOLATILITY) over 21-day window (excl. yesterday)
         #    (Exact same WHERE clauses as stockquery.sql)
         def minvol_from_archive(rows, start_date):
@@ -2798,7 +2968,7 @@ def api_stock():
         minvol_63d = minvol_from_archive(clean_rows, start_63d)
         minvol_21d = minvol_from_archive(clean_rows, start_21d)
 
-        # ── 6. lowvolume21/63  (note: names in original SQL are swapped vs dates)
+        # Ã¢â€â‚¬Ã¢â€â‚¬ 6. lowvolume21/63  (note: names in original SQL are swapped vs dates)
         #    lowvolume21 uses @63daystart, lowvolume63 uses @21daystart
         #    Preserved exactly as written in stockquery.sql
         def minvolume_from_archive(rows, start_date):
@@ -2816,7 +2986,7 @@ def api_stock():
 
         cursor.close(); conn.close()
 
-        # ── 7. Serialise + tag highlight rows ────────────────────────────────
+        # Ã¢â€â‚¬Ã¢â€â‚¬ 7. Serialise + tag highlight rows Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         highlighted_rows = []
         for r in clean_rows:
             d = dict(r)
@@ -2852,7 +3022,7 @@ def api_stock():
         return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
 
 
-# ── HTML page (single-file, no external dependencies except CDN) ─────────────
+# Ã¢â€â‚¬Ã¢â€â‚¬ HTML page (single-file, no external dependencies except CDN) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 HTML_PAGE = r"""
 <!DOCTYPE html>
@@ -2881,12 +3051,12 @@ HTML_PAGE = r"""
     --shadow:  0 4px 24px rgba(0,0,0,.45);
   }
 
-  /* full-height layout — header fixed, main scrolls */
+  /* full-height layout Ã¢â‚¬â€ header fixed, main scrolls */
   html, body { height: 100%; overflow: hidden; }
   body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif;
          font-size: 14px; display: flex; flex-direction: column; }
 
-  /* ── header ── */
+  /* Ã¢â€â‚¬Ã¢â€â‚¬ header Ã¢â€â‚¬Ã¢â€â‚¬ */
   header { background: var(--surface); border-bottom: 1px solid var(--border);
            padding: 14px 28px; display: flex; align-items: center; gap: 18px;
            flex-shrink: 0; z-index: 100; box-shadow: var(--shadow); }
@@ -2894,7 +3064,7 @@ HTML_PAGE = r"""
               letter-spacing: .5px; white-space: nowrap; }
   header h1 span { color: var(--accent2); }
 
-  /* ── search area ── */
+  /* Ã¢â€â‚¬Ã¢â€â‚¬ search area Ã¢â€â‚¬Ã¢â€â‚¬ */
   .search-wrap { flex: 1; max-width: 440px; position: relative; }
   .search-wrap input {
     width: 100%; padding: 9px 16px; border-radius: 8px;
@@ -2916,7 +3086,7 @@ HTML_PAGE = r"""
              letter-spacing: .5px; transition: background .15s; }
   .ac-item:hover, .ac-item.active { background: var(--border); color: var(--accent); }
 
-  /* ── date range inputs ── */
+  /* Ã¢â€â‚¬Ã¢â€â‚¬ date range inputs Ã¢â€â‚¬Ã¢â€â‚¬ */
   .date-range { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
   .date-range label { font-size: 11px; color: var(--muted); text-transform: uppercase;
                       letter-spacing: .6px; }
@@ -2929,7 +3099,7 @@ HTML_PAGE = r"""
   .date-range input[type="date"]:focus { border-color: var(--accent); }
   .date-sep { color: var(--muted); font-size: 12px; }
 
-  /* ── clear dates btn ── */
+  /* Ã¢â€â‚¬Ã¢â€â‚¬ clear dates btn Ã¢â€â‚¬Ã¢â€â‚¬ */
   #clearDatesBtn {
     padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border);
     background: transparent; color: var(--muted); font-size: 11px; cursor: pointer;
@@ -2937,7 +3107,7 @@ HTML_PAGE = r"""
   }
   #clearDatesBtn:hover { border-color: var(--accent); color: var(--accent); }
 
-  /* ── load btn ── */
+  /* Ã¢â€â‚¬Ã¢â€â‚¬ load btn Ã¢â€â‚¬Ã¢â€â‚¬ */
   #loadBtn {
     padding: 9px 22px; border-radius: 8px; border: none; cursor: pointer;
     background: var(--accent); color: #fff; font-weight: 700; font-size: 14px;
@@ -2946,7 +3116,7 @@ HTML_PAGE = r"""
   #loadBtn:hover { opacity: .85; }
   #loadBtn:disabled { opacity: .4; cursor: default; }
 
-  /* ── status bar ── */
+  /* Ã¢â€â‚¬Ã¢â€â‚¬ status bar Ã¢â€â‚¬Ã¢â€â‚¬ */
   #statusBar {
     font-size: 12px; color: var(--muted); padding: 6px 28px;
     background: var(--surface); border-bottom: 1px solid var(--border);
@@ -2955,10 +3125,10 @@ HTML_PAGE = r"""
   #statusBar.err { color: var(--red); }
   #statusBar.ok  { color: var(--accent2); }
 
-  /* ── main layout — this is the scroll container ── */
+  /* Ã¢â€â‚¬Ã¢â€â‚¬ main layout Ã¢â‚¬â€ this is the scroll container Ã¢â€â‚¬Ã¢â€â‚¬ */
   main { padding: 20px 28px; flex: 1; overflow-y: auto; }
 
-  /* ── summary cards ── */
+  /* Ã¢â€â‚¬Ã¢â€â‚¬ summary cards Ã¢â€â‚¬Ã¢â€â‚¬ */
   .cards { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 22px; }
   .card {
     background: var(--card); border: 1px solid var(--border); border-radius: 10px;
@@ -4090,14 +4260,14 @@ HTML_PAGE = r"""
     border-radius: 12px; background: rgba(0,0,0,.08);
   }
 
-  /* ── section title ── */
+  /* Ã¢â€â‚¬Ã¢â€â‚¬ section title Ã¢â€â‚¬Ã¢â€â‚¬ */
   .section-title {
     font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase;
     letter-spacing: 1px; margin-bottom: 10px; border-left: 3px solid var(--accent);
     padding-left: 10px;
   }
 
-  /* ── table container ── */
+  /* Ã¢â€â‚¬Ã¢â€â‚¬ table container Ã¢â€â‚¬Ã¢â€â‚¬ */
   .tbl-wrap {
     overflow-x: auto; border-radius: 10px; border: 1px solid var(--border);
     box-shadow: var(--shadow);
@@ -4134,7 +4304,7 @@ HTML_PAGE = r"""
   .badge-n { background: #1a2e20; color: var(--green); }
   .badge-y { background: #2e1a1a; color: var(--red); }
 
-  /* ── empty / loader ── */
+  /* Ã¢â€â‚¬Ã¢â€â‚¬ empty / loader Ã¢â€â‚¬Ã¢â€â‚¬ */
   #emptyState { text-align: center; padding: 80px 20px; color: var(--muted); display: flex;
                 flex-direction: column; align-items: center; gap: 14px; }
   #emptyState .big-icon { font-size: 3.5rem; }
@@ -4146,7 +4316,7 @@ HTML_PAGE = r"""
              animation: spin .7s linear infinite; margin: 60px auto; display: none; }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* ── highlight rows ── */
+  /* Ã¢â€â‚¬Ã¢â€â‚¬ highlight rows Ã¢â€â‚¬Ã¢â€â‚¬ */
   tr.hl-lowvol td {
     background: rgba(81, 207, 102, 0.13) !important;
   }
@@ -4159,7 +4329,7 @@ HTML_PAGE = r"""
     border-left: 4px solid #51cf66;
     color: #51cf66 !important; font-weight: 700;
   }
-  tr.hl-lowvol td:first-child::after { content: ' 📦'; font-size: 11px; }
+  tr.hl-lowvol td:first-child::after { content: ' Ã°Å¸â€œÂ¦'; font-size: 11px; }
 
   tr.hl-lowvolatility td {
     background: rgba(79, 142, 247, 0.13) !important;
@@ -4173,9 +4343,9 @@ HTML_PAGE = r"""
     border-left: 4px solid #4f8ef7;
     color: #4f8ef7 !important; font-weight: 700;
   }
-  tr.hl-lowvolatility td:first-child::after { content: ' 🧊'; font-size: 11px; }
+  tr.hl-lowvolatility td:first-child::after { content: ' Ã°Å¸Â§Å '; font-size: 11px; }
 
-  /* both at once — purple override */
+  /* both at once Ã¢â‚¬â€ purple override */
   tr.hl-lowvol.hl-lowvolatility td {
     background: rgba(204, 119, 255, 0.15) !important;
   }
@@ -4183,7 +4353,7 @@ HTML_PAGE = r"""
     border-left: 4px solid #cc77ff;
     color: #cc77ff !important;
   }
-  tr.hl-lowvol.hl-lowvolatility td:first-child::after { content: ' 📦🧊'; font-size: 11px; }
+  tr.hl-lowvol.hl-lowvolatility td:first-child::after { content: ' Ã°Å¸â€œÂ¦Ã°Å¸Â§Å '; font-size: 11px; }
 
   /* legend */
   .hl-legend { display: flex; gap: 18px; margin-bottom: 10px; flex-wrap: wrap; }
@@ -4191,7 +4361,7 @@ HTML_PAGE = r"""
                     color: var(--muted); }
   .hl-dot { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
 
-  /* ── scrollbar ── */
+  /* Ã¢â€â‚¬Ã¢â€â‚¬ scrollbar Ã¢â€â‚¬Ã¢â€â‚¬ */
   ::-webkit-scrollbar { width: 7px; height: 7px; }
   ::-webkit-scrollbar-track { background: var(--surface); }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
@@ -4209,6 +4379,7 @@ HTML_PAGE = r"""
     <a href="/sectors" class="{{ 'active' if page_mode == 'sectors' else '' }}">Sectors</a>
     <a href="/screener" class="{{ 'active' if page_mode == 'screener' else '' }}">Screener</a>
     <a href="/gmlist" class="{{ 'active' if page_mode == 'gmlist' else '' }}">GMList</a>
+    <a href="/earnings" class="{{ 'active' if page_mode == 'earnings' else '' }}">Earnings</a>
     <a href="/admin" class="{{ 'active' if page_mode == 'admin' else '' }}">Admin</a>
     <a href="/reports" class="{{ 'active' if page_mode == 'reports' else '' }}">Reports</a>
   </div>
@@ -4222,10 +4393,10 @@ HTML_PAGE = r"""
   <div class="date-range">
     <label>From</label>
     <input type="date" id="fromDate" title="From date (leave blank for last 100 days)">
-    <span class="date-sep">→</span>
+    <span class="date-sep">Ã¢â€ â€™</span>
     <label>To</label>
     <input type="date" id="toDate" title="To date (leave blank for latest available)">
-    <button id="clearDatesBtn" onclick="clearDates()" title="Reset to default (last 100 days)">✕ Clear</button>
+    <button id="clearDatesBtn" onclick="clearDates()" title="Reset to default (last 100 days)">Ã¢Å“â€¢ Clear</button>
   </div>
 
   <button id="loadBtn" onclick="loadStock()">Load</button>
@@ -4263,6 +4434,11 @@ HTML_PAGE = r"""
         <div class="sector-zoom-subtitle" id="screenerPreviewSubtitle"></div>
       </div>
       <div class="sector-zoom-nav">
+        <div id="screenerPreviewNav" style="display:none; align-items:center; gap:8px;">
+          <button class="sector-zoom-step" type="button" id="screenerPreviewPrevBtn" onclick="stepScreenerPreview(-1)">Prev</button>
+          <div class="sector-zoom-counter" id="screenerPreviewCounter">0 / 0</div>
+          <button class="sector-zoom-step" type="button" id="screenerPreviewNextBtn" onclick="stepScreenerPreview(1)">Next Ã¢â€ â€™</button>
+        </div>
         <div class="sector-zoom-meta" id="screenerPreviewMeta"></div>
         <button class="sector-zoom-close" type="button" onclick="closeScreenerPreview()">Close</button>
       </div>
@@ -4295,11 +4471,12 @@ HTML_PAGE = r"""
 <main>
   <section id="reportsPage" style="display:none;">
     <div class="reports-card">
-      <div class="reports-head">
+        <div class="reports-head">
         <div>
           <div class="section-title" style="margin:0;">Liquid Momentum Reports</div>
           <div class="reports-note">Run <code>neo_liquid_momentum_scanner.py</code> from the browser, then open the HTML mirror with the same workbook layout.</div>
           <div class="reports-note">Command example: <code>neo_liquid_momentum_scanner.py 2024-08-05 2024-07-23 full</code></div>
+          <div class="reports-note">The scanner uses its default source unless you explicitly add a source flag later.</div>
         </div>
         <div class="reports-actions">
           <button id="reportsGenerateBtn" type="button">Generate HTML</button>
@@ -4319,13 +4496,6 @@ HTML_PAGE = r"""
             <div>
               <label for="reportResetDate">Reset date</label>
               <input id="reportResetDate" type="date">
-            </div>
-            <div>
-              <label for="reportSource">Source</label>
-              <select id="reportSource">
-                <option value="kite" selected>kite</option>
-                <option value="bhav">bhav</option>
-              </select>
             </div>
             <div>
               <label for="reportDebugSymbol">Debug symbol</label>
@@ -4376,6 +4546,43 @@ HTML_PAGE = r"""
     </div>
   </section>
 
+  <section id="earningsPage" style="display:none;">
+    <div class="mode-card">
+      <div class="admin-head">
+        <div>
+          <div class="section-title" style="margin:0;">Earnings Announcement Dates</div>
+          <div class="admin-note">Shows the compact NSE-only earnings table stored in <code>bhav.earnings_announcement_dates</code>.</div>
+        </div>
+        <div class="admin-actions">
+          <input id="earningsFilter" type="text" placeholder="Filter symbol or status" autocomplete="off" spellcheck="false" style="min-width:220px;">
+          <button id="earningsRefreshBtn" type="button" class="secondary">Refresh</button>
+        </div>
+      </div>
+
+      <div class="admin-overview">
+        <div class="admin-pill"><strong id="earningsCount">0</strong><span>rows loaded</span></div>
+        <div class="admin-pill"><strong>NSE only</strong><span>current-quarter data only</span></div>
+        <div class="admin-pill"><strong>Primary key</strong><span>symbol</span></div>
+      </div>
+
+      <div id="earningsStatus" class="admin-status">Loading earnings data...</div>
+      <div class="sector-table-wrap" style="margin-top:16px;">
+        <table class="sector-editor-table">
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Quarter End</th>
+              <th>Announcement Date</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="earningsTbody"></tbody>
+        </table>
+      </div>
+      <div id="earningsEmpty" class="sector-empty">No earnings rows loaded yet.</div>
+    </div>
+  </section>
+
   <section id="adminPage" style="display:none;">
     <div class="admin-card">
       <div class="admin-head">
@@ -4392,7 +4599,7 @@ HTML_PAGE = r"""
       <div class="admin-overview">
         <div class="admin-pill"><strong id="adminJobCount">0</strong><span>jobs available</span></div>
         <div class="admin-pill"><strong>Live</strong><span>runs the existing Python scripts</span></div>
-        <div class="admin-pill"><strong>Output</strong><span>stdout / stderr are captured below each run</span></div>
+        <div class="admin-pill"><strong>Output</strong><span>stdout / stderr stream below while each run is active</span></div>
       </div>
 
       <div id="adminJobsContainer" class="admin-jobs"></div>
@@ -4517,7 +4724,7 @@ HTML_PAGE = r"""
       <div class="screener-header">
       <div>
           <div class="section-title" style="margin:0;">Bhav Screener</div>
-          <div class="section-note">Low-volume and low-volatility stocks on 21-day windows, filtered to names near 52-week highs.</div>
+          <div class="section-note">Low-volume, low-volatility, and inside-day stocks on 21-day windows, filtered to names near 52-week highs.</div>
         </div>
         <div class="screener-controls">
           <div>
@@ -4542,8 +4749,19 @@ HTML_PAGE = r"""
       <div id="screenerStatus" class="screener-status">Pick a date and click Run. (Defaults to the latest trading date in bhav.)</div>
       <div id="screenerMetaStrip" class="screener-meta-strip"></div>
 
-      <div class="screener-grid">
-        <div class="screener-panel" id="screenerPanelVol">
+      <div class="gmlist-tabs screener-tabs" id="screenerTabs">
+        <button class="gmlist-tab active" type="button" data-tab="low_volume">
+          low volume <span class="gmlist-tab-count" id="screenerCountTabVol">0</span>
+        </button>
+        <button class="gmlist-tab" type="button" data-tab="low_volatility">
+          low volatility <span class="gmlist-tab-count" id="screenerCountTabVlt">0</span>
+        </button>
+        <button class="gmlist-tab" type="button" data-tab="inside_days">
+          inside days <span class="gmlist-tab-count" id="screenerCountTabInsideDays">0</span>
+        </button>
+      </div>
+
+      <div class="screener-panel gmlist-panel active" id="screenerPanelVol" data-screener-panel="low_volume">
           <div class="screener-panel-head">
             <div class="screener-panel-title">Low Volume</div>
             <div class="screener-panel-count"><span id="screenerCountVol">0</span> stocks</div>
@@ -4561,7 +4779,7 @@ HTML_PAGE = r"""
           <div id="screenerEmptyVol" class="screener-empty" style="display:none;">No low-volume names found.</div>
         </div>
 
-        <div class="screener-panel" id="screenerPanelVlt">
+        <div class="screener-panel gmlist-panel" id="screenerPanelVlt" data-screener-panel="low_volatility">
           <div class="screener-panel-head">
             <div class="screener-panel-title">Low Volatility</div>
             <div class="screener-panel-count"><span id="screenerCountVlt">0</span> stocks</div>
@@ -4578,7 +4796,24 @@ HTML_PAGE = r"""
           </div>
           <div id="screenerEmptyVlt" class="screener-empty" style="display:none;">No low-volatility names found.</div>
         </div>
-      </div>
+
+        <div class="screener-panel gmlist-panel" id="screenerPanelInsideDays" data-screener-panel="inside_days">
+          <div class="screener-panel-head">
+            <div class="screener-panel-title">Inside Days</div>
+            <div class="screener-panel-count"><span id="screenerCountInsideDays">0</span> stocks</div>
+          </div>
+          <div class="screener-table-wrap">
+            <table class="screener-table">
+              <thead>
+                <tr>
+                  <th>Symbol</th><th>Close</th><th>High</th><th>Low</th><th>Prev High</th><th>Prev Low</th><th>21d Turnover (cr)</th>
+                </tr>
+              </thead>
+              <tbody id="screenerTbodyInsideDays"></tbody>
+            </table>
+          </div>
+          <div id="screenerEmptyInsideDays" class="screener-empty" style="display:none;">No inside-day names found.</div>
+        </div>
     </div>
   </section>
 
@@ -4789,35 +5024,35 @@ HTML_PAGE = r"""
   </section>
 
   <div id="emptyState">
-    <div class="big-icon">📊</div>
+    <div class="big-icon">Ã°Å¸â€œÅ </div>
     <p>Enter a stock symbol to view BHAV data</p>
-    <small>Default: last 100 days · Use From/To dates to customise range · bhav2024 · bhav2025 · bhav2026</small>
+    <small>Default: last 100 days Ã‚Â· Use From/To dates to customise range Ã‚Â· bhav2024 Ã‚Â· bhav2025 Ã‚Â· bhav2026</small>
   </div>
 
   <div class="spinner" id="spinner"></div>
 
   <div id="contentArea" style="display:none;">
     <div class="cards" id="summaryCards"></div>
-    <div class="section-title">OHLCV · DMAs · Computed Metrics</div>
+    <div class="section-title">OHLCV Ã‚Â· DMAs Ã‚Â· Computed Metrics</div>
     <div class="hl-legend">
       <div class="hl-legend-item">
         <div class="hl-dot" style="background:#51cf66"></div>
-        <span>📦 Lowest volume in 21-day window</span>
+        <span>Ã°Å¸â€œÂ¦ Lowest volume in 21-day window</span>
       </div>
       <div class="hl-legend-item">
         <div class="hl-dot" style="background:#4f8ef7"></div>
-        <span>🧊 Least volatile in 21-day window</span>
+        <span>Ã°Å¸Â§Å  Least volatile in 21-day window</span>
       </div>
       <div class="hl-legend-item">
         <div class="hl-dot" style="background:#cc77ff"></div>
-        <span>📦🧊 Both</span>
+        <span>Ã°Å¸â€œÂ¦Ã°Å¸Â§Å  Both</span>
       </div>
     </div>
     <div class="tbl-wrap">
       <table id="mainTable">
         <thead>
           <tr>
-            <th data-col="mktdate">Date <span class="sort-arrow">▼</span></th>
+            <th data-col="mktdate">Date <span class="sort-arrow">Ã¢â€“Â¼</span></th>
             <th data-col="symbol">Symbol <span class="sort-arrow"></span></th>
             <th data-col="close">Close <span class="sort-arrow"></span></th>
             <th data-col="open">Open <span class="sort-arrow"></span></th>
@@ -4844,7 +5079,7 @@ HTML_PAGE = r"""
 </main>
 
 <script>
-// ── state ──────────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ state Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 const PAGE_MODE = {{ page_mode|tojson }};
 const ADMIN_JOBS = {{ admin_jobs|tojson }};
 let allRows = [];
@@ -4852,7 +5087,7 @@ let sortCol = 'mktdate';
 let sortAsc = false;   // default: newest first
 let acSelected = -1;
 
-// ── autocomplete ────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ autocomplete Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 const symInput = document.getElementById('symInput');
 const acList   = document.getElementById('acList');
 let acTimeout;
@@ -4918,8 +5153,8 @@ function closeAC() {
   acList.innerHTML = '';
 }
 
-// ── clear dates ──────────────────────────────────────────────────────────────
-// â”€â”€ sector browser â”€â”€
+// Ã¢â€â‚¬Ã¢â€â‚¬ clear dates Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+// ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ sector browser ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
 function setReportsStatus(message, kind = '') {
   if (!reportsStatus) return;
   reportsStatus.textContent = message || '';
@@ -5009,7 +5244,6 @@ async function generateLiquidMomentumReport() {
   const payload = {
     as_of_date: reportsCutoffDate ? reportsCutoffDate.value.trim() : '',
     reset_date: reportsResetDate ? reportsResetDate.value.trim() : '',
-    source: reportsSource ? reportsSource.value.trim() : 'kite',
     debug_symbol: reportsDebugSymbol ? reportsDebugSymbol.value.trim() : '',
     full_mode: reportsFullMode ? reportsFullMode.checked : true,
     extended: reportsExtended ? reportsExtended.checked : false,
@@ -5053,6 +5287,65 @@ async function generateLiquidMomentumReport() {
   } finally {
     reportsGenerateBtn.disabled = false;
     if (reportsLatestBtn) reportsLatestBtn.disabled = false;
+  }
+}
+
+function formatEarningsDate(value) {
+  if (!value) return '';
+  const text = String(value).slice(0, 10);
+  const parsed = new Date(`${text}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return text;
+  return parsed.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function setEarningsStatus(message, kind = '') {
+  if (!earningsStatus) return;
+  earningsStatus.textContent = message || '';
+  earningsStatus.className = kind ? `admin-status ${kind}` : 'admin-status';
+}
+
+function renderEarningsTable() {
+  if (!earningsTbody) return;
+  const filter = (earningsFilterEl ? earningsFilterEl.value : '').trim().toUpperCase();
+  const rows = filter
+    ? earningsRows.filter(row => {
+        const haystack = `${row.symbol || ''} ${row.status || ''}`.toUpperCase();
+        return haystack.includes(filter);
+      })
+    : earningsRows.slice();
+
+  earningsTbody.innerHTML = rows.map(row => `
+    <tr>
+      <td><strong>${escapeHtml(row.symbol || '')}</strong></td>
+      <td>${escapeHtml(formatEarningsDate(row.quarter_end))}</td>
+      <td>${escapeHtml(formatEarningsDate(row.announcement_date)) || '&nbsp;'}</td>
+      <td>${escapeHtml(row.status || '')}</td>
+    </tr>
+  `).join('');
+
+  if (earningsCount) earningsCount.textContent = rows.length;
+  if (earningsEmpty) earningsEmpty.style.display = rows.length ? 'none' : 'block';
+}
+
+async function loadEarningsAnnouncementDates() {
+  if (!earningsPage) return;
+  if (earningsRefreshBtn) earningsRefreshBtn.disabled = true;
+  setEarningsStatus('Loading earnings announcement dates...', '');
+  try {
+    const res = await fetch('/api/earnings-announcement-dates');
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      throw new Error(data.error || res.statusText);
+    }
+    earningsRows = Array.isArray(data.rows) ? data.rows : [];
+    renderEarningsTable();
+    setEarningsStatus(`Loaded ${data.count != null ? data.count : earningsRows.length} rows from bhav.earnings_announcement_dates.`, 'ok');
+  } catch (err) {
+    earningsRows = [];
+    renderEarningsTable();
+    setEarningsStatus(`Failed to load earnings data: ${err.message}`, 'err');
+  } finally {
+    if (earningsRefreshBtn) earningsRefreshBtn.disabled = false;
   }
 }
 
@@ -5107,6 +5400,89 @@ function adminFieldValue(field, jobKey, currentValue = '') {
   `;
 }
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function formatAdminRunOutput(data) {
+  const parts = [];
+  if (!data) return '';
+  if (data.label) parts.push(`Job: ${data.label}`);
+  if (data.command && Array.isArray(data.command) && data.command.length) {
+    parts.push(`Command: ${data.command.join(' ')}`);
+  }
+  if (data.started_at) parts.push(`Started: ${data.started_at}`);
+  if (data.finished_at) parts.push(`Finished: ${data.finished_at}`);
+  if (data.status) parts.push(`Status: ${data.status}`);
+  if (data.stdout) parts.push(data.stdout.trimEnd());
+  if (data.stderr) parts.push(`STDERR:\n${data.stderr.trimEnd()}`);
+  if (data.error) parts.push(`Error: ${data.error}`);
+  return parts.join('\n\n').trim();
+}
+
+async function pollAdminRun(runId, jobKey, statusEl, logEl, runBtn, clearBtn) {
+  try {
+    while (true) {
+      const res = await fetch(`/api/admin/jobs/runs/${encodeURIComponent(runId)}`);
+      const data = await res.json();
+      if (data.error && !data.found) {
+        if (statusEl) {
+          statusEl.textContent = `Error: ${data.error}`;
+          statusEl.className = 'admin-job-status err';
+        }
+        if (logEl) {
+          logEl.value = `Run ID: ${runId}\n\nError: ${data.error}`;
+        }
+        return;
+      }
+
+      if (logEl) {
+        const output = formatAdminRunOutput(data);
+        logEl.value = output || 'Waiting for log output...';
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+
+      if (data.status === 'running') {
+        if (statusEl) {
+          statusEl.textContent = `Running ${jobKey}...`;
+          statusEl.className = 'admin-job-status';
+        }
+        await sleep(1000);
+        continue;
+      }
+
+      if (data.ok) {
+        if (statusEl) {
+          statusEl.textContent = `${jobKey} completed successfully.`;
+          statusEl.className = 'admin-job-status ok';
+        }
+      } else if (data.returncode != null) {
+        if (statusEl) {
+          statusEl.textContent = `${jobKey} finished with exit code ${data.returncode}.`;
+          statusEl.className = 'admin-job-status err';
+        }
+      } else if (data.error) {
+        if (statusEl) {
+          statusEl.textContent = `Error: ${data.error}`;
+          statusEl.className = 'admin-job-status err';
+        }
+      } else if (statusEl) {
+        statusEl.textContent = `${jobKey} finished.`;
+        statusEl.className = 'admin-job-status';
+      }
+      return;
+    }
+  } catch (err) {
+    if (statusEl) {
+      statusEl.textContent = `Polling failed: ${err.message}`;
+      statusEl.className = 'admin-job-status err';
+    }
+  } finally {
+    if (runBtn) runBtn.disabled = false;
+    if (clearBtn) clearBtn.disabled = false;
+  }
+}
+
 function renderAdminJobs() {
   if (!adminJobsContainer) return;
   if (!Array.isArray(ADMIN_JOBS)) {
@@ -5135,7 +5511,7 @@ function renderAdminJobs() {
           <button type="button" class="secondary admin-clear-btn">Clear Log</button>
         </div>
         <div class="admin-job-status">Ready.</div>
-        <textarea class="admin-log" readonly placeholder="Job output will appear here."></textarea>
+        <textarea class="admin-log" readonly placeholder="Live job output will stream here while the run is active."></textarea>
       </article>
     `;
   }).join('');
@@ -5185,31 +5561,43 @@ function renderAdminJobs() {
             body: JSON.stringify(payload),
           });
           const data = await res.json();
-          const parts = [];
-          if (data.command) parts.push(`Command: ${Array.isArray(data.command) ? data.command.join(' ') : data.command}`);
-          if (data.stdout) parts.push(`STDOUT:\n${data.stdout.trimEnd()}`);
-          if (data.stderr) parts.push(`STDERR:\n${data.stderr.trimEnd()}`);
-          if (logEl) logEl.value = parts.join('\n\n').trim();
-
           if (data.error) {
             if (statusEl) {
               statusEl.textContent = `Error: ${data.error}`;
               statusEl.className = 'admin-job-status err';
             }
+            if (logEl) {
+              logEl.value = `Error: ${data.error}`;
+            }
+            runBtn.disabled = false;
+            if (clearBtn) clearBtn.disabled = false;
             return;
           }
 
           if (statusEl) {
-            const outcome = data.ok ? 'completed successfully' : `finished with exit code ${data.returncode}`;
-            statusEl.textContent = `${jobKey} ${outcome}.`;
-            statusEl.className = data.ok ? 'admin-job-status ok' : 'admin-job-status err';
+            statusEl.textContent = `Running ${jobKey}...`;
+            statusEl.className = 'admin-job-status';
+          }
+          if (logEl) {
+            logEl.value = data.run_id
+              ? `Started ${data.label || jobKey}...\n\nRun ID: ${data.run_id}\nCommand: ${Array.isArray(data.command) ? data.command.join(' ') : data.command}\n\nWaiting for log output...`
+              : 'Starting job...';
+          }
+
+          if (data.run_id) {
+            await pollAdminRun(data.run_id, jobKey, statusEl, logEl, runBtn, clearBtn);
+          } else if (statusEl) {
+            statusEl.textContent = `Failed to start ${jobKey}.`;
+            statusEl.className = 'admin-job-status err';
           }
         } catch (err) {
           if (statusEl) {
             statusEl.textContent = `Failed to run job: ${err.message}`;
             statusEl.className = 'admin-job-status err';
           }
-        } finally {
+          if (logEl) {
+            logEl.value = `Failed to run job: ${err.message}`;
+          }
           runBtn.disabled = false;
           if (clearBtn) clearBtn.disabled = false;
         }
@@ -5255,6 +5643,10 @@ const sectorZoomChartEl = document.getElementById('sectorZoomChart');
 const screenerPreviewOverlay = document.getElementById('screenerPreviewOverlay');
 const screenerPreviewTitle = document.getElementById('screenerPreviewTitle');
 const screenerPreviewSubtitle = document.getElementById('screenerPreviewSubtitle');
+const screenerPreviewNav = document.getElementById('screenerPreviewNav');
+const screenerPreviewPrevBtn = document.getElementById('screenerPreviewPrevBtn');
+const screenerPreviewNextBtn = document.getElementById('screenerPreviewNextBtn');
+const screenerPreviewCounter = document.getElementById('screenerPreviewCounter');
 const screenerPreviewMeta = document.getElementById('screenerPreviewMeta');
 const screenerPreviewChartEl = document.getElementById('screenerPreviewChart');
 const screenerPreviewCard = document.getElementById('screenerPreviewCard');
@@ -5317,16 +5709,24 @@ const screenerTurnoverEl = document.getElementById('screenerTurnover');
 const screenerLimitEl = document.getElementById('screenerLimit');
 const screenerRunBtn = document.getElementById('screenerRunBtn');
 const screenerTodayBtn = document.getElementById('screenerTodayBtn');
+const screenerTabs = document.getElementById('screenerTabs');
 const screenerStatus = document.getElementById('screenerStatus');
 const screenerMetaStrip = document.getElementById('screenerMetaStrip');
 const screenerPanelVol = document.getElementById('screenerPanelVol');
 const screenerPanelVlt = document.getElementById('screenerPanelVlt');
+const screenerPanelInsideDays = document.getElementById('screenerPanelInsideDays');
 const screenerTbodyVol = document.getElementById('screenerTbodyVol');
 const screenerTbodyVlt = document.getElementById('screenerTbodyVlt');
+const screenerTbodyInsideDays = document.getElementById('screenerTbodyInsideDays');
 const screenerCountVol = document.getElementById('screenerCountVol');
 const screenerCountVlt = document.getElementById('screenerCountVlt');
+const screenerCountInsideDays = document.getElementById('screenerCountInsideDays');
+const screenerCountTabVol = document.getElementById('screenerCountTabVol');
+const screenerCountTabVlt = document.getElementById('screenerCountTabVlt');
+const screenerCountTabInsideDays = document.getElementById('screenerCountTabInsideDays');
 const screenerEmptyVol = document.getElementById('screenerEmptyVol');
 const screenerEmptyVlt = document.getElementById('screenerEmptyVlt');
+const screenerEmptyInsideDays = document.getElementById('screenerEmptyInsideDays');
 let sectorChartInstances = [];
 let sectorChartObservers = [];
 let sectorBoardObserver = null;
@@ -5340,10 +5740,20 @@ let sectorZoomIndex = -1;
 let screenerPreviewChart = null;
 let screenerPreviewObserver = null;
 let screenerPreviewSymbol = '';
+let screenerPreviewMode = '';
+let screenerPreviewTab = '';
 let screenerPreviewTimer = null;
 let screenerPreviewCloseTimer = null;
 let screenerPreviewLoading = null;
 const screenerPreviewCache = new Map();
+let screenerPreviewSymbols = [];
+let screenerPreviewIndex = -1;
+let screenerActiveTab = 'low_volume';
+let screenerTabData = {
+  low_volume: [],
+  low_volatility: [],
+  inside_days: [],
+};
 let gmlistLivePreviewChart = null;
 let gmlistLivePreviewObserver = null;
 let gmlistLivePreviewSymbol = '';
@@ -5372,7 +5782,6 @@ const reportsDownloadXlsx = document.getElementById('reportsDownloadXlsx');
 const reportsOpenHtml = document.getElementById('reportsOpenHtml');
 const reportsCutoffDate = document.getElementById('reportCutoffDate');
 const reportsResetDate = document.getElementById('reportResetDate');
-const reportsSource = document.getElementById('reportSource');
 const reportsDebugSymbol = document.getElementById('reportDebugSymbol');
 const reportsFullMode = document.getElementById('reportFullMode');
 const reportsExtended = document.getElementById('reportExtended');
@@ -5382,6 +5791,14 @@ const reportsStatus = document.getElementById('reportsStatus');
 const reportsFrame = document.getElementById('reportsFrame');
 const reportsActiveFile = document.getElementById('reportsActiveFile');
 let reportsLatestLoadedUrl = '';
+const earningsPage = document.getElementById('earningsPage');
+const earningsRefreshBtn = document.getElementById('earningsRefreshBtn');
+const earningsFilterEl = document.getElementById('earningsFilter');
+const earningsStatus = document.getElementById('earningsStatus');
+const earningsCount = document.getElementById('earningsCount');
+const earningsTbody = document.getElementById('earningsTbody');
+const earningsEmpty = document.getElementById('earningsEmpty');
+let earningsRows = [];
 const adminPage = document.getElementById('adminPage');
 const adminJobsContainer = document.getElementById('adminJobsContainer');
 const adminStatus = document.getElementById('adminStatus');
@@ -5407,11 +5824,24 @@ if (screenerTodayBtn) {
 if (screenerAsOfEl) {
   screenerAsOfEl.addEventListener('keydown', e => { if (e.key === 'Enter') loadScreener(); });
 }
+if (screenerTabs) {
+  screenerTabs.addEventListener('click', (event) => {
+    const btn = event.target.closest('.gmlist-tab');
+    if (!btn) return;
+    syncScreenerTabUI(btn.dataset.tab);
+  });
+}
 if (reportsGenerateBtn) {
   reportsGenerateBtn.addEventListener('click', generateLiquidMomentumReport);
 }
 if (reportsLatestBtn) {
   reportsLatestBtn.addEventListener('click', loadLatestReport);
+}
+if (earningsRefreshBtn) {
+  earningsRefreshBtn.addEventListener('click', loadEarningsAnnouncementDates);
+}
+if (earningsFilterEl) {
+  earningsFilterEl.addEventListener('input', renderEarningsTable);
 }
 if (reportsCutoffDate && reportsResetDate) {
   reportsCutoffDate.addEventListener('change', () => {
@@ -5569,6 +5999,11 @@ if (PAGE_MODE === 'admin' && adminPage) {
 if (PAGE_MODE === 'reports' && reportsPage) {
   reportsPage.style.display = 'block';
   initReportsDefaults().then(loadLatestReport);
+}
+
+if (PAGE_MODE === 'earnings' && earningsPage) {
+  earningsPage.style.display = 'block';
+  loadEarningsAnnouncementDates();
 }
 
 if (PAGE_MODE === 'stocks') {
@@ -5845,17 +6280,38 @@ function setScreenerStatus(msg, kind) {
   screenerStatus.className = kind ? `screener-status ${kind}` : 'screener-status';
 }
 
-function renderScreenerRows(rows, tbody, valueKey, minKey, fmtFn, attachPreviewListeners = true) {
+function renderScreenerRows(rows, tbody, valueKey, minKey, fmtFn, attachPreviewListeners = true, tabKey = '') {
   if (!rows.length) {
     tbody.innerHTML = '';
     return 0;
   }
   tbody.innerHTML = rows.map(r => `
     <tr>
-      <td><button class="screener-sym" type="button" data-symbol="${escapeHtml(r.symbol || '')}">${escapeHtml(r.symbol || '')}</button></td>
+      <td><button class="screener-sym" type="button" data-symbol="${escapeHtml(r.symbol || '')}" data-screen-tab="${escapeHtml(tabKey || '')}">${escapeHtml(r.symbol || '')}</button></td>
       <td>${fmt(r.close, 2)}</td>
       <td>${fmtFn(r[valueKey])}</td>
       <td>${fmtFn(r[minKey])}</td>
+      <td>${fmt(r.avg_turnover_21d == null ? null : (r.avg_turnover_21d / 1e7), 2)}</td>
+    </tr>
+  `).join('');
+  if (attachPreviewListeners) attachScreenerPreviewListeners(tbody);
+  return rows.length;
+}
+
+function renderScreenerInsideRows(rows, tbody, attachPreviewListeners = true, tabKey = '') {
+  if (!tbody) return 0;
+  if (!rows.length) {
+    tbody.innerHTML = '';
+    return 0;
+  }
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td><button class="screener-sym" type="button" data-symbol="${escapeHtml(r.symbol || '')}" data-screen-tab="${escapeHtml(tabKey || '')}">${escapeHtml(r.symbol || '')}</button></td>
+      <td>${fmt(r.close, 2)}</td>
+      <td>${fmt(r.high, 2)}</td>
+      <td>${fmt(r.low, 2)}</td>
+      <td>${fmt(r.prev_high, 2)}</td>
+      <td>${fmt(r.prev_low, 2)}</td>
       <td>${fmt(r.avg_turnover_21d == null ? null : (r.avg_turnover_21d / 1e7), 2)}</td>
     </tr>
   `).join('');
@@ -5867,11 +6323,59 @@ function renderScreenerMeta(d) {
   if (!screenerMetaStrip) return;
   screenerMetaStrip.innerHTML = `
     <span class="screener-meta-chip">As of<b>${escapeHtml(d.as_of)}</b></span>
-    <span class="screener-meta-chip">21d window<b>${escapeHtml(d.window_21d.start)} → ${escapeHtml(d.window_21d.end)}</b></span>
+    <span class="screener-meta-chip">21d window<b>${escapeHtml(d.window_21d.start)} Ã¢â€ â€™ ${escapeHtml(d.window_21d.end)}</b></span>
     <span class="screener-meta-chip">52w / 15d<b>Near highs only</b></span>
     <span class="screener-meta-chip">Min turnover<b>${fmt(d.min_turnover / 1e7, 2)} cr</b></span>
     <span class="screener-meta-chip">Universe<b>${d.universe}</b></span>
   `;
+}
+
+function setScreenerPreviewNavVisible(visible) {
+  if (!screenerPreviewNav) return;
+  screenerPreviewNav.style.display = visible ? 'flex' : 'none';
+}
+
+function updateScreenerPreviewNav() {
+  const total = screenerPreviewSymbols.length;
+  const hasNav = screenerPreviewMode === 'screener' && total > 0;
+  setScreenerPreviewNavVisible(hasNav);
+  if (!hasNav) return;
+  if (screenerPreviewCounter) {
+    screenerPreviewCounter.textContent = `${Math.max(0, screenerPreviewIndex + 1)} / ${total}`;
+  }
+  if (screenerPreviewPrevBtn) {
+    screenerPreviewPrevBtn.disabled = screenerPreviewIndex <= 0;
+  }
+  if (screenerPreviewNextBtn) {
+    screenerPreviewNextBtn.disabled = screenerPreviewIndex < 0 || screenerPreviewIndex >= total - 1;
+  }
+}
+
+function syncScreenerTabUI(tabKey) {
+  const target = String(tabKey || 'low_volume').trim() || 'low_volume';
+  screenerActiveTab = target;
+  if (screenerTabs) {
+    screenerTabs.querySelectorAll('.gmlist-tab').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.tab === screenerActiveTab);
+    });
+  }
+  document.querySelectorAll('#screenerPage .gmlist-panel').forEach(panel => {
+    panel.classList.toggle('active', panel.dataset.screenerPanel === screenerActiveTab);
+  });
+}
+
+function stepScreenerPreview(delta) {
+  if (screenerPreviewMode !== 'screener') return;
+  const total = screenerPreviewSymbols.length;
+  if (!total) return;
+  let nextIdx = screenerPreviewIndex;
+  if (nextIdx < 0) {
+    nextIdx = 0;
+  } else {
+    nextIdx += delta;
+  }
+  if (nextIdx < 0 || nextIdx >= total) return;
+  openScreenerPreview(screenerPreviewSymbols[nextIdx], screenerPreviewTab);
 }
 
 async function initScreenerDefaults() {
@@ -5900,7 +6404,7 @@ function renderGmListMeta(d) {
   if (!gmlistMetaStrip) return;
   gmlistMetaStrip.innerHTML = `
     <span class="screener-meta-chip">As of<b>${escapeHtml(d.as_of)}</b></span>
-    <span class="screener-meta-chip">21d window<b>${escapeHtml(d.window_21d.start)} → ${escapeHtml(d.window_21d.end)}</b></span>
+    <span class="screener-meta-chip">21d window<b>${escapeHtml(d.window_21d.start)} Ã¢â€ â€™ ${escapeHtml(d.window_21d.end)}</b></span>
     <span class="screener-meta-chip">GMList<b>${escapeHtml(d.universe)}</b></span>
     <span class="screener-meta-chip">Source<b>${escapeHtml(d.source_file || 'gmlist.txt')}</b></span>
   `;
@@ -5944,7 +6448,7 @@ function renderGmHdRows(rows, tbody) {
       <td>${fmtPct(r.delivery_latest)}</td>
       <td>${fmt(r.delivery_days_3d, 0)}</td>
       <td>${fmtPct(r.delivery_max_3d)}</td>
-      <td>${escapeHtml((r.delivery_hits && r.delivery_hits.length) ? r.delivery_hits.map(x => x.date).join(', ') : '—')}</td>
+      <td>${escapeHtml((r.delivery_hits && r.delivery_hits.length) ? r.delivery_hits.map(x => x.date).join(', ') : 'Ã¢â‚¬â€')}</td>
     </tr>
   `).join('');
   attachScreenerPreviewListeners(tbody);
@@ -6381,6 +6885,11 @@ function closeScreenerPreview(event) {
   if (event && event.target && event.target.id !== 'screenerPreviewOverlay' && event.target.id !== 'screenerPreviewCard') return;
   screenerPreviewOverlay.classList.remove('open');
   screenerPreviewSymbol = '';
+  screenerPreviewMode = '';
+  screenerPreviewTab = '';
+  screenerPreviewSymbols = [];
+  screenerPreviewIndex = -1;
+  setScreenerPreviewNavVisible(false);
   if (screenerPreviewObserver) {
     screenerPreviewObserver.disconnect();
     screenerPreviewObserver = null;
@@ -6400,7 +6909,7 @@ function closeScreenerPreview(event) {
   }
 }
 
-function scheduleScreenerPreview(symbol) {
+function scheduleScreenerPreview(symbol, tabKey = '') {
   const sym = String(symbol || '').trim().toUpperCase();
   if (!sym) return;
   if (screenerPreviewCloseTimer) {
@@ -6413,7 +6922,7 @@ function scheduleScreenerPreview(symbol) {
   if (screenerPreviewTimer) {
     clearTimeout(screenerPreviewTimer);
   }
-  screenerPreviewTimer = setTimeout(() => openScreenerPreview(sym), 180);
+  screenerPreviewTimer = setTimeout(() => openScreenerPreview(sym, tabKey), 180);
 }
 
 function queueCloseScreenerPreview() {
@@ -6435,8 +6944,12 @@ function queueCloseScreenerPreview() {
 function attachScreenerPreviewListeners(tbody) {
   if (!tbody) return;
   tbody.querySelectorAll('.screener-sym').forEach(btn => {
-  btn.addEventListener('mouseenter', () => scheduleScreenerPreview(btn.dataset.symbol));
-  btn.addEventListener('focus', () => scheduleScreenerPreview(btn.dataset.symbol));
+  btn.addEventListener('click', (event) => {
+    event.preventDefault();
+    openScreenerPreview(btn.dataset.symbol, btn.dataset.screenTab || '');
+  });
+  btn.addEventListener('mouseenter', () => scheduleScreenerPreview(btn.dataset.symbol, btn.dataset.screenTab || ''));
+  btn.addEventListener('focus', () => scheduleScreenerPreview(btn.dataset.symbol, btn.dataset.screenTab || ''));
   btn.addEventListener('mouseleave', queueCloseScreenerPreview);
   btn.addEventListener('blur', queueCloseScreenerPreview);
   });
@@ -6452,15 +6965,23 @@ if (screenerPreviewCard) {
   screenerPreviewCard.addEventListener('mouseleave', queueCloseScreenerPreview);
 }
 
-async function openScreenerPreview(symbol) {
+async function openScreenerPreview(symbol, tabKey = '') {
   const sym = String(symbol || '').trim().toUpperCase();
   if (!sym) return;
   screenerPreviewSymbol = sym;
+  screenerPreviewMode = tabKey ? 'screener' : 'legacy';
+  screenerPreviewTab = tabKey || '';
+  screenerPreviewSymbols = tabKey && screenerTabData[tabKey] ? screenerTabData[tabKey].map(r => String(r.symbol || '').trim().toUpperCase()).filter(Boolean) : [];
+  screenerPreviewIndex = screenerPreviewSymbols.indexOf(sym);
+  if (screenerPreviewIndex < 0 && screenerPreviewSymbols.length) {
+    screenerPreviewIndex = 0;
+  }
   screenerPreviewTitle.textContent = sym;
   screenerPreviewSubtitle.textContent = 'Bhav chart preview';
   screenerPreviewMeta.textContent = 'Loading chart...';
   screenerPreviewOverlay.classList.add('open');
   screenerPreviewChartEl.innerHTML = '';
+  updateScreenerPreviewNav();
 
   if (screenerPreviewObserver) {
     screenerPreviewObserver.disconnect();
@@ -6481,6 +7002,7 @@ async function openScreenerPreview(symbol) {
     const card = await fetchScreenerPreviewCard(sym, controller.signal);
     if (!card || screenerPreviewSymbol !== sym) return;
     screenerPreviewMeta.textContent = card.end_close == null ? '' : `Close ${fmt(card.end_close, 2)}`;
+    updateScreenerPreviewNav();
     requestAnimationFrame(() => {
       if (screenerPreviewSymbol !== sym) return;
       screenerPreviewChart = drawSectorChart(screenerPreviewChartEl, card, true);
@@ -6504,12 +7026,14 @@ async function openScreenerPreview(symbol) {
 
 async function loadScreener() {
   if (!screenerPage) return;
-  setScreenerStatus('Running…');
+  setScreenerStatus('RunningÃ¢â‚¬Â¦');
   screenerRunBtn.disabled = true;
   screenerPanelVol.classList.add('loading');
   screenerPanelVlt.classList.add('loading');
+  if (screenerPanelInsideDays) screenerPanelInsideDays.classList.add('loading');
   screenerEmptyVol.style.display = 'none';
   screenerEmptyVlt.style.display = 'none';
+  if (screenerEmptyInsideDays) screenerEmptyInsideDays.style.display = 'none';
   try {
     const d = screenerAsOfEl.value;
     const mt = (parseFloat(screenerTurnoverEl.value) || 10) * 1e7;
@@ -6523,26 +7047,40 @@ async function loadScreener() {
     }
 
     renderScreenerMeta(data);
-    const nV = renderScreenerRows(data.low_volume || [], screenerTbodyVol, 'volume', 'min_vol_21d', fmtVol);
-    const nL = renderScreenerRows(data.low_volatility || [], screenerTbodyVlt, 'volatility', 'min_vlt_21d', (v) => fmt(v, 4));
+    screenerTabData = {
+      low_volume: data.low_volume || [],
+      low_volatility: data.low_volatility || [],
+      inside_days: data.inside_days || [],
+    };
+    const nV = renderScreenerRows(screenerTabData.low_volume, screenerTbodyVol, 'volume', 'min_vol_21d', fmtVol, true, 'low_volume');
+    const nL = renderScreenerRows(screenerTabData.low_volatility, screenerTbodyVlt, 'volatility', 'min_vlt_21d', (v) => fmt(v, 4), true, 'low_volatility');
+    const nI = renderScreenerInsideRows(screenerTabData.inside_days, screenerTbodyInsideDays, true, 'inside_days');
     screenerCountVol.textContent = nV;
     screenerCountVlt.textContent = nL;
+    if (screenerCountInsideDays) screenerCountInsideDays.textContent = nI;
+    if (screenerCountTabVol) screenerCountTabVol.textContent = nV;
+    if (screenerCountTabVlt) screenerCountTabVlt.textContent = nL;
+    if (screenerCountTabInsideDays) screenerCountTabInsideDays.textContent = nI;
     screenerEmptyVol.style.display = nV ? 'none' : 'block';
     screenerEmptyVlt.style.display = nL ? 'none' : 'block';
+    if (screenerEmptyInsideDays) screenerEmptyInsideDays.style.display = nI ? 'none' : 'block';
     screenerAsOfEl.value = data.as_of;
-    setScreenerStatus(`OK — ${nV} low-volume · ${nL} low-volatility stocks on ${data.as_of}.`, 'ok');
+    syncScreenerTabUI(screenerActiveTab || 'low_volume');
+    updateScreenerPreviewNav();
+    setScreenerStatus(`OK â€” ${nV} low-volume Â· ${nL} low-volatility Â· ${nI} inside-day stocks on ${data.as_of}.`, 'ok');
   } catch (e) {
     setScreenerStatus(`Error: ${e.message}`, 'err');
   } finally {
     screenerPanelVol.classList.remove('loading');
     screenerPanelVlt.classList.remove('loading');
+    if (screenerPanelInsideDays) screenerPanelInsideDays.classList.remove('loading');
     screenerRunBtn.disabled = false;
   }
 }
 
 async function loadGmList() {
   if (!gmlistPage) return;
-  setGmListStatus('Running…');
+  setGmListStatus('RunningÃ¢â‚¬Â¦');
   if (gmlistRunBtn) gmlistRunBtn.disabled = true;
   if (gmlistTabs) gmlistTabs.classList.add('loading');
   try {
@@ -6585,7 +7123,7 @@ async function loadGmList() {
 
     gmlistAsOfEl.value = data.as_of;
     const source = data.source_file ? data.source_file.replace(/^.*[\\/]/, '') : 'gmlist.txt';
-    setGmListStatus(`OK — ${nLv21} lv21 · ${nLowvol21} lowvol21 · ${nInsideDays} inside-day · ${nHd} hd stocks from ${source}.`, 'ok');
+    setGmListStatus(`OK Ã¢â‚¬â€ ${nLv21} lv21 Ã‚Â· ${nLowvol21} lowvol21 Ã‚Â· ${nInsideDays} inside-day Ã‚Â· ${nHd} hd stocks from ${source}.`, 'ok');
     gmlistStrongStartData = [];
     gmlistStrongStartLoadedDate = '';
     if (gmlistCountTabStrongStart) gmlistCountTabStrongStart.textContent = 0;
@@ -6684,7 +7222,7 @@ async function loadGmListLive(force = false) {
     if (gmlistLiveEmptyInsideDays) gmlistLiveEmptyInsideDays.style.display = nInsideDays ? 'none' : 'block';
 
     if (gmlistLiveAsOfEl && data.as_of) gmlistLiveAsOfEl.value = data.as_of;
-    if (gmlistLiveStatus) gmlistLiveStatus.textContent = `OK — ${nLv21} live lv21 · ${nLowvol21} live lowvol21 · ${nInsideDays} live inside-day stocks.`;
+    if (gmlistLiveStatus) gmlistLiveStatus.textContent = `OK Ã¢â‚¬â€ ${nLv21} live lv21 Ã‚Â· ${nLowvol21} live lowvol21 Ã‚Â· ${nInsideDays} live inside-day stocks.`;
     switchGmListLiveTab(gmlistLiveActiveTab || 'lv21');
   } catch (e) {
     if (gmlistLiveStatus) gmlistLiveStatus.textContent = `Error: ${e.message}`;
@@ -6899,12 +7437,12 @@ function createSectorHud(chartEl, isZoom = false) {
   hud.className = `sector-chart-hud${isZoom ? ' is-zoom' : ''}`;
   hud.innerHTML = `
     <div class="hud-grid">
-      <div class="hud-item"><span class="hud-key">O:</span><span class="hud-val">–</span></div>
-      <div class="hud-item"><span class="hud-key">H:</span><span class="hud-val">–</span></div>
-      <div class="hud-item"><span class="hud-key">V:</span><span class="hud-val">–</span></div>
-      <div class="hud-item"><span class="hud-key">C:</span><span class="hud-val">–</span></div>
-      <div class="hud-item"><span class="hud-key">L:</span><span class="hud-val">–</span></div>
-      <div class="hud-item"><span class="hud-key">%</span><span class="hud-val">–</span></div>
+      <div class="hud-item"><span class="hud-key">O:</span><span class="hud-val">Ã¢â‚¬â€œ</span></div>
+      <div class="hud-item"><span class="hud-key">H:</span><span class="hud-val">Ã¢â‚¬â€œ</span></div>
+      <div class="hud-item"><span class="hud-key">V:</span><span class="hud-val">Ã¢â‚¬â€œ</span></div>
+      <div class="hud-item"><span class="hud-key">C:</span><span class="hud-val">Ã¢â‚¬â€œ</span></div>
+      <div class="hud-item"><span class="hud-key">L:</span><span class="hud-val">Ã¢â‚¬â€œ</span></div>
+      <div class="hud-item"><span class="hud-key">%</span><span class="hud-val">Ã¢â‚¬â€œ</span></div>
     </div>
   `;
   chartEl.appendChild(hud);
@@ -7221,6 +7759,12 @@ document.addEventListener('keydown', (event) => {
   } else if (sectorOpen && event.key === 'ArrowRight') {
     event.preventDefault();
     stepSectorZoom(1);
+  } else if (previewOpen && screenerPreviewMode === 'screener' && event.key === 'ArrowLeft') {
+    event.preventDefault();
+    stepScreenerPreview(-1);
+  } else if (previewOpen && screenerPreviewMode === 'screener' && event.key === 'ArrowRight') {
+    event.preventDefault();
+    stepScreenerPreview(1);
   }
 });
 
@@ -7280,7 +7824,7 @@ function clearDates() {
   document.getElementById('toDate').value   = '';
 }
 
-// ── load stock ───────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ load stock Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 async function loadStock() {
   const sym      = symInput.value.trim().toUpperCase();
   if (!sym) { setStatus('Please enter a symbol', 'err'); return; }
@@ -7291,7 +7835,7 @@ async function loadStock() {
 
   const btn = document.getElementById('loadBtn');
   btn.disabled = true;
-  setStatus(`Loading data for ${sym} …`, '');
+  setStatus(`Loading data for ${sym} Ã¢â‚¬Â¦`, '');
   showSpinner(true);
   hideContent();
 
@@ -7315,7 +7859,7 @@ async function loadStock() {
     sortCol  = 'mktdate';
     sortAsc  = false;
 
-    const rangeLabel = `${data.from_date} → ${data.yesterday}`;
+    const rangeLabel = `${data.from_date} Ã¢â€ â€™ ${data.yesterday}`;
     document.getElementById('metaInfo').innerHTML =
       `<b style="color:var(--text)">${data.symbol}</b> &nbsp;|&nbsp; ` +
       `Range: <b>${rangeLabel}</b> &nbsp;|&nbsp; ` +
@@ -7336,7 +7880,7 @@ async function loadStock() {
   btn.disabled = false;
 }
 
-// ── summary cards ────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ summary cards Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 function renderSummary(data, sym) {
   const rows = data.rows;
   const mv   = data.minvol;
@@ -7347,17 +7891,17 @@ function renderSummary(data, sym) {
   const oldest = rows[rows.length - 1] || {};
   const hi52  = rows.reduce((a, r) => Math.max(a, r.high || 0), 0);
   const lo52  = rows.reduce((a, r) => Math.min(a, r.low  || Infinity), Infinity);
-  const pctFH = latest.close && hi52 ? (((latest.close - hi52) / hi52) * 100).toFixed(2) : '–';
+  const pctFH = latest.close && hi52 ? (((latest.close - hi52) / hi52) * 100).toFixed(2) : 'Ã¢â‚¬â€œ';
   const pctFL = latest.close && lo52 && lo52 < Infinity
-    ? (((latest.close - lo52) / lo52) * 100).toFixed(2) : '–';
+    ? (((latest.close - lo52) / lo52) * 100).toFixed(2) : 'Ã¢â‚¬â€œ';
 
   const cards = [
     { label: 'Latest Close',     value: fmt(latest.close, 2),     sub: latest.mktdate, cls: 'close-hi' },
     { label: 'Latest Diff %',    value: fmtPct(latest.diff),      sub: 'vs prev close', cls: colClass(latest.diff) },
     { label: '52W High',         value: fmt(hi52, 2),             sub: `${pctFH}% from high`, cls: '' },
     { label: '52W Low',          value: fmt(lo52 < Infinity ? lo52 : null, 2), sub: `+${pctFL}% from low`, cls: 'green' },
-    { label: 'Min Vol (63D win)',value: fmt(lv.table21_uses_63d_window, 0), sub: 'table lowvolume21 — 63D window', cls: 'warn' },
-    { label: 'Min Vol (21D win)',value: fmt(lv.table63_uses_21d_window, 0), sub: 'table lowvolume63 — 21D window', cls: 'warn' },
+    { label: 'Min Vol (63D win)',value: fmt(lv.table21_uses_63d_window, 0), sub: 'table lowvolume21 Ã¢â‚¬â€ 63D window', cls: 'warn' },
+    { label: 'Min Vol (21D win)',value: fmt(lv.table63_uses_21d_window, 0), sub: 'table lowvolume63 Ã¢â‚¬â€ 21D window', cls: 'warn' },
     { label: 'Min Volatility 63D', value: fmt(mv['63d'], 2), sub: '63 trading-day window', cls: '' },
     { label: 'Min Volatility 21D', value: fmt(mv['21d'], 2), sub: '21 trading-day window', cls: '' },
   ];
@@ -7365,13 +7909,13 @@ function renderSummary(data, sym) {
   document.getElementById('summaryCards').innerHTML = cards.map(c => `
     <div class="card">
       <div class="card-label">${c.label}</div>
-      <div class="card-value ${c.cls}">${(c.value != null ? c.value : '–')}</div>
+      <div class="card-value ${c.cls}">${(c.value != null ? c.value : 'Ã¢â‚¬â€œ')}</div>
       <div class="card-sub">${c.sub || ''}</div>
     </div>
   `).join('');
 }
 
-// ── table render ─────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ table render Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 function renderTable() {
   const sorted = [...allRows].sort((a, b) => {
     let av = a[sortCol], bv = b[sortCol];
@@ -7386,7 +7930,7 @@ function renderTable() {
     const col = th.dataset.col;
     const arrow = th.querySelector('.sort-arrow');
     th.classList.toggle('sorted', col === sortCol);
-    if (arrow) arrow.textContent = col === sortCol ? (sortAsc ? '▲' : '▼') : '';
+    if (arrow) arrow.textContent = col === sortCol ? (sortAsc ? 'Ã¢â€“Â²' : 'Ã¢â€“Â¼') : '';
   });
 
   document.getElementById('tableBody').innerHTML = sorted.map(r => {
@@ -7403,8 +7947,8 @@ function renderTable() {
     const volCellVol  = r._hl_lowvol ? 'hl-cell-vol' : '';
     return `
       <tr class="${trCls}">
-        <td>${r.mktdate || '–'}</td>
-        <td>${r.symbol || '–'}</td>
+        <td>${r.mktdate || 'Ã¢â‚¬â€œ'}</td>
+        <td>${r.symbol || 'Ã¢â‚¬â€œ'}</td>
         <td class="close-hi">${fmt(r.close, 2)}</td>
         <td>${fmt(r.open, 2)}</td>
         <td>${fmt(r.high, 2)}</td>
@@ -7425,7 +7969,7 @@ function renderTable() {
   }).join('');
 }
 
-// ── sort on header click ──────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ sort on header click Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 document.querySelectorAll('thead th[data-col]').forEach(th => {
   th.addEventListener('click', () => {
     const col = th.dataset.col;
@@ -7435,10 +7979,10 @@ document.querySelectorAll('thead th[data-col]').forEach(th => {
   });
 });
 
-// ── helpers ──────────────────────────────────────────────────────────────────
-function fmt(v, d = 2)   { return v == null ? '–' : Number(v).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d }); }
-function fmtPct(v)       { if (v == null) return '–'; return (v >= 0 ? '+' : '') + Number(v).toFixed(2) + '%'; }
-function fmtVol(v)       { return v == null ? '–' : Number(v).toLocaleString('en-IN'); }
+// Ã¢â€â‚¬Ã¢â€â‚¬ helpers Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+function fmt(v, d = 2)   { return v == null ? 'Ã¢â‚¬â€œ' : Number(v).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d }); }
+function fmtPct(v)       { if (v == null) return 'Ã¢â‚¬â€œ'; return (v >= 0 ? '+' : '') + Number(v).toFixed(2) + '%'; }
+function fmtVol(v)       { return v == null ? 'Ã¢â‚¬â€œ' : Number(v).toLocaleString('en-IN'); }
 function escapeHtml(v) {
   return String(v)
     .replace(/&/g, '&amp;')
@@ -7462,7 +8006,7 @@ function showContent()   { document.getElementById('contentArea').style.display 
 function hideContent()   { document.getElementById('contentArea').style.display = 'none'; }
 function showEmpty()     { document.getElementById('emptyState').style.display = 'flex'; }
 
-// ── enter key on input ────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ enter key on input Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 symInput.addEventListener('keydown', e => { if (e.key === 'Enter') loadStock(); });
 
 </script>

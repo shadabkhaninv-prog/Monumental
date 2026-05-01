@@ -80,6 +80,32 @@ OUTPUT_DIR = Path("output")
 REPORTS_DIR = Path("reports")
 GMLIST_DIR = Path("gmlist")
 TOKEN_FILE = Path("kite_token.txt")
+ROOT_DIR = Path(__file__).resolve().parent
+LOGS_DIR = ROOT_DIR / "logs"
+
+
+def setup_run_logging(as_of: datetime, reset: datetime) -> Path:
+    """Attach a persistent file log for this scanner run."""
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    log_path = LOGS_DIR / (
+        f"neo_liquid_momentum_{as_of.strftime('%Y%m%d')}_{reset.strftime('%Y%m%d')}.log"
+    )
+
+    root_logger = logging.getLogger()
+    resolved_log_path = log_path.resolve()
+    for handler in root_logger.handlers:
+        if isinstance(handler, logging.FileHandler):
+            try:
+                if Path(handler.baseFilename).resolve() == resolved_log_path:
+                    return log_path
+            except Exception:
+                continue
+
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    root_logger.addHandler(file_handler)
+    return log_path
 
 # ---------------------------------------------------------------------------
 # Database helpers
@@ -1616,12 +1642,14 @@ def main():
     args = parse_args()
     as_of = datetime.strptime(args.as_of_date, "%Y-%m-%d")
     reset = datetime.strptime(args.reset_date, "%Y-%m-%d")
+    run_log_path = setup_run_logging(as_of, reset)
     ohlcv_from = min(as_of - timedelta(days=375), reset - timedelta(days=5))
     debug_symbol = args.debug.strip().upper() if args.debug else None
 
     pipeline_summary = {}
     failed_symbols = []
 
+    log.info(f"Persistent log file: {run_log_path}")
     log.info(f"Stock OHLC source: {args.source}")
     if debug_symbol:
         log.info(f"[DEBUG] Trace mode enabled for symbol: {debug_symbol}")

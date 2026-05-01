@@ -47,6 +47,7 @@ def parse_args():
     parser.add_argument("--sym-col",    default="symbol",  help="Symbol column name (default: symbol)")
     parser.add_argument("--sector-col", default="sector1", help="Sector column name (default: sector1)")
     parser.add_argument("--out",   default=DEFAULT_OUT, help=f"Output CSV path (default: {DEFAULT_OUT})")
+    parser.add_argument("--password", default="", help="MySQL password (optional; falls back to MYSQL_PASSWORD or prompt)")
     return parser.parse_args()
 
 
@@ -54,9 +55,11 @@ def main():
     args = parse_args()
 
     # Prompt for password securely (not echoed to terminal)
-    password = getpass.getpass(
-        f"  MySQL password for {args.user}@{args.host}:{args.port}: "
-    )
+    password = args.password or os.environ.get("MYSQL_PASSWORD", "")
+    if not password:
+        password = getpass.getpass(
+            f"  MySQL password for {args.user}@{args.host}:{args.port}: "
+        )
 
     # Connect
     try:

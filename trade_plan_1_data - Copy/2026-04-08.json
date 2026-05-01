@@ -1,49 +1,31 @@
 ﻿{
-    "date":  "2026-04-25",
-    "saved_at":  "2026-04-27T17:10:16",
+    "date":  "2026-04-08",
+    "saved_at":  "2026-04-26T11:57:50",
     "positions":  [
                       {
-                          "id":  "p1776944248494n9mf",
-                          "symbol":  "GUJALKALI",
-                          "merits":  "BIG FUCKING MOVE ON HUGE VOLUMES . TWO TIGHTS ",
+                          "id":  "p17771757001785k6g",
+                          "symbol":  "POWERINDIA",
+                          "merits":  "MARKET LEADER .POWER EQUIPMENT HOTTEST SECTOR . DATACENTRE POWER HUNGRY BOOM",
                           "conviction":  3,
-                          "cmp":  769.45,
-                          "planEntry":  742,
-                          "planSL":  718.9,
+                          "cmp":  25915,
+                          "planEntry":  25960,
+                          "planSL":  25140,
                           "riskAmount":  3000,
-                          "actualEntry":  740.2,
-                          "daySL":  null,
-                          "actualQty":  155,
-                          "entryDate":  "2026-04-23",
+                          "actualEntry":  25960,
+                          "overnightEntry":  null,
+                          "overnightQty":  null,
+                          "overnightSL":  null,
+                          "actualQty":  4,
+                          "entryDate":  "2026-04-08",
                           "posHigh":  null,
                           "trailOverride":  null,
                           "trailNote":  "",
-                          "thoughtTag":  "LESSON",
+                          "thoughtTag":  "NOTE",
                           "thoughtLog":  [
                                              {
-                                                 "ts":  "2026-04-24T05:44:55.269Z",
+                                                 "ts":  "2026-04-26T03:57:41.820Z",
                                                  "tag":  "NOTE",
-                                                 "text":  "wacky 5 min bar ,dump ed most qty"
-                                             },
-                                             {
-                                                 "ts":  "2026-04-24T05:45:10.550Z",
-                                                 "tag":  "NOTE",
-                                                 "text":  "not an ideal trade . the orb was so high for this type of stock"
-                                             },
-                                             {
-                                                 "ts":  "2026-04-24T08:11:36.206Z",
-                                                 "tag":  "NOTE",
-                                                 "text":  "hanging on to 60 qty .entry little hasty"
-                                             },
-                                             {
-                                                 "ts":  "2026-04-24T08:47:51.746Z",
-                                                 "tag":  "LESSON",
-                                                 "text":  "with such a huge bar 5 min bar in a jitter stock was bad trade 3% open bar fade avoid"
-                                             },
-                                             {
-                                                 "ts":  "2026-04-24T08:50:06.234Z",
-                                                 "tag":  "LESSON",
-                                                 "text":  "just patience and sticking to plan makes bad trade good"
+                                                 "text":  "OPENING DIP PANIC SELL"
                                              }
                                          ],
                           "movedBE":  false,
@@ -51,12 +33,12 @@
                                         {
                                             "pct":  3,
                                             "type":  "fixed",
-                                            "ap":  731.5,
-                                            "sq":  125,
-                                            "dt":  "2026-04-24",
+                                            "ap":  26120,
+                                            "sq":  4,
+                                            "dt":  "2026-04-09",
                                             "done":  true,
-                                            "_sug":  759.37,
-                                            "_pnl":  -1088
+                                            "_sug":  26738.8,
+                                            "_pnl":  640
                                         },
                                         {
                                             "pct":  10,
@@ -65,7 +47,7 @@
                                             "sq":  null,
                                             "dt":  "",
                                             "done":  false,
-                                            "_sug":  788.86,
+                                            "_sug":  27777.2,
                                             "_pnl":  null
                                         },
                                         {
@@ -75,7 +57,7 @@
                                             "sq":  null,
                                             "dt":  "",
                                             "done":  false,
-                                            "_sug":  847.84,
+                                            "_sug":  29854,
                                             "_pnl":  null
                                         },
                                         {
@@ -85,7 +67,7 @@
                                             "sq":  null,
                                             "dt":  "",
                                             "done":  false,
-                                            "_sug":  921.56,
+                                            "_sug":  32450,
                                             "_pnl":  null
                                         }
                                     ],
@@ -110,26 +92,22 @@
                                        "note":  ""
                                    },
                           "collapsed":  false,
-                          "_coreRps":  23.100000000000023,
-                          "_blendRps":  23.100000000000023,
-                          "_rps":  "23.10",
-                          "_qty":  129,
-                          "_predQty":  129,
-                          "_predRisk":  2979.9,
-                          "_planRisk":  2979.9,
-                          "_suggestedQty":  56,
-                          "_rem":  60,
-                          "_realPnl":  -1088,
-                          "_openPnl":  1932,
-                          "_currentSL":  718.9,
-                          "_days":  4,
+                          "_coreRps":  820,
+                          "_blendRps":  820,
+                          "_rps":  "Core Rs 820.00 | Intra Rs 820.00 | Blend Rs 820.00",
+                          "_qty":  4,
+                          "_predQty":  3,
+                          "_predRisk":  2460,
+                          "_planRisk":  3280,
+                          "_suggestedQty":  1,
+                          "_rem":  0,
+                          "_realPnl":  640,
+                          "_openPnl":  null,
+                          "_currentSL":  25140,
+                          "_days":  18,
                           "_beSug":  true,
-                          "_status":  "partial",
-                          "_blendPct":  3.11,
-                          "_avgPlanEntry":  742,
-                          "tacticalSL":  null,
-                          "tacticalQty":  30,
-                          "tacticalEntry":  722
+                          "_status":  "closed",
+                          "tacticalSL":  null
                       }
                   ]
 }

@@ -146,7 +146,6 @@ def legacy_checklist_values(groups: List[Dict[str, object]]) -> Dict[str, str]:
 
 class BhavRepository:
     def __init__(self) -> None:
-        self.conn = mysql.connector.connect(**DB_CONFIG)
         self._year_tables: Optional[List[int]] = None
         self._symbol_catalog: Optional[List[str]] = None
         self._symbol_set: set[str] = set()
@@ -156,17 +155,7 @@ class BhavRepository:
         self._load_reference_data()
 
     def _get_conn(self):
-        conn = getattr(self, "conn", None)
-        try:
-            if conn is None or not conn.is_connected():
-                conn = mysql.connector.connect(**DB_CONFIG)
-                self.conn = conn
-            else:
-                conn.ping(reconnect=True, attempts=1, delay=0)
-        except Exception:
-            conn = mysql.connector.connect(**DB_CONFIG)
-            self.conn = conn
-        return conn
+        return mysql.connector.connect(**DB_CONFIG)
 
     def _log_debug(self, message: str) -> None:
         stamp = datetime.now().isoformat(timespec="seconds")
@@ -177,15 +166,6 @@ class BhavRepository:
                 fh.write(line)
         except Exception:
             pass
-
-    def _close_conn(self) -> None:
-        conn = getattr(self, "conn", None)
-        self.conn = None
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
 
     def _is_transient_mysql_error(self, exc: Exception) -> bool:
         if not isinstance(exc, mysql.connector.Error):
@@ -202,20 +182,25 @@ class BhavRepository:
             )
         )
 
-    def _with_retry_cursor(self, work):
-        last_exc: Optional[Exception] = None
+    def _log_db_failure(self, context: str, exc: Exception) -> None:
+        self._log_debug(
+            f"db failure [{context}]: {exc.__class__.__name__}: {exc}\n"
+            + traceback.format_exc().rstrip()
+        )
+
+    def _with_retry_cursor(self, work, context: str = "db operation"):
         for attempt in range(2):
-            conn = self._get_conn()
+            conn = None
             cursor = None
             try:
+                conn = self._get_conn()
                 cursor = conn.cursor()
                 return work(cursor)
             except Exception as exc:
-                last_exc = exc
                 if attempt == 0 and self._is_transient_mysql_error(exc):
-                    self._log_debug(f"mysql reconnect retry after transient error: {exc}")
-                    self._close_conn()
+                    self._log_db_failure(f"{context} attempt={attempt + 1} retrying", exc)
                     continue
+                self._log_db_failure(f"{context} attempt={attempt + 1}", exc)
                 raise
             finally:
                 if cursor is not None:
@@ -223,8 +208,11 @@ class BhavRepository:
                         cursor.close()
                     except Exception:
                         pass
-        if last_exc is not None:
-            raise last_exc
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
 
     def _load_reference_data(self) -> None:
         self._inactive_map = self._load_inactive_map()
@@ -241,7 +229,7 @@ class BhavRepository:
                 if company_name:
                     self._company_names[normalized] = str(company_name)
 
-        self._with_retry_cursor(load_company_names)
+        self._with_retry_cursor(load_company_names, "load company names from nse_symbols")
 
         latest_years = self.available_year_tables()[:3]
         def load_symbol_catalog(cursor):
@@ -252,7 +240,10 @@ class BhavRepository:
                     if normalized:
                         symbols.add(normalized)
 
-        self._with_retry_cursor(load_symbol_catalog)
+        self._with_retry_cursor(
+            load_symbol_catalog,
+            f"load symbol catalog from {', '.join('bhav' + str(year) for year in latest_years) or 'bhav tables'}",
+        )
 
         self._symbol_catalog = sorted(symbols)
         self._symbol_set = set(self._symbol_catalog)
@@ -275,7 +266,7 @@ class BhavRepository:
                 if old_norm and new_norm:
                     result[old_norm] = new_norm
 
-        self._with_retry_cursor(load)
+        self._with_retry_cursor(load, "load inactive symbol map from inactive_symbols")
         return result
 
     def available_year_tables(self) -> List[int]:
@@ -289,7 +280,7 @@ class BhavRepository:
                     if suffix.isdigit():
                         years.append(int(suffix))
 
-            self._with_retry_cursor(load)
+            self._with_retry_cursor(load, "discover bhav year tables")
             self._year_tables = sorted(years, reverse=True)
         return self._year_tables
 
@@ -363,7 +354,7 @@ class BhavRepository:
                 return cursor.fetchone()
 
             try:
-                row = self._with_retry_cursor(lookup)
+                row = self._with_retry_cursor(lookup, f"lookup_last_close symbol={normalized} table=bhav{year}")
             except Exception as exc:
                 self._log_debug(f"lookup_last_close failed for {normalized} year={year}: {exc}")
                 continue
@@ -401,7 +392,7 @@ class BhavRepository:
                 return cursor.fetchall()
 
             try:
-                year_rows = self._with_retry_cursor(load_year)
+                year_rows = self._with_retry_cursor(load_year, f"fetch_daily_bars symbol={normalized} table=bhav{year}")
             except Exception as exc:
                 self._log_debug(f"fetch_daily_bars failed for {normalized} year={year}: {exc}")
                 continue
@@ -426,7 +417,7 @@ class BhavRepository:
                 return cursor.fetchone()
 
             try:
-                row = self._with_retry_cursor(load)
+                row = self._with_retry_cursor(load, f"latest_market_date table=bhav{year}")
             except Exception as exc:
                 self._log_debug(f"latest_market_date failed for year={year}: {exc}")
                 continue
@@ -514,11 +505,19 @@ class TradePlanStore:
                 str(position.get("entryDate") or ""),
                 str(position.get("actualEntry") or ""),
                 str(position.get("coreEntry") or ""),
-                str(position.get("tacticalEntry") or position.get("overnightEntry") or ""),
+                str(position.get("tacticalEntry") or ""),
                 str(position.get("planSL") or ""),
                 str(position.get("trailOverride") or ""),
             ]
         )
+
+    def _strip_legacy_trade_fields(self, position: Dict[str, object]) -> Dict[str, object]:
+        if not isinstance(position, dict):
+            return position
+        normalized = copy.deepcopy(position)
+        for legacy_key in ("overnightEntry", "overnightQty", "overnightSL", "intraQty", "intraEntry", "intraSL", "intraRiskPct"):
+            normalized.pop(legacy_key, None)
+        return normalized
 
     def _parse_trim_date(self, value: object) -> Optional[date]:
         text = str(value or "").strip()
@@ -2808,8 +2807,6 @@ class TradePlanStore:
             "tacticalSL",
             "riskAmount",
             "entryDate",
-            "overnightEntry",
-            "overnightQty",
             "trailNote",
             "posHigh",
             "trailOverride",
@@ -2849,7 +2846,7 @@ class TradePlanStore:
         raw = position.get("tacticalQty")
         if raw not in (None, ""):
             return max(0.0, self._as_float(raw))
-        return max(0.0, self._as_float(position.get("overnightQty")))
+        return 0.0
 
     def _primary_core_qty(self, position: Dict[str, object]) -> float:
         raw = position.get("coreQty")
@@ -2861,7 +2858,7 @@ class TradePlanStore:
         raw = position.get("tacticalEntry")
         if raw not in (None, ""):
             return self._as_float(raw)
-        return self._as_float(position.get("overnightEntry"))
+        return 0.0
 
     def _primary_core_entry(self, position: Dict[str, object]) -> float:
         raw = position.get("coreEntry")
@@ -2873,7 +2870,7 @@ class TradePlanStore:
         raw = position.get("tacticalSL")
         if raw not in (None, ""):
             return self._as_float(raw)
-        return self._as_float(position.get("overnightSL"))
+        return 0.0
 
     def _primary_core_sl(self, position: Dict[str, object]) -> float:
         raw = position.get("coreSL")
@@ -3203,7 +3200,8 @@ class TradePlanStore:
         path = self.plan_path(plan_date)
         if not isinstance(payload, dict):
             payload = {"positions": []}
-        payload["positions"] = self._apply_trim_date_hints(self._dedupe_positions(payload.get("positions", [])))
+        normalized_positions = [self._strip_legacy_trade_fields(position) for position in payload.get("positions", []) if isinstance(position, dict)]
+        payload["positions"] = self._apply_trim_date_hints(self._dedupe_positions(normalized_positions))
         payload["date"] = plan_date
         payload["path"] = str(path)
         payload["exists"] = True
@@ -3223,7 +3221,8 @@ class TradePlanStore:
 
     def save_plan(self, plan_date: str, positions: Sequence[dict]) -> Dict[str, object]:
         path = self.plan_path(plan_date)
-        cleaned_positions = [position for position in self._apply_trim_date_hints(positions) if self._is_meaningful_position(position)]
+        normalized_positions = [self._strip_legacy_trade_fields(position) for position in positions if isinstance(position, dict)]
+        cleaned_positions = [position for position in self._apply_trim_date_hints(normalized_positions) if self._is_meaningful_position(position)]
         cleaned_positions = self._dedupe_positions(cleaned_positions)
         payload = {
             "date": plan_date,

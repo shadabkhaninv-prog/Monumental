@@ -1,6 +1,6 @@
 ﻿{
-    "date":  "2026-04-28",
-    "saved_at":  "2026-04-28T16:52:03",
+    "date":  "2026-04-27",
+    "saved_at":  "2026-04-28T16:51:49",
     "positions":  [
                       {
                           "id":  "p17772657173905asf",
@@ -12,6 +12,9 @@
                           "planSL":  214.49,
                           "riskAmount":  1200,
                           "actualEntry":  219.93,
+                          "overnightEntry":  219.93,
+                          "overnightQty":  50,
+                          "overnightSL":  217.9,
                           "daySL":  214.58,
                           "actualQty":  280,
                           "entryDate":  "2026-04-27",
@@ -121,10 +124,7 @@
                           "_beSug":  false,
                           "_status":  "partial",
                           "_avgPlanEntry":  220.31,
-                          "_blendPct":  2.17,
-                          "tacticalQty":  50,
-                          "tacticalEntry":  219.93,
-                          "tacticalSL":  217.9
+                          "_blendPct":  2.17
                       },
                       {
                           "id":  "p17770254578501mo0",
@@ -136,6 +136,9 @@
                           "planSL":  3410.9,
                           "riskAmount":  3000,
                           "actualEntry":  3488.9,
+                          "overnightEntry":  3449,
+                          "overnightQty":  25,
+                          "overnightSL":  3411.9,
                           "daySL":  3449.9,
                           "actualQty":  40,
                           "entryDate":  "2026-04-27",
@@ -165,12 +168,12 @@
                                         {
                                             "pct":  3,
                                             "type":  "fixed",
-                                            "ap":  3579.8,
-                                            "sq":  11,
+                                            "ap":  null,
+                                            "sq":  null,
                                             "dt":  "2026-04-24",
-                                            "done":  true,
+                                            "done":  false,
                                             "_sug":  3577.76,
-                                            "_pnl":  1000
+                                            "_pnl":  null
                                         },
                                         {
                                             "pct":  10,
@@ -232,18 +235,16 @@
                           "_predRisk":  2990.4,
                           "_planRisk":  3795.4,
                           "_suggestedQty":  20,
-                          "_rem":  54,
-                          "_realPnl":  1000,
-                          "_openPnl":  3297,
+                          "_rem":  65,
+                          "_realPnl":  0,
+                          "_openPnl":  3968,
                           "_currentSL":  3410.9,
                           "_days":  1,
                           "_beSug":  false,
-                          "_status":  "partial",
+                          "_status":  "active",
                           "_avgPlanEntry":  3482.1,
                           "_blendPct":  1.71,
-                          "tacticalQty":  25,
-                          "tacticalEntry":  3449,
-                          "tacticalSL":  3411.9
+                          "tacticalEntry":  null
                       },
                       {
                           "id":  "p1777275356085ebju",
@@ -254,7 +255,10 @@
                           "planEntry":  2815,
                           "planSL":  2773,
                           "riskAmount":  1500,
-                          "actualEntry":  2807.3,
+                          "actualEntry":  2802.31,
+                          "overnightEntry":  null,
+                          "overnightQty":  null,
+                          "overnightSL":  null,
                           "daySL":  2773.7,
                           "actualQty":  40,
                           "entryDate":  "2026-04-27",
@@ -267,11 +271,6 @@
                                                  "ts":  "2026-04-27T08:13:43.170Z",
                                                  "tag":  "NOTE",
                                                  "text":  "not convinced , its just jittery and sloppy but its a leader .bse is leading so lets see"
-                                             },
-                                             {
-                                                 "ts":  "2026-04-28T04:36:01.666Z",
-                                                 "tag":  "NOTE",
-                                                 "text":  "performing better than i had expected"
                                              }
                                          ],
                           "movedBE":  false,
@@ -279,12 +278,12 @@
                                         {
                                             "pct":  3,
                                             "type":  "fixed",
-                                            "ap":  2870.8,
-                                            "sq":  12,
+                                            "ap":  null,
+                                            "sq":  null,
                                             "dt":  "2026-04-27",
-                                            "done":  true,
-                                            "_sug":  2891.52,
-                                            "_pnl":  762
+                                            "done":  false,
+                                            "_sug":  2886.38,
+                                            "_pnl":  null
                                         },
                                         {
                                             "pct":  10,
@@ -293,7 +292,7 @@
                                             "sq":  null,
                                             "dt":  "",
                                             "done":  false,
-                                            "_sug":  3003.81,
+                                            "_sug":  2998.47,
                                             "_pnl":  null
                                         },
                                         {
@@ -303,7 +302,7 @@
                                             "sq":  null,
                                             "dt":  "",
                                             "done":  false,
-                                            "_sug":  3228.39,
+                                            "_sug":  3222.66,
                                             "_pnl":  null
                                         },
                                         {
@@ -313,7 +312,7 @@
                                             "sq":  null,
                                             "dt":  "",
                                             "done":  false,
-                                            "_sug":  3509.13,
+                                            "_sug":  3502.89,
                                             "_pnl":  null
                                         }
                                     ],
@@ -347,54 +346,67 @@
                           "_planRisk":  1470,
                           "_avgPlanEntry":  2815,
                           "_suggestedQty":  12,
-                          "_rem":  28,
-                          "_realPnl":  762,
-                          "_openPnl":  636,
+                          "_rem":  40,
+                          "_realPnl":  0,
+                          "_openPnl":  1108,
                           "_currentSL":  2773,
                           "_days":  1,
                           "_beSug":  false,
-                          "_status":  "partial",
+                          "_status":  "active",
                           "_blendPct":  1.49,
                           "tacticalEntry":  null,
                           "tacticalSL":  null
                       },
                       {
-                          "id":  "p1777309904927mw7g",
-                          "symbol":  "ARSSBL",
-                          "merits":  "big bounce .groww doing well , flag structure , nice tight inside day.tried rally in last attempt . intraday massive big bar open , so this will be a small position.",
-                          "conviction":  2,
-                          "cmp":  581.4,
-                          "planEntry":  607,
-                          "planSL":  584.9,
-                          "riskAmount":  2000,
-                          "actualEntry":  606.43,
-                          "daySL":  597.9,
-                          "actualQty":  20,
-                          "entryDate":  "2026-04-28",
+                          "id":  "p1776944248494n9mf",
+                          "symbol":  "GUJALKALI",
+                          "merits":  "BIG FUCKING MOVE ON HUGE VOLUMES . TWO TIGHTS ",
+                          "conviction":  3,
+                          "cmp":  736.65,
+                          "planEntry":  742,
+                          "planSL":  718.9,
+                          "riskAmount":  3000,
+                          "actualEntry":  740.2,
+                          "overnightEntry":  722,
+                          "overnightQty":  30,
+                          "overnightSL":  709.9,
+                          "daySL":  719.8,
+                          "actualQty":  155,
+                          "entryDate":  "2026-04-23",
                           "posHigh":  null,
-                          "trailOverride":  null,
-                          "trailNote":  "",
-                          "thoughtTag":  "NOTE",
+                          "trailOverride":  744.9,
+                          "trailNote":  "made a good sized .now protect some gains by defending previous pivot",
+                          "thoughtTag":  "LESSON",
                           "thoughtLog":  [
                                              {
-                                                 "ts":  "2026-04-28T04:11:58.046Z",
+                                                 "ts":  "2026-04-24T05:44:55.269Z",
                                                  "tag":  "NOTE",
-                                                 "text":  "big opening , over 3% cant add position"
+                                                 "text":  "wacky 5 min bar ,dump ed most qty"
                                              },
                                              {
-                                                 "ts":  "2026-04-28T04:35:37.003Z",
+                                                 "ts":  "2026-04-24T05:45:10.550Z",
                                                  "tag":  "NOTE",
-                                                 "text":  "dabble with 100 qty witth intraday sl"
+                                                 "text":  "not an ideal trade . the orb was so high for this type of stock"
                                              },
                                              {
-                                                 "ts":  "2026-04-28T05:49:03.052Z",
+                                                 "ts":  "2026-04-24T08:11:36.206Z",
                                                  "tag":  "NOTE",
-                                                 "text":  "took a small one here . but hate this big opening bar strugglers"
+                                                 "text":  "hanging on to 60 qty .entry little hasty"
                                              },
                                              {
-                                                 "ts":  "2026-04-28T05:59:27.014Z",
-                                                 "tag":  "NOTE",
-                                                 "text":  "TOSSED IT A VOILATION . INTRADAY SETUP IN A SLOPPY STOCK"
+                                                 "ts":  "2026-04-24T08:47:51.746Z",
+                                                 "tag":  "LESSON",
+                                                 "text":  "with such a huge bar 5 min bar in a jitter stock was bad trade 3% open bar fade avoid"
+                                             },
+                                             {
+                                                 "ts":  "2026-04-24T08:50:06.234Z",
+                                                 "tag":  "LESSON",
+                                                 "text":  "just patience and sticking to plan makes bad trade good"
+                                             },
+                                             {
+                                                 "ts":  "2026-04-27T05:06:25.185Z",
+                                                 "tag":  "LESSON",
+                                                 "text":  "ugly candle after hitting 800 moved sl on remaining to 744"
                                              }
                                          ],
                           "movedBE":  false,
@@ -402,32 +414,32 @@
                                         {
                                             "pct":  3,
                                             "type":  "fixed",
-                                            "ap":  597,
-                                            "sq":  80,
-                                            "dt":  "2026-04-28",
+                                            "ap":  731.5,
+                                            "sq":  145,
+                                            "dt":  "2026-04-24",
                                             "done":  true,
-                                            "_sug":  605.87,
-                                            "_pnl":  -754
+                                            "_sug":  759.37,
+                                            "_pnl":  -1262
                                         },
                                         {
                                             "pct":  10,
                                             "type":  "trail",
-                                            "ap":  null,
-                                            "sq":  null,
-                                            "dt":  "",
-                                            "done":  false,
-                                            "_sug":  629.4,
-                                            "_pnl":  null
+                                            "ap":  764.04,
+                                            "sq":  12,
+                                            "dt":  "2026-04-27",
+                                            "done":  true,
+                                            "_sug":  788.86,
+                                            "_pnl":  286
                                         },
                                         {
                                             "pct":  15,
                                             "type":  "fixed",
-                                            "ap":  null,
-                                            "sq":  null,
+                                            "ap":  744.8,
+                                            "sq":  28,
                                             "dt":  "",
-                                            "done":  false,
-                                            "_sug":  676.45,
-                                            "_pnl":  null
+                                            "done":  true,
+                                            "_sug":  847.84,
+                                            "_pnl":  129
                                         },
                                         {
                                             "pct":  25,
@@ -436,7 +448,7 @@
                                             "sq":  null,
                                             "dt":  "",
                                             "done":  false,
-                                            "_sug":  735.28,
+                                            "_sug":  921.56,
                                             "_pnl":  null
                                         }
                                     ],
@@ -458,29 +470,28 @@
                                                              false
                                                          ]
                                                      ],
-                                       "note":  ""
+                                       "note":  "patience and holding sl can turn mediocore position to profitable"
                                    },
                           "collapsed":  false,
-                          "_coreRps":  22.100000000000023,
-                          "_blendRps":  18.50000000000002,
-                          "_blendPct":  3.05,
-                          "_rps":  "18.50",
-                          "_qty":  91,
-                          "_predQty":  90,
-                          "_predRisk":  1989,
-                          "_planRisk":  1999.1,
-                          "_avgPlanEntry":  607,
-                          "_suggestedQty":  24,
+                          "_coreRps":  23.100000000000023,
+                          "_blendRps":  23.100000000000023,
+                          "_rps":  "23.10",
+                          "_qty":  129,
+                          "_predQty":  129,
+                          "_predRisk":  2979.9,
+                          "_planRisk":  2979.9,
+                          "_suggestedQty":  56,
                           "_rem":  0,
-                          "_realPnl":  -754,
+                          "_realPnl":  -847,
                           "_openPnl":  null,
-                          "_currentSL":  584.9,
-                          "_days":  0,
-                          "_beSug":  false,
+                          "_currentSL":  744.9,
+                          "_days":  5,
+                          "_beSug":  true,
                           "_status":  "closed",
-                          "tacticalQty":  60,
-                          "tacticalEntry":  582.15,
-                          "tacticalSL":  576.4
+                          "_avgPlanEntry":  742,
+                          "_blendPct":  3.11,
+                          "tacticalEntry":  null,
+                          "tacticalSL":  null
                       }
                   ]
 }

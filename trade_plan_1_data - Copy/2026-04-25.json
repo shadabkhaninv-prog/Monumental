@@ -12,6 +12,9 @@
                           "planSL":  718.9,
                           "riskAmount":  3000,
                           "actualEntry":  740.2,
+                          "overnightEntry":  722,
+                          "overnightQty":  30,
+                          "overnightSL":  null,
                           "daySL":  null,
                           "actualQty":  155,
                           "entryDate":  "2026-04-23",
@@ -127,9 +130,8 @@
                           "_status":  "partial",
                           "_blendPct":  3.11,
                           "_avgPlanEntry":  742,
-                          "tacticalSL":  null,
-                          "tacticalQty":  30,
-                          "tacticalEntry":  722
+                          "tacticalEntry":  null,
+                          "tacticalSL":  null
                       }
                   ]
 }

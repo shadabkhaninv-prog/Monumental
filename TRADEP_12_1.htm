@@ -1,0 +1,1031 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>TradePlan — Morning Briefing</title>
+<style>
+  :root{
+    --bg:#070a10;
+    --panel:#0c1119;
+    --panel-2:#10151f;
+    --panel-3:#141a26;
+    --line:#1a2230;
+    --line-2:#26334a;
+    --line-3:#374259;
+    --text:#dde4ee;
+    --text-dim:#8a96aa;
+    --text-faint:#525d72;
+    --cyan:#5eead4;
+    --cyan-dim:#2dd4bf;
+    --green:#86efac;
+    --green-dim:#22c55e;
+    --amber:#fcd34d;
+    --amber-dim:#f59e0b;
+    --red:#f87171;
+    --red-dim:#ef4444;
+    --purple:#c4b5fd;
+    --purple-dim:#a78bfa;
+    --blue:#7dd3fc;
+    --pink:#f0abfc;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;height:100vh;width:100vw;overflow:hidden;background:var(--bg);color:var(--text);font-family:'Inter','SF Pro Text',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;line-height:1.45;letter-spacing:.005em}
+  .mono{font-family:'JetBrains Mono','Fira Code',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+
+  /* ============ APP SHELL ============ */
+  .app{display:grid;grid-template-rows:56px 1fr;height:100vh}
+
+  /* ----- TOP BAR ----- */
+  .topbar{display:grid;grid-template-columns:340px 1fr auto;align-items:center;border-bottom:1px solid var(--line);background:var(--bg);padding:0 22px 0 0}
+  .brand{display:flex;align-items:center;gap:11px;padding:0 20px;height:56px;border-right:1px solid var(--line)}
+  .logo{width:32px;height:32px;border:1px solid var(--cyan-dim);border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--cyan);font-size:12px;font-weight:600;letter-spacing:.04em;background:rgba(45,212,191,.06)}
+  .brand-text{display:flex;flex-direction:column;gap:1px}
+  .brand-text .l1{font-size:12px;font-weight:600;letter-spacing:.16em;color:var(--text)}
+  .brand-text .l2{font-size:10px;letter-spacing:.2em;color:var(--text-faint)}
+
+  .nav{display:flex;justify-content:center;gap:4px}
+  .nav a{padding:9px 18px;font-size:13px;color:var(--text-dim);text-decoration:none;border-radius:5px;cursor:pointer}
+  .nav a.on{color:var(--text);background:var(--panel-2);border:1px solid var(--line-2)}
+  .nav a:hover:not(.on){color:var(--text)}
+
+  .topstats{display:flex;gap:26px;align-items:center}
+  .topstats .stat{display:flex;flex-direction:column;align-items:flex-end;gap:1px}
+  .topstats .lbl{font-size:10px;letter-spacing:.18em;color:var(--text-faint);text-transform:uppercase}
+  .topstats .val{font-size:14px;color:var(--text);font-variant-numeric:tabular-nums;font-weight:500}
+  .topstats .stat.risk .val{color:var(--red)}
+  .topstats .stat.free .val{color:var(--green)}
+
+  /* ----- BODY GRID ----- */
+  .body{display:grid;grid-template-columns:340px 1fr;height:calc(100vh - 56px);overflow:hidden}
+
+  /* ============ SIDEBAR ============ */
+  .sidebar{border-right:1px solid var(--line);padding:14px 14px 12px;overflow:hidden;display:flex;flex-direction:column;gap:11px;min-height:0}
+  .side-head{font-size:10px;letter-spacing:.22em;color:var(--text-faint);text-transform:uppercase;font-weight:500}
+  .side-day{display:flex;align-items:baseline;gap:11px;border-bottom:1px solid var(--line);padding-bottom:10px}
+  .side-day .d{font-size:32px;color:var(--text);letter-spacing:.01em;font-weight:300;line-height:1}
+  .side-day .meta{font-size:11px;color:var(--text-dim);letter-spacing:.04em}
+
+  .quick-row{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
+  .quick-cell{padding:7px 9px;border:1px solid var(--line);border-radius:5px;background:var(--panel)}
+  .quick-cell .l{font-size:9.5px;letter-spacing:.16em;color:var(--text-faint);text-transform:uppercase;font-weight:500}
+  .quick-cell .v{font-size:15px;color:var(--text);margin-top:2px;font-weight:500}
+
+  .cal{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+  .day{padding:7px 8px;border:1px solid var(--line);border-radius:5px;background:var(--panel);min-height:50px;display:flex;flex-direction:column;justify-content:space-between;gap:2px}
+  .day .num{font-size:14px;color:var(--text);letter-spacing:.01em;font-weight:500;line-height:1}
+  .day .typ{font-size:9.5px;letter-spacing:.12em;color:var(--text-faint);text-transform:uppercase;font-weight:500}
+  .day .pl{font-size:10px;color:var(--text-faint);font-variant-numeric:tabular-nums;font-weight:500}
+  .day.win{border-color:rgba(34,197,94,.45);background:rgba(34,197,94,.06)}
+  .day.win .typ{color:var(--green)}
+  .day.win .pl{color:var(--green)}
+  .day.loss{border-color:rgba(239,68,68,.45);background:rgba(239,68,68,.06)}
+  .day.loss .typ{color:var(--red)}
+  .day.loss .pl{color:var(--red)}
+  .day.plan{border-color:rgba(167,139,250,.45);background:rgba(167,139,250,.06)}
+  .day.plan .typ{color:var(--purple)}
+  .day.plan .pl{color:var(--purple)}
+  .day.today{outline:1.5px solid var(--cyan-dim);outline-offset:-2px;background:rgba(45,212,191,.05);border-color:transparent}
+  .day.today .typ{color:var(--cyan-dim)}
+  .day.today .pl{color:var(--cyan)}
+
+  /* ----- MONTH SUMMARY ----- */
+  .month-summary{margin-top:auto;border:1px solid var(--line);border-radius:6px;background:var(--panel);padding:11px 12px}
+  .ms-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px}
+  .ms-title{font-size:10px;letter-spacing:.22em;color:var(--cyan-dim);text-transform:uppercase;font-weight:600}
+  .ms-month{font-size:11px;color:var(--text-dim);letter-spacing:.04em}
+  .ms-pnl{display:flex;align-items:baseline;gap:8px;padding:8px 0;border-bottom:1px solid var(--line)}
+  .ms-pnl .lbl{font-size:10px;letter-spacing:.16em;color:var(--text-faint);text-transform:uppercase;font-weight:500}
+  .ms-pnl .val{font-size:20px;color:var(--green);font-weight:600;letter-spacing:.01em;font-variant-numeric:tabular-nums;margin-left:auto}
+  .ms-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:9px}
+  .ms-cell{display:flex;flex-direction:column;gap:2px}
+  .ms-cell .l{font-size:9.5px;letter-spacing:.14em;color:var(--text-faint);text-transform:uppercase;font-weight:500}
+  .ms-cell .v{font-size:13px;color:var(--text);font-variant-numeric:tabular-nums;font-weight:500}
+  .ms-cell .v.gn{color:var(--green)}
+  .ms-cell .v.cy{color:var(--cyan)}
+  .ms-cell .v.am{color:var(--amber)}
+
+  /* ============ MAIN ============ */
+  .main{display:flex;flex-direction:column;padding:10px 18px 12px;gap:9px;overflow:hidden;min-height:0}
+
+  /* sub-header */
+  .subbar{display:flex;align-items:center;gap:14px;padding:2px 2px}
+  .live{padding:4px 10px;border:1px solid var(--green-dim);color:var(--green);background:rgba(34,197,94,.07);border-radius:3px;font-size:10px;letter-spacing:.18em;font-weight:600;flex:0 0 auto}
+  .subbar .date{color:var(--text);font-size:14px;letter-spacing:.02em;font-weight:500;flex:0 0 auto}
+  .subbar .date .small{color:var(--text-dim);font-size:12px;margin-left:6px;font-weight:400}
+  .seglbl{font-size:10px;letter-spacing:.18em;color:var(--text-faint);text-transform:uppercase;font-weight:500;flex:0 0 auto}
+  .seq{display:inline-flex;gap:3px;flex:0 0 auto}
+  .seq i{width:22px;height:22px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;font-style:normal;letter-spacing:0}
+  .seq i.w{background:rgba(34,197,94,.18);color:var(--green)}
+  .seq i.l{background:rgba(239,68,68,.18);color:var(--red)}
+
+  /* stance pills inline in subbar */
+  .stance-row{display:flex;gap:5px;flex:0 0 auto}
+  .stance-row.inline{margin-left:24px}
+  .stance-pill{padding:5px 14px;text-align:center;border:1px solid var(--line-2);border-radius:5px;font-size:11px;letter-spacing:.04em;color:var(--text-dim);cursor:pointer;text-transform:uppercase;font-weight:500;transition:all .15s;user-select:none;white-space:nowrap}
+  .stance-pill:hover{border-color:var(--line-3);color:var(--text)}
+  .stance-pill.bull.on{border-color:var(--green-dim);color:var(--green);background:rgba(34,197,94,.08)}
+  .stance-pill.neut.on{border-color:var(--amber-dim);color:var(--amber);background:rgba(245,158,11,.08)}
+  .stance-pill.bear.on{border-color:var(--red-dim);color:var(--red);background:rgba(239,68,68,.08)}
+
+  .subbar .grow{flex:1}
+  .miniStat{display:flex;align-items:baseline;gap:7px;flex:0 0 auto}
+  .miniStat .lbl{font-size:10px;letter-spacing:.18em;color:var(--text-faint);text-transform:uppercase;font-weight:500}
+  .miniStat .v{color:var(--text);font-size:13px;font-weight:500;font-variant-numeric:tabular-nums}
+  .expBar{position:relative;width:100px;height:6px;background:var(--line);border-radius:3px;overflow:hidden}
+  .expBar i{position:absolute;left:0;top:0;bottom:0;width:14.4%;background:linear-gradient(90deg,var(--purple-dim),var(--cyan-dim))}
+
+  /* ============ SECTION BLOCK ============ */
+  .block{background:var(--panel);border:1px solid var(--line);border-radius:7px;display:flex;flex-direction:column;min-height:0}
+  .block-head{display:flex;align-items:center;gap:11px;padding:9px 16px;border-bottom:1px solid var(--line)}
+  .sec-num{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--line-2);border-radius:4px;font-size:11px;color:var(--text-dim);font-weight:500}
+  .sec-title{letter-spacing:.16em;font-size:12px;color:var(--text);text-transform:uppercase;font-weight:600}
+  .sec-meta{margin-left:auto;color:var(--text-faint);font-size:11px;letter-spacing:.06em}
+  .sec-meta b{color:var(--text-dim);font-weight:500}
+
+  /* ============ INPUT STYLES ============ */
+  .field{background:var(--panel-2);border:1px solid var(--line);border-radius:4px;color:var(--text);font-family:inherit;font-size:12px;padding:5px 9px;outline:none;transition:border-color .15s,background .15s,box-shadow .15s;width:100%;line-height:1.4}
+  .field:hover{border-color:var(--line-3)}
+  .field:focus,.field.focused{border-color:var(--cyan-dim);background:rgba(45,212,191,.05);box-shadow:0 0 0 3px rgba(45,212,191,.08)}
+  .field::placeholder{color:var(--text-faint);font-style:italic}
+  textarea.field{resize:none;line-height:1.55;overflow:hidden}
+
+  /* ============ PLAN — REDESIGNED ============ */
+  .plan{flex:0 0 auto}
+  .plan-body{padding:11px 14px;display:grid;grid-template-columns:1.25fr 0.65fr 1.35fr;gap:14px}
+
+  /* subtle vertical separator between plan columns — zero layout impact */
+  .plan-body > div:not(:last-child){box-shadow:1px 0 0 0 var(--line-2)}
+
+  .col-label{font-size:10px;letter-spacing:.18em;color:var(--text-faint);text-transform:uppercase;margin-bottom:7px;display:flex;align-items:center;gap:7px;font-weight:600}
+  .col-label .dot{width:5px;height:5px;border-radius:50%;background:var(--cyan)}
+  .col-label .meta{margin-left:auto;color:var(--text-faint);font-size:9px;letter-spacing:.05em;font-weight:400;text-transform:none}
+
+  /* game plan textarea — col 1 -- now bigger */
+  .gameplan{display:flex;flex-direction:column;min-height:0}
+  .gameplan textarea.field{flex:1;font-size:12.5px;line-height:1.6;padding:10px 12px;min-height:80px}
+
+  /* aggression + timing — col 2 */
+  .dial-head{display:flex;justify-content:space-between;align-items:baseline;margin:0 0 6px}
+  .dial-head .small{font-size:10px;letter-spacing:.14em;color:var(--text-faint);text-transform:uppercase;font-weight:500}
+  .dial-val{font-size:12px;color:var(--cyan);letter-spacing:.03em;font-weight:500}
+  .dial-track{position:relative;height:6px;background:var(--line);border-radius:3px;cursor:pointer}
+  .dial-fill{position:absolute;left:0;top:0;bottom:0;width:60%;background:linear-gradient(90deg,var(--green-dim),var(--cyan),var(--amber-dim),var(--red-dim));border-radius:3px;transition:width .2s}
+  .dial-handle{position:absolute;width:12px;height:12px;border-radius:50%;background:var(--cyan);box-shadow:0 0 6px rgba(45,212,191,.6),0 0 0 2px var(--bg);top:50%;transform:translate(-50%,-50%);left:60%;transition:left .2s;cursor:grab}
+  .dial-marks{display:flex;justify-content:space-between;margin-top:9px}
+  .dial-marks span{font-size:10.5px;color:var(--text-faint);font-weight:500;cursor:pointer;padding:2px 4px;border-radius:3px;transition:color .15s,background .15s;user-select:none}
+  .dial-marks span:hover{color:var(--text-dim)}
+  .dial-marks span.on{color:var(--cyan);background:rgba(45,212,191,.1)}
+
+  .timing-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:5px;margin-top:13px}
+  .timing-cell{padding:8px 8px;border:1px solid var(--line-2);border-radius:5px;text-align:left;cursor:pointer;transition:all .15s;user-select:none;display:flex;align-items:baseline;gap:8px}
+  .timing-cell:hover{border-color:var(--line-3)}
+  .timing-cell .t-time{font-size:12px;color:var(--text);letter-spacing:.02em;font-weight:600;font-variant-numeric:tabular-nums}
+  .timing-cell .t-label{font-size:10px;letter-spacing:.08em;color:var(--text-faint);text-transform:uppercase;font-weight:500}
+  .timing-cell.on{border-color:var(--cyan-dim);background:rgba(45,212,191,.08)}
+  .timing-cell.on .t-time{color:var(--cyan)}
+  .timing-cell.on .t-label{color:var(--cyan-dim)}
+
+  /* chips — col 2 sectors: bigger rows to fill 5 slots */
+  .chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
+  .chip{display:inline-flex;align-items:center;gap:6px;padding:7px 10px;border:1px solid var(--line-2);border-radius:13px;font-size:12.5px;color:var(--text-dim);background:var(--panel-2);font-weight:500;cursor:pointer;user-select:none}
+  .chip .strength{display:inline-flex;gap:2px}
+  .chip .strength i{width:3px;height:8px;background:var(--line-2);border-radius:1px;display:inline-block}
+  .chip.hot{border-color:rgba(34,197,94,.5);color:var(--green)}
+  .chip.hot .strength i{background:var(--green-dim)}
+  .chip.warm{border-color:rgba(245,158,11,.5);color:var(--amber)}
+  .chip.warm .strength i:nth-child(1),.chip.warm .strength i:nth-child(2){background:var(--amber-dim)}
+  .chip.cool .strength i:nth-child(1){background:var(--text-faint)}
+  .chip-add{border-style:dashed;color:var(--text-faint)}
+  .chip-add:hover{color:var(--text-dim);border-color:var(--line-3)}
+
+  /* watchlist as inputs — col 3 stocks: bigger rows to match 5 slots */
+  .watch-list{display:flex;flex-direction:column;gap:5px;margin-top:5px}
+  .watch-row{display:grid;grid-template-columns:62px 1fr 60px;gap:6px;align-items:center}
+  .watch-row .field{padding:7px 9px;font-size:13px}
+  .watch-row .sym-input{font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--text)}
+  .watch-row .why-wrap{position:relative;display:flex;align-items:center;gap:6px}
+  .watch-row .why-wrap .field{padding-right:54px}
+  .watch-row .conv{position:absolute;right:8px;top:50%;transform:translateY(-50%);display:inline-flex;gap:2.5px;cursor:pointer}
+  .watch-row .conv i{width:5px;height:5px;border-radius:50%;background:var(--line-2);transition:background .15s;cursor:pointer}
+  .watch-row .conv i.on{background:var(--cyan);box-shadow:0 0 4px rgba(45,212,191,.5)}
+  .watch-row .lvl-input{font-variant-numeric:tabular-nums;color:var(--cyan);text-align:right;font-weight:500}
+  .watch-row.add .field{border-style:dashed;background:transparent}
+
+  /* ============ MIDDLE ROW (PROTECT + EXECUTE) ============ */
+  .middle{display:grid;grid-template-columns:1fr 1fr;gap:11px;flex:1 1 auto;min-height:0}
+
+  .pe-head{display:flex;align-items:center;gap:11px;padding:8px 14px;border-bottom:1px solid var(--line)}
+  .pe-list{flex:1 1 auto;overflow:hidden;padding:5px 8px 4px;display:flex;flex-direction:column;gap:5px;min-height:0}
+
+  .pos{display:grid;grid-template-columns:18px minmax(0,1fr) 92px 56px 90px;gap:8px;align-items:center;padding:6px 10px 6px 8px;border:1px solid #1a2332;border-radius:4px;background:var(--panel-2);position:relative;min-height:44px}
+  .pos::before{content:"";position:absolute;left:0;top:5px;bottom:5px;width:3px;border-radius:3px;background:var(--line-2)}
+  .pos.safe::before{background:var(--green-dim)}
+  .pos.watch::before{background:var(--amber-dim)}
+  .pos.hold::before{background:var(--purple-dim)}
+  .pos.plan::before{background:var(--purple-dim)}
+  .pos.cond::before{background:var(--cyan-dim)}
+  .pos .chk{width:15px;height:15px;border:1px solid var(--line-2);border-radius:3px;display:inline-flex;align-items:center;justify-content:center;color:transparent;font-size:0;cursor:pointer;background:transparent}
+  .pos .chk.on{border-color:var(--green-dim);background:rgba(34,197,94,.06);box-shadow:inset 0 0 0 1px rgba(34,197,94,.08)}
+  .pos-left{display:flex;align-items:center;gap:8px;min-width:0}
+  .pos-mid{display:flex;flex-direction:column;gap:1px;min-width:0}
+  .pos-top{display:flex;align-items:center;gap:8px;min-width:0}
+  .pos .ticker{font-size:12px;color:var(--text);font-weight:700;letter-spacing:.02em;line-height:1;white-space:nowrap}
+  .pos .pill{display:inline-flex;align-items:center;justify-content:center;padding:2px 7px 1px;border-radius:4px;font-size:8px;letter-spacing:.14em;text-transform:uppercase;font-weight:700;line-height:1}
+  .pill.safe{background:rgba(34,197,94,.14);color:var(--green)}
+  .pill.watch{background:rgba(245,158,11,.14);color:var(--amber)}
+  .pill.hold{background:rgba(167,139,250,.16);color:var(--purple)}
+  .pill.plan{background:rgba(167,139,250,.16);color:var(--purple)}
+  .pill.cond{background:rgba(45,212,191,.16);color:var(--cyan)}
+  .risk-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:8.5px;line-height:1;letter-spacing:.025em;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .risk-meta .sl{color:var(--red)}
+  .risk-meta .buy{color:var(--text-faint)}
+  .risk-meta .cmp{color:var(--green)}
+  .risk-bar{position:relative;height:4px;border-radius:999px;background:#212b3c;overflow:hidden;margin-top:0}
+  .risk-fill{position:absolute;left:0;top:0;bottom:0;width:var(--fill,72%);border-radius:inherit;background:linear-gradient(90deg,rgba(255,255,255,.05),var(--bar-color,var(--green-dim)));box-shadow:0 0 0 1px rgba(0,0,0,.12) inset}
+  .risk-dot{position:absolute;left:var(--fill,72%);top:50%;width:7px;height:7px;border-radius:50%;transform:translate(-50%,-50%);background:var(--bar-color,var(--green-dim));box-shadow:0 0 0 2px #0d1118,0 0 10px color-mix(in srgb, var(--bar-color,var(--green-dim)) 55%, transparent)}
+  .price-col{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;min-width:0;text-align:center}
+  .price-main{display:none}
+  .price-pct{font-size:10px;color:var(--green);font-weight:700;line-height:1;letter-spacing:.035em;font-variant-numeric:tabular-nums}
+  .price-col.neg .price-pct{color:var(--red)}
+  .prot-qty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0}
+  .prot-qty .pq-v{font-size:13px;color:#ffd74d;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.05;font-family:'JetBrains Mono','Fira Code',ui-monospace,monospace}
+  .prot-qty .pq-l{display:none}
+  .prot-sl{display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:0;min-width:0;text-align:right}
+  .prot-sl .price{font-size:13.5px;font-variant-numeric:tabular-nums;letter-spacing:.01em;font-weight:700;font-family:'JetBrains Mono','Fira Code',ui-monospace,monospace;line-height:1.1;color:var(--red) !important}
+  .prot-sl .sub{display:none}
+  .prot-list .right{display:none}
+
+  .pe-foot{padding:7px 16px;border-top:1px solid var(--line);display:flex;justify-content:space-between;font-size:11.5px;color:var(--text-faint);letter-spacing:.02em}
+  .pe-foot b{color:var(--text-dim);font-weight:600}
+  .pe-foot .red{color:var(--red);font-weight:600}
+  .pe-foot .green{color:var(--green);font-weight:600}
+
+  /* execute panel */
+  .exec-head{display:grid;grid-template-columns:18px 60px minmax(260px,1fr) 54px 70px 70px 82px;gap:8px;align-items:center;padding:8px 14px;border-bottom:1px solid var(--line)}
+  .exec-head .track-hdr{font-size:9.5px;letter-spacing:.18em;color:var(--text-faint);text-transform:uppercase;font-weight:500;white-space:nowrap}
+  .exec-head .track-hdr .pdl{color:var(--red-dim)}
+  .exec-head .track-hdr .sl{color:var(--red)}
+  .exec-head .track-hdr .cmp{color:var(--cyan-dim)}
+  .exec-head .track-hdr .buy{color:var(--green)}
+  .exec-head .exec-hdr{font-size:9.5px;letter-spacing:.18em;color:var(--text-faint);text-transform:uppercase;font-weight:500;text-align:center;white-space:nowrap}
+  .exec-head .qty-hdr{color:var(--amber-dim)}
+  .exec-head .buy-hdr{color:var(--green)}
+  .exec-head .sl-hdr{color:var(--red-dim)}
+  .exec-head .risk-hdr{color:var(--cyan-dim)}
+  .exec-list .pos{grid-template-columns:18px 60px minmax(260px,1fr) 54px 70px 70px 82px;gap:8px;align-items:center;padding:5px 10px 5px 8px;border:1px solid #1a2332;border-radius:4px;background:var(--panel-2);position:relative;min-height:40px}
+  .exec-left{display:flex;align-items:center;gap:8px;min-width:0}
+  .exec-left .ticker{font-size:12px;color:var(--text);font-weight:700;letter-spacing:.02em;line-height:1;white-space:nowrap}
+  .exec-mid{display:flex;flex-direction:column;gap:1px;min-width:0}
+  .exec-bar{position:relative;height:4px;border-radius:999px;background:#223041;overflow:hidden}
+  .exec-bar::before{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(255,255,255,.03),rgba(125,211,252,.12) 48%,rgba(34,197,94,.18));opacity:.8}
+  .exec-marker{position:absolute;top:50%;width:8px;height:8px;border-radius:50%;transform:translate(-50%,-50%);box-shadow:0 0 0 2px #0d1118}
+  .exec-marker.pdl{left:var(--pdl);background:var(--red-dim)}
+  .exec-marker.sl{left:var(--sl);background:#ff6b6b}
+  .exec-marker.cmp{left:var(--cmp);background:var(--cyan-dim)}
+  .exec-marker.buy{left:var(--buy);background:var(--green-dim)}
+  .exec-scale{position:relative;height:10px}
+  .exec-scale span{position:absolute;top:0;transform:translateX(-50%);font-size:8px;line-height:1;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .exec-scale .pdl{left:var(--pdl);color:var(--text-faint)}
+  .exec-scale .sl{left:var(--sl);color:var(--red)}
+  .exec-scale .cmp{left:var(--cmp);color:var(--cyan)}
+  .exec-scale .buy{left:var(--buy);color:var(--green)}
+  .exec-qty{display:flex;align-items:center;justify-content:center;height:21px;border:1px solid rgba(245,158,11,.45);border-radius:4px;color:var(--amber);font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums}
+  .exec-buy,.exec-sl,.exec-risk{display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1;white-space:nowrap}
+  .exec-buy{color:var(--green)}
+  .exec-sl{color:var(--red)}
+  .exec-risk{color:var(--cyan)}
+  .exec-list .qty-col,.exec-list .right{display:none}
+
+  /* qty + sl columns in protect */
+  .prot-list .pos{grid-template-columns:18px 126px minmax(298px,1fr) 46px 52px 84px;padding:3px 8px 3px 7px;min-height:36px}
+  .prot-list .pos.safe,.prot-list .pos.watch,.prot-list .pos.hold{ --bar-color: var(--green-dim); }
+  .prot-list .pos.safe{ --bar-color: var(--green-dim); }
+  .prot-list .pos.watch{ --bar-color: var(--amber-dim); }
+  .prot-list .pos.hold{ --bar-color: var(--purple-dim); }
+  .prot-list .pos .pos-left{justify-self:stretch}
+  .prot-list .pos .pos-mid{justify-self:stretch}
+  .prot-list .pos:nth-child(1){--fill:79%}
+  .prot-list .pos:nth-child(2){--fill:77%}
+  .prot-list .pos:nth-child(3){--fill:75%}
+  .prot-list .pos:nth-child(4){--fill:82%}
+  .prot-list .pos:nth-child(5){--fill:73%}
+  .prot-list .pos:nth-child(6){--fill:76%}
+  .prot-list .pos:nth-child(7){--fill:69%}
+  .prot-list .pos:nth-child(8){--fill:72%}
+  .exec-col-hdr.qty-hdr{color:var(--amber-dim)}
+  .exec-col-hdr.sl-hdr{color:var(--red-dim)}
+  .pos .qty-col input.q-input:hover{border-color:var(--line-3)}
+  .pos .qty-col input.q-input:focus{border-color:var(--cyan-dim);background:rgba(45,212,191,.05)}
+  .exec-col-hdr{font-size:9.5px;letter-spacing:.18em;color:var(--text-faint);text-transform:uppercase;font-weight:500;text-align:center}
+
+  /* ============ CLOSING — REDESIGNED, COMPACT ============ */
+  .closing{flex:0 0 auto}
+  .closing .streak{display:flex;align-items:center;gap:7px;padding:4px 11px;border:1px solid var(--cyan-dim);border-radius:14px;background:rgba(45,212,191,.06)}
+  .closing .streak .num{color:var(--cyan);font-size:14px;letter-spacing:.03em;font-weight:600}
+  .closing .streak .lbl{font-size:11px;letter-spacing:.16em;color:var(--cyan-dim);text-transform:uppercase;font-weight:600}
+  .closing .streak .flame{color:var(--amber);font-size:13px}
+  .closing .time{font-size:12px;color:var(--cyan);letter-spacing:.12em;border:1px solid var(--cyan-dim);padding:3px 9px;border-radius:3px;font-weight:600;margin-left:14px}
+
+  .closing-body{padding:9px 14px 10px;display:grid;grid-template-columns:1.55fr 1fr;gap:11px;min-height:0}
+
+  .wins-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}
+  .win-card{padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--panel-2);display:flex;flex-direction:column;gap:4px;min-height:0}
+  .win-card.empty{border-style:dashed}
+  .win-card .top-row{display:flex;justify-content:space-between;align-items:center}
+  .win-card .badge{font-size:10.5px;letter-spacing:.18em;text-transform:uppercase;padding:2px 7px;border-radius:3px;font-weight:600}
+  .win-card.discipline .badge{color:var(--cyan);background:rgba(45,212,191,.13)}
+  .win-card.process .badge{color:var(--purple);background:rgba(167,139,250,.13)}
+  .win-card.patience .badge{color:var(--blue);background:rgba(125,211,252,.13)}
+  .win-card.execution .badge{color:var(--green);background:rgba(34,197,94,.13)}
+  .win-card .check{font-size:14px;color:var(--text-faint)}
+  .win-card.filled .check{color:var(--green-dim)}
+  .win-card .title-input{font-size:13px;font-weight:600;background:transparent;border:none;border-bottom:1px solid transparent;padding:2px 0;color:var(--text);outline:none;width:100%;font-family:inherit;line-height:1.35}
+  .win-card .title-input:hover{border-bottom-color:var(--line-2)}
+  .win-card .title-input:focus{border-bottom-color:var(--cyan-dim);background:rgba(45,212,191,.04)}
+  .win-card .title-input::placeholder{color:var(--text-faint);font-style:italic;font-weight:500}
+  .win-card .desc-input{font-size:11.5px;color:var(--text-dim);line-height:1.45;background:transparent;border:1px solid transparent;border-radius:3px;padding:3px 0;outline:none;width:100%;resize:none;font-family:inherit;flex:1;min-height:44px;overflow:hidden}
+  .win-card .desc-input:hover{border-color:var(--line);padding:3px 6px}
+  .win-card .desc-input:focus{border-color:var(--cyan-dim);background:rgba(45,212,191,.04);padding:3px 6px}
+  .win-card .desc-input::placeholder{color:var(--text-faint);font-style:italic}
+
+  .closing-right{display:flex;flex-direction:column;gap:7px;min-height:0}
+  .best{padding:8px 12px;border:1px solid var(--line);border-radius:6px;background:linear-gradient(180deg,rgba(45,212,191,.06),rgba(45,212,191,0));display:flex;flex-direction:column;gap:4px;flex:1;min-height:0}
+  .best .head{display:flex;align-items:center;gap:7px}
+  .best .star{color:var(--amber);font-size:14px}
+  .best .lbl{font-size:11px;letter-spacing:.18em;color:var(--cyan-dim);text-transform:uppercase;font-weight:600}
+  .best .ticker-pill{margin-left:auto;font-size:11px;color:var(--green);padding:2px 7px;border:1px solid rgba(34,197,94,.4);border-radius:3px;font-weight:600;font-variant-numeric:tabular-nums}
+  .best .text-input{font-size:12.5px;color:var(--text);line-height:1.5;background:transparent;border:1px solid transparent;border-radius:3px;padding:3px 0;outline:none;width:100%;resize:none;font-family:inherit;flex:1;min-height:40px;overflow:hidden}
+  .best .text-input:hover{border-color:var(--line);padding:3px 7px}
+  .best .text-input:focus{border-color:var(--cyan-dim);background:rgba(45,212,191,.04);padding:3px 7px}
+  .best .text-input::placeholder{color:var(--text-faint);font-style:italic}
+
+  .affirm{padding:8px 12px;border:1px solid var(--line-2);border-radius:6px;background:var(--panel-2);position:relative;overflow:hidden}
+  .affirm::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 50% 0%,rgba(45,212,191,.08),transparent 65%);pointer-events:none}
+  .affirm .lbl-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;position:relative}
+  .affirm .lbl{font-size:11px;letter-spacing:.18em;color:var(--cyan-dim);text-transform:uppercase;font-weight:600}
+  .affirm .regen{font-size:10.5px;color:var(--text-faint);cursor:pointer;letter-spacing:.04em}
+  .affirm .regen:hover{color:var(--cyan-dim)}
+  .affirm .text{font-size:13px;color:var(--text);line-height:1.5;letter-spacing:.005em;position:relative;font-style:italic}
+  .affirm .text .em{color:var(--cyan);font-style:normal;font-weight:600}
+
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ TOP BAR ============ -->
+  <div class="topbar">
+    <div class="brand">
+      <div class="logo mono">TP</div>
+      <div class="brand-text">
+        <span class="l1">TRADEPLAN</span>
+        <span class="l2">MORNING BRIEFING</span>
+      </div>
+    </div>
+    <div class="nav">
+      <a class="on">Briefing</a>
+      <a>Positions</a>
+      <a>Goal Tracker</a>
+      <a>Simulation</a>
+      <a>Streaks</a>
+      <a>Portfolio</a>
+      <a>Settings</a>
+    </div>
+    <div class="topstats">
+      <div class="stat risk">
+        <span class="lbl">Open Risk</span>
+        <span class="val">Rs 3,874</span>
+      </div>
+      <div class="stat">
+        <span class="lbl">Capital</span>
+        <span class="val">Rs 30,00,000</span>
+      </div>
+      <div class="stat free">
+        <span class="lbl">Free</span>
+        <span class="val">Rs 3,126</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="body">
+
+    <!-- ============ SIDEBAR ============ -->
+    <div class="sidebar">
+      <div class="side-head">April · Recent Sessions</div>
+      <div class="side-day">
+        <div class="d">30</div>
+        <div class="meta">Thursday · 2026</div>
+      </div>
+      <div class="quick-row">
+        <div class="quick-cell"><div class="l">Days</div><div class="v">15</div></div>
+        <div class="quick-cell"><div class="l">Trades</div><div class="v">14</div></div>
+        <div class="quick-cell"><div class="l">Open</div><div class="v">4</div></div>
+      </div>
+      <div class="cal">
+        <div class="day"><span class="num">31</span><span class="typ">Flat</span><span class="pl">Rs 0</span></div>
+        <div class="day"><span class="num">1</span><span class="typ">Flat</span><span class="pl">Rs 0</span></div>
+        <div class="day"><span class="num">2</span><span class="typ">Flat</span><span class="pl">Rs 0</span></div>
+        <div class="day"><span class="num">3</span><span class="typ">Flat</span><span class="pl">Rs 0</span></div>
+        <div class="day"><span class="num">4</span><span class="typ">Flat</span><span class="pl">Rs 0</span></div>
+        <div class="day"><span class="num">7</span><span class="typ">Flat</span><span class="pl">Rs 0</span></div>
+        <div class="day"><span class="num">8</span><span class="typ">Flat</span><span class="pl">Rs 0</span></div>
+        <div class="day plan"><span class="num">9</span><span class="typ">Plan</span><span class="pl">Rs 3,000</span></div>
+        <div class="day plan"><span class="num">10</span><span class="typ">Plan</span><span class="pl">Rs 3,000</span></div>
+        <div class="day"><span class="num">11</span><span class="typ">Flat</span><span class="pl">Rs 0</span></div>
+        <div class="day"><span class="num">14</span><span class="typ">Flat</span><span class="pl">Rs 0</span></div>
+        <div class="day"><span class="num">15</span><span class="typ">Flat</span><span class="pl">Rs 0</span></div>
+        <div class="day"><span class="num">16</span><span class="typ">Flat</span><span class="pl">Rs 0</span></div>
+        <div class="day win"><span class="num">17</span><span class="typ">+1.5%</span><span class="pl">Rs 3,000</span></div>
+        <div class="day win"><span class="num">18</span><span class="typ">+1.5%</span><span class="pl">Rs 3,000</span></div>
+        <div class="day win"><span class="num">19</span><span class="typ">+1.5%</span><span class="pl">Rs 3,000</span></div>
+        <div class="day win"><span class="num">21</span><span class="typ">+0.8%</span><span class="pl">Rs 12,000</span></div>
+        <div class="day win"><span class="num">22</span><span class="typ">+2.1%</span><span class="pl">Rs 6,000</span></div>
+        <div class="day loss"><span class="num">23</span><span class="typ">−4.1%</span><span class="pl">Rs 10,000</span></div>
+        <div class="day win"><span class="num">24</span><span class="typ">+1.5%</span><span class="pl">Rs 13,000</span></div>
+        <div class="day loss"><span class="num">25</span><span class="typ">−1.5%</span><span class="pl">Rs 3,000</span></div>
+        <div class="day win"><span class="num">28</span><span class="typ">+1.5%</span><span class="pl">Rs 7,700</span></div>
+        <div class="day win"><span class="num">29</span><span class="typ">+1.5%</span><span class="pl">Rs 12,700</span></div>
+        <div class="day today"><span class="num">30</span><span class="typ">Live</span><span class="pl">Rs 11,500</span></div>
+      </div>
+
+      <!-- ===== MONTH SUMMARY ===== -->
+      <div class="month-summary">
+        <div class="ms-head">
+          <span class="ms-title">Month · April</span>
+          <span class="ms-month">21 sessions</span>
+        </div>
+        <div class="ms-pnl">
+          <span class="lbl">Total P&amp;L</span>
+          <span class="val">+ Rs 95,400</span>
+        </div>
+        <div class="ms-grid">
+          <div class="ms-cell"><div class="l">Trading Days</div><div class="v">15</div></div>
+          <div class="ms-cell"><div class="l">Trades Taken</div><div class="v">14</div></div>
+          <div class="ms-cell"><div class="l">Win Rate</div><div class="v gn">79%</div></div>
+          <div class="ms-cell"><div class="l">Best Day</div><div class="v gn">Rs 13,000</div></div>
+          <div class="ms-cell"><div class="l">Max Exposure</div><div class="v am">18.2%</div></div>
+          <div class="ms-cell"><div class="l">Avg Risk</div><div class="v">Rs 3,600</div></div>
+          <div class="ms-cell"><div class="l">Win Streak</div><div class="v cy">11 days</div></div>
+          <div class="ms-cell"><div class="l">Plan Hit Rate</div><div class="v gn">86%</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ MAIN ============ -->
+    <div class="main">
+
+      <!-- sub-header — date + Last 5 streak + stance pills + stats -->
+      <div class="subbar">
+        <span class="date">30 April<span class="small">Thu · 2026</span></span>
+        <span class="seglbl">Last 5</span>
+        <span class="seq">
+          <i class="w">W</i><i class="l">L</i><i class="w">W</i><i class="w">W</i><i class="l">L</i>
+        </span>
+        <span class="grow"></span>
+        <div class="stance-row" data-group="stance">
+          <div class="stance-pill bull">Bullish</div>
+          <div class="stance-pill neut on">Neutral · Two-way</div>
+          <div class="stance-pill bear">Bearish</div>
+        </div>
+        <span class="grow"></span>
+        <div class="miniStat"><span class="lbl">Open</span><span class="v">4</span></div>
+        <div class="miniStat"><span class="lbl">Planned</span><span class="v">2</span></div>
+        <div class="miniStat" style="gap:9px">
+          <span class="lbl">Exposure</span>
+          <span class="expBar"><i></i></span>
+          <span class="v">14.4%</span>
+        </div>
+      </div>
+
+      <!-- ===== 1 PLAN ===== -->
+      <div class="block plan">
+        <div class="block-head" style="gap:0;padding:1px 16px;min-height:36px">
+          <span class="sec-num mono" style="flex:0 0 auto;margin-right:11px">1</span>
+          <span class="sec-title" style="flex:0 0 auto">Plan</span>
+          <!-- Aggression dial centred in header -->
+          <div style="flex:1;display:flex;justify-content:center;align-items:center">
+            <div style="width:580px">
+              <div class="dial-track"><div class="dial-fill"></div><div class="dial-handle"></div></div>
+              <div class="dial-marks">
+                <span data-val="1">Sit out</span>
+                <span data-val="2">Light</span>
+                <span data-val="3" class="on">Standard</span>
+                <span data-val="4">Press</span>
+                <span data-val="5">Full</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="plan-body">
+
+          <!-- COL 1: GAME PLAN + TIMING BELOW -->
+          <div class="gameplan">
+            <div class="col-label"><span class="dot" style="background:var(--pink)"></span> Game plan <span class="meta">the story I'm trading today</span></div>
+            <textarea class="field" rows="4" style="min-height:unset;font-size:14px;line-height:1.6;padding:10px 12px" placeholder="Two-way tape? Trending? PSU still leading? Where will I size up, where will I sit out? When do I act — open, 09:30, late?">Two-way tape. Wait first 15 min — no opening-bell trades. PSU & Defence still leading; size up if SBIN clears PDH cleanly. Mid-caps frothy, skip them. Cut day after 2 losers in a row.</textarea>
+            <div class="timing-grid" data-group="timing" style="margin-top:7px">
+              <div class="timing-cell"><div class="t-time mono">09:15</div><div class="t-label">Strike open</div></div>
+              <div class="timing-cell on"><div class="t-time mono">09:30</div><div class="t-label">Wait 15m</div></div>
+              <div class="timing-cell"><div class="t-time mono">10:00+</div><div class="t-label">Setup forms</div></div>
+              <div class="timing-cell"><div class="t-time mono">14:00+</div><div class="t-label">Late only</div></div>
+            </div>
+          </div>
+
+          <!-- COL 2: SECTORS (vertical pills) -->
+          <div>
+            <div class="col-label"><span class="dot" style="background:var(--green-dim)"></span> Sectors with the wind</div>
+            <div class="chips" style="flex-direction:column;flex-wrap:nowrap">
+              <span class="chip hot">PSU Banks <span class="strength"><i></i><i></i><i></i></span></span>
+              <span class="chip hot">Defence <span class="strength"><i></i><i></i><i></i></span></span>
+              <span class="chip warm">Power <span class="strength"><i></i><i></i><i></i></span></span>
+              <span class="chip warm">Cap Goods <span class="strength"><i></i><i></i><i></i></span></span>
+              <span class="chip cool">IT <span class="strength"><i></i><i></i><i></i></span></span>
+            </div>
+          </div>
+
+          <!-- COL 3: STOCKS STANDING OUT -->
+          <div>
+            <div class="col-label"><span class="dot" style="background:var(--cyan)"></span> Stocks standing out <span class="meta">tap to edit</span></div>
+            <div class="watch-list">
+
+              <div class="watch-row">
+                <input class="field sym-input" value="SBIN" />
+                <div class="why-wrap">
+                  <input class="field" value="PDH break · 1.5R clean target" />
+                  <span class="conv" title="Conviction"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i></span>
+                </div>
+                <input class="field lvl-input mono" value="742.50" />
+              </div>
+
+              <div class="watch-row">
+                <input class="field sym-input" value="MCX" />
+                <div class="why-wrap">
+                  <input class="field focused" value="Fresh leg up · risk Rs 1,500" />
+                  <span class="conv"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i></span>
+                </div>
+                <input class="field lvl-input mono" value="2,829" />
+              </div>
+
+              <div class="watch-row add">
+                <input class="field sym-input" placeholder="TICKER" />
+                <div class="why-wrap">
+                  <input class="field" placeholder="why this stands out…" />
+                  <span class="conv"><i></i><i></i><i></i><i></i><i></i></span>
+                </div>
+                <input class="field lvl-input mono" placeholder="level" />
+              </div>
+
+              <div class="watch-row add">
+                <input class="field sym-input" placeholder="TICKER" />
+                <div class="why-wrap">
+                  <input class="field" placeholder="why this stands out…" />
+                  <span class="conv"><i></i><i></i><i></i><i></i><i></i></span>
+                </div>
+                <input class="field lvl-input mono" placeholder="level" />
+              </div>
+
+              <div class="watch-row add">
+                <input class="field sym-input" placeholder="TICKER" />
+                <div class="why-wrap">
+                  <input class="field" placeholder="why this stands out…" />
+                  <span class="conv"><i></i><i></i><i></i><i></i><i></i></span>
+                </div>
+                <input class="field lvl-input mono" placeholder="level" />
+              </div>
+
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- ===== MIDDLE ROW: PROTECT + EXECUTE ===== -->
+      <div class="middle">
+
+        <!-- PROTECT -->
+        <div class="block">
+          <div class="pe-head">
+            <span class="sec-num mono">2</span>
+            <span class="sec-title">Protect</span>
+            <span style="flex:1"></span>
+            <span class="exec-col-hdr qty-hdr" style="width:70px">Qty</span>
+            <span class="exec-col-hdr sl-hdr" style="width:90px">SL</span>
+          </div>
+          <div class="pe-list prot-list">
+            <div class="pos safe">
+              <span class="chk on">✓</span>
+              <div>
+                <div class="l1">VEDL <span class="ltp-inline up">559.76 ↑</span> <span class="pill safe">Safe</span></div>
+                <div class="l2">cushion 2.1% &nbsp;·&nbsp; 6d held</div>
+              </div>
+              <div class="prot-qty"><span class="pq-v">108</span><span class="pq-l">sh</span></div>
+              <div class="right prot-sl">
+                <span class="price">548.20</span>
+              </div>
+            </div>
+            <div class="pos watch">
+              <span class="chk"></span>
+              <div>
+                <div class="l1">ARSSBL <span class="ltp-inline up">588.06 ↑</span> <span class="pill watch">Watch</span></div>
+                <div class="l2">trailing tight &nbsp;·&nbsp; cushion 2.0%</div>
+              </div>
+              <div class="prot-qty"><span class="pq-v">90</span><span class="pq-l">sh</span></div>
+              <div class="right prot-sl">
+                <span class="price">576.00</span>
+              </div>
+            </div>
+            <div class="pos hold">
+              <span class="chk"></span>
+              <div>
+                <div class="l1">GROWW <span class="ltp-inline up">263.15 ↑</span> <span class="pill hold">Hold</span></div>
+                <div class="l2">range-bound &nbsp;·&nbsp; breakout retest</div>
+              </div>
+              <div class="prot-qty"><span class="pq-v">80</span><span class="pq-l">sh</span></div>
+              <div class="right prot-sl">
+                <span class="price">192.40</span>
+              </div>
+            </div>
+            <div class="pos safe">
+              <span class="chk on">✓</span>
+              <div>
+                <div class="l1">IREDA <span class="ltp-inline up">198.30 ↑</span> <span class="pill safe">Safe</span></div>
+                <div class="l2">trail to 192 if 200 breaks</div>
+              </div>
+              <div class="prot-qty"><span class="pq-v">150</span><span class="pq-l">sh</span></div>
+              <div class="right prot-sl">
+                <span class="price">190.10</span>
+              </div>
+            </div>
+            <div class="pos watch">
+              <span class="chk"></span>
+              <div>
+                <div class="l1">MCX <span class="ltp-inline up">2,968.30 ↑</span> <span class="pill watch">Watch</span></div>
+                <div class="l2">trim pending &nbsp;·&nbsp; cushion 4.7%</div>
+              </div>
+              <div class="prot-qty"><span class="pq-v">40</span><span class="pq-l">sh</span></div>
+              <div class="right prot-sl">
+                <span class="price">2,829.00</span>
+              </div>
+            </div>
+            <div class="pos hold">
+              <span class="chk"></span>
+              <div>
+                <div class="l1">CGPOWER <span class="ltp-inline up">825.60 ↑</span> <span class="pill hold">Hold</span></div>
+                <div class="l2">pullback after gap &nbsp;·&nbsp; cushion 0.9%</div>
+              </div>
+              <div class="prot-qty"><span class="pq-v">140</span><span class="pq-l">sh</span></div>
+              <div class="right prot-sl">
+                <span class="price">817.90</span>
+              </div>
+            </div>
+            <div class="pos safe">
+              <span class="chk on">✓</span>
+              <div>
+                <div class="l1">CPPLUS <span class="ltp-inline up">2,338.40 ↑</span> <span class="pill safe">Safe</span></div>
+                <div class="l2">fresh carry &nbsp;·&nbsp; cushion 2.0%</div>
+              </div>
+              <div class="prot-qty"><span class="pq-v">96</span><span class="pq-l">sh</span></div>
+              <div class="right prot-sl">
+                <span class="price">2,291.90</span>
+              </div>
+            </div>
+            <div class="pos hold">
+              <span class="chk"></span>
+              <div>
+                <div class="l1">ITC <span class="ltp-inline up">469.10 ↑</span> <span class="pill hold">Hold</span></div>
+                <div class="l2">consolidation &nbsp;·&nbsp; cushion 1.4%</div>
+              </div>
+              <div class="prot-qty"><span class="pq-v">200</span><span class="pq-l">sh</span></div>
+              <div class="right prot-sl">
+                <span class="price">462.30</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- EXECUTE -->
+        <div class="block">
+          <div class="pe-head exec-head">
+            <span class="sec-num mono">3</span>
+            <span class="sec-title">Execute</span>
+            <div class="track-hdr"><span class="pdl">PDL</span> <span class="sl">SL</span> <span class="cmp">CMP</span> <span class="buy">BUY</span></div>
+            <span class="exec-hdr qty-hdr">Qty</span>
+            <span class="exec-hdr buy-hdr">Buy</span>
+            <span class="exec-hdr sl-hdr">SL</span>
+            <span class="exec-hdr risk-hdr">Risk</span>
+          </div>
+          <div class="pe-list exec-list">
+            <div class="pos plan">
+              <span class="chk"></span>
+              <div>
+                <div class="l1">SBIN <span class="ltp-inline dn">738.15 ↓</span> <span class="pill plan">Plan</span></div>
+                <div class="l2">Risk Rs 2,400 &nbsp;·&nbsp; 1.5R target 750</div>
+              </div>
+              <div class="qty-col"><input class="q-input" value="120" /></div>
+              <div class="right">
+                <span class="price">742.50</span>
+                <span style="font-size:9px;color:var(--text-faint);letter-spacing:.06em;">PDH</span>
+              </div>
+            </div>
+            <div class="pos cond">
+              <span class="chk"></span>
+              <div>
+                <div class="l1">HDFCBANK <span class="ltp-inline dn">1,594.20 ↓</span> <span class="pill cond">Cond</span></div>
+                <div class="l2">only if Bank Nifty breadth &gt; 60%</div>
+              </div>
+              <div class="qty-col"><input class="q-input" value="50" /></div>
+              <div class="right">
+                <span class="price">1,602.10</span>
+                <span style="font-size:9px;color:var(--text-faint);letter-spacing:.06em;">PDH</span>
+              </div>
+            </div>
+            <div class="pos plan">
+              <span class="chk"></span>
+              <div>
+                <div class="l1">MCX <span class="ltp-inline up">2,968.30 ↑</span> <span class="pill plan">Plan</span></div>
+                <div class="l2">risk Rs 1,500 &nbsp;·&nbsp; 1.6R target 3,170</div>
+              </div>
+              <div class="qty-col"><input class="q-input" value="40" /></div>
+              <div class="right">
+                <span class="price">2,829.00</span>
+                <span style="font-size:9px;color:var(--text-faint);letter-spacing:.06em;">PDH</span>
+              </div>
+            </div>
+            <div class="pos cond">
+              <span class="chk"></span>
+              <div>
+                <div class="l1">CGPOWER <span class="ltp-inline up">825.60 ↑</span> <span class="pill cond">Cond</span></div>
+                <div class="l2">power leader &nbsp;·&nbsp; risk Rs 4,000</div>
+              </div>
+              <div class="qty-col"><input class="q-input" value="140" /></div>
+              <div class="right">
+                <span class="price">817.90</span>
+                <span style="font-size:9px;color:var(--text-faint);letter-spacing:.06em;">PDH</span>
+              </div>
+            </div>
+            <div class="pos plan">
+              <span class="chk"></span>
+              <div>
+                <div class="l1">CPPLUS <span class="ltp-inline up">2,338.40 ↑</span> <span class="pill plan">Plan</span></div>
+                <div class="l2">fresh carry &nbsp;·&nbsp; risk Rs 3,000</div>
+              </div>
+              <div class="qty-col"><input class="q-input" value="96" /></div>
+              <div class="right">
+                <span class="price">2,291.90</span>
+                <span style="font-size:9px;color:var(--text-faint);letter-spacing:.06em;">PDH</span>
+              </div>
+            </div>
+            <div class="pos plan">
+              <span class="chk"></span>
+              <div>
+                <div class="l1">BEL <span class="ltp-inline dn">320.85 ↓</span> <span class="pill plan">Plan</span></div>
+                <div class="l2">defence leader &nbsp;·&nbsp; risk Rs 2,000</div>
+              </div>
+              <div class="qty-col"><input class="q-input" value="80" /></div>
+              <div class="right">
+                <span class="price">324.50</span>
+                <span style="font-size:9px;color:var(--text-faint);letter-spacing:.06em;">PDH</span>
+              </div>
+            </div>
+            <div class="pos cond">
+              <span class="chk"></span>
+              <div>
+                <div class="l1">PFC <span class="ltp-inline dn">508.20 ↓</span> <span class="pill cond">Cond</span></div>
+                <div class="l2">PSU breadth &gt; 70% &nbsp;·&nbsp; risk Rs 1,800</div>
+              </div>
+              <div class="qty-col"><input class="q-input" value="60" /></div>
+              <div class="right">
+                <span class="price">512.40</span>
+                <span style="font-size:9px;color:var(--text-faint);letter-spacing:.06em;">PDH</span>
+              </div>
+            </div>
+            <div class="pos plan">
+              <span class="chk"></span>
+              <div>
+                <div class="l1">RVNL <span class="ltp-inline dn">481.60 ↓</span> <span class="pill plan">Plan</span></div>
+                <div class="l2">railway PSU &nbsp;·&nbsp; risk Rs 1,200</div>
+              </div>
+              <div class="qty-col"><input class="q-input" value="50" /></div>
+              <div class="right">
+                <span class="price">488.00</span>
+                <span style="font-size:9px;color:var(--text-faint);letter-spacing:.06em;">PDH</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+
+      <!-- ===== 4 CLOSING REFLECTION (compact, no streak ribbon) ===== -->
+      <div class="block closing">
+        <div class="block-head" style="padding:6px 16px">
+          <span class="sec-num mono">4</span>
+          <span class="sec-title">Closing Reflection</span>
+          <span class="sec-meta" style="margin-left:14px">Wins-only journal &nbsp;·&nbsp; what I did <b>well</b> today</span>
+        </div>
+        <div class="closing-body">
+
+          <!-- LEFT: 4 win cards (editable) -->
+          <div class="wins-grid">
+            <div class="win-card discipline filled">
+              <div class="top-row"><span class="badge">Discipline</span><span class="check">✓</span></div>
+              <input class="title-input" value="Held my stop on IREDA" placeholder="what I did well…" />
+              <textarea class="desc-input" placeholder="describe the moment…">Didn't widen when it tested 190. Risk stayed Rs 800, exactly as planned.</textarea>
+            </div>
+            <div class="win-card process filled">
+              <div class="top-row"><span class="badge">Process</span><span class="check">✓</span></div>
+              <input class="title-input" value="Stuck to the 09:30 wait" placeholder="what I did well…" />
+              <textarea class="desc-input" placeholder="describe the moment…">Skipped the noisy first 15 min. The PSU setup was cleaner at 09:34.</textarea>
+            </div>
+            <div class="win-card patience empty">
+              <div class="top-row"><span class="badge">Patience</span><span class="check">○</span></div>
+              <input class="title-input" placeholder="where I waited well…" />
+              <textarea class="desc-input" placeholder="tap to capture a moment of patience"></textarea>
+            </div>
+            <div class="win-card execution filled">
+              <div class="top-row"><span class="badge">Execution</span><span class="check">✓</span></div>
+              <input class="title-input" value="Sized SBIN at full plan" placeholder="what I did well…" />
+              <textarea class="desc-input" placeholder="describe the moment…">120 sh as planned. No half-sizing out of fear. Trusted the prep.</textarea>
+            </div>
+          </div>
+
+          <!-- RIGHT: best moment + affirmation only (ribbon removed) -->
+          <div class="closing-right">
+            <div class="best">
+              <div class="head">
+                <span class="star">★</span>
+                <span class="lbl">Best moment</span>
+                <span class="ticker-pill">SBIN · +1.6R</span>
+              </div>
+              <textarea class="text-input" placeholder="the one trade I'll remember…">PDH break, didn't chase — waited the retest at 740.20, full size, trailed past 1R. "Exactly the trade I drew up last night."</textarea>
+            </div>
+            <div class="affirm">
+              <div class="lbl-row">
+                <span class="lbl">Today's affirmation</span>
+                <span class="regen">↻ regenerate</span>
+              </div>
+              <div class="text">I am the kind of trader who <span class="em">trusts the prep</span>, <span class="em">honors the stop</span>, and <span class="em">lets the process do the work</span>.</div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+  // ----- Aggression dial: clickable marks + click on track -----
+  const dialMarks = document.querySelectorAll('.dial-marks span');
+  const dialFill  = document.querySelector('.dial-fill');
+  const dialHandle= document.querySelector('.dial-handle');
+  const dialVal   = document.querySelector('.dial-val');
+  dialMarks.forEach((s, i) => {
+    s.addEventListener('click', () => {
+      dialMarks.forEach(x => x.classList.remove('on'));
+      s.classList.add('on');
+      const val = i + 1;
+      const pct = val * 20;
+      dialFill.style.width   = pct + '%';
+      dialHandle.style.left  = pct + '%';
+      dialVal.textContent    = val + ' / 5 · ' + s.textContent.trim();
+    });
+  });
+  document.querySelector('.dial-track').addEventListener('click', (e) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const pct = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+    const val = Math.max(1, Math.min(5, Math.round(pct * 5)));
+    dialMarks[val - 1].click();
+  });
+
+  // ----- Stance pills (single-select) -----
+  document.querySelectorAll('[data-group="stance"] .stance-pill').forEach(pill => {
+    pill.addEventListener('click', () => {
+      pill.parentElement.querySelectorAll('.stance-pill').forEach(p => p.classList.remove('on'));
+      pill.classList.add('on');
+    });
+  });
+
+  // ----- Timing cells (single-select) -----
+  document.querySelectorAll('[data-group="timing"] .timing-cell').forEach(c => {
+    c.addEventListener('click', () => {
+      c.parentElement.querySelectorAll('.timing-cell').forEach(x => x.classList.remove('on'));
+      c.classList.add('on');
+    });
+  });
+
+  // ----- Conviction dots in watchlist -----
+  document.querySelectorAll('.watch-row .conv').forEach(group => {
+    group.querySelectorAll('i').forEach((dot, idx) => {
+      dot.addEventListener('click', (e) => {
+        e.stopPropagation();
+        group.querySelectorAll('i').forEach((d, j) => {
+          if (j <= idx) d.classList.add('on'); else d.classList.remove('on');
+        });
+      });
+    });
+  });
+
+  // ----- Re-skin protect rows to match the target mockup -----
+  const protectRows = Array.from(document.querySelectorAll('.prot-list .pos'));
+  const protectMeta = {
+    VEDL:   { status: 'safe',  pill: 'SAFE',  slLabel: '548 SL',  buy: '480 buy', cmp: '559 CMP',  current: '559.76', pct: '+16.6%', qty: '108', sl: '548.20', fill: '79%', bar: 'var(--green-dim)', checked: true },
+    ARSSBL: { status: 'watch', pill: 'WATCH', slLabel: '576 SL',  buy: '550 buy', cmp: '588 CMP',  current: '588.06', pct: '+6.9%',  qty: '90',  sl: '576.00', fill: '77%', bar: 'var(--amber-dim)' },
+    GROWW:  { status: 'hold',  pill: 'HOLD',  slLabel: '192 SL',  buy: '245 buy', cmp: '263 CMP',  current: '263.15', pct: '+7.4%',  qty: '80',  sl: '192.40', fill: '75%', bar: 'var(--purple-dim)' },
+    IREDA:  { status: 'safe',  pill: 'SAFE',  slLabel: '190 SL',  buy: '175 buy', cmp: '198 CMP',  current: '198.30', pct: '+13.3%', qty: '150', sl: '190.10', fill: '82%', bar: 'var(--green-dim)', checked: true },
+    MCX:    { status: 'watch', pill: 'WATCH', slLabel: '2829 SL', buy: '2600 buy',cmp: '2968 CMP', current: '2,968',  pct: '+14.2%', qty: '40',  sl: '2,829',  fill: '73%', bar: 'var(--amber-dim)' },
+    CGPOWER:{ status: 'hold',  pill: 'HOLD',  slLabel: '817 SL',  buy: '799 buy', cmp: '825 CMP',  current: '825.60', pct: '+4.5%',  qty: '140', sl: '817.90', fill: '76%', bar: 'var(--purple-dim)' },
+    CPPLUS: { status: 'safe',  pill: 'SAFE',  slLabel: '2291 SL', buy: '2200 buy',cmp: '2338 CMP', current: '2,338',  pct: '+6.3%',  qty: '96',  sl: '2,291',  fill: '69%', bar: 'var(--green-dim)', checked: true },
+    IITC:   { status: 'hold',  pill: 'HOLD',  slLabel: '462 SL',  buy: '440 buy', cmp: '469 CMP',  current: '469.10', pct: '+6.6%',  qty: '200', sl: '462.30', fill: '72%', bar: 'var(--purple-dim)' },
+  };
+
+  protectRows.forEach(row => {
+    const titleNode = row.querySelector('.l1');
+    if (!titleNode) return;
+    const ticker = titleNode.textContent.trim().split(/\s+/)[0];
+    const meta = protectMeta[ticker];
+    if (!meta) return;
+    const isChecked = row.querySelector('.chk')?.classList.contains('on') || !!meta.checked;
+    row.className = `pos ${meta.status}`;
+    row.style.cssText = `--fill:${meta.fill};--bar-color:${meta.bar}`;
+    row.innerHTML = `
+      <span class="chk${isChecked ? ' on' : ''}"></span>
+      <div class="pos-left">
+        <div class="pos-top"><span class="ticker">${ticker}</span><span class="pill ${meta.status}">${meta.pill}</span></div>
+      </div>
+      <div class="pos-mid">
+        <div class="risk-meta"><span class="sl">${meta.slLabel}</span><span class="buy">${meta.buy}</span><span class="cmp">${meta.cmp}</span></div>
+        <div class="risk-bar"><span class="risk-fill"></span><span class="risk-dot"></span></div>
+      </div>
+      <div class="price-col">
+        <span class="price-pct">${meta.pct}</span>
+      </div>
+      <div class="prot-qty"><span class="pq-v">${meta.qty}</span></div>
+      <div class="prot-sl"><span class="price">${meta.sl}</span></div>
+    `;
+  });
+
+  // ----- Rebuild execute rows to match the target screenshot -----
+  const execList = document.querySelector('.exec-list');
+  const execMeta = [
+    { ticker:'SBIN',     status:'plan', pill:'PLAN', pdl:'728',  slScale:'736',  cmpScale:'738',  buyScale:'742',  qty:'120', buy:'742.50',  sl:'736.00',  risk:'Rs 2400', pdlPos:'16%', slPos:'34%', cmpPos:'52%', buyPos:'74%' },
+    { ticker:'MCX',      status:'plan', pill:'PLAN', pdl:'2791', slScale:'2801', cmpScale:'2829', buyScale:'2968', qty:'40',  buy:'2,829.00', sl:'2,791.50', risk:'Rs 1500', pdlPos:'16%', slPos:'34%', cmpPos:'53%', buyPos:'80%' },
+    { ticker:'CGPOWER',  status:'cond', pill:'COND', pdl:'804',  slScale:'810',  cmpScale:'817',  buyScale:'825',  qty:'140', buy:'817.90',  sl:'804.20',  risk:'Rs 4000', pdlPos:'16%', slPos:'34%', cmpPos:'55%', buyPos:'79%' },
+    { ticker:'BEL',      status:'plan', pill:'PLAN', pdl:'318',  slScale:'320',  cmpScale:'324',  buyScale:'324',  qty:'80',  buy:'324.50',  sl:'318.60',  risk:'Rs 2000', pdlPos:'16%', slPos:'34%', cmpPos:'48%', buyPos:'68%' },
+    { ticker:'HDFCBANK', status:'cond', pill:'COND', pdl:'1581', slScale:'1588', cmpScale:'1594', buyScale:'1602', qty:'50',  buy:'1,602.10', sl:'1,581.00', risk:'Rs 1600', pdlPos:'16%', slPos:'34%', cmpPos:'56%', buyPos:'80%' },
+    { ticker:'PFC',      status:'cond', pill:'COND', pdl:'503',  slScale:'506',  cmpScale:'508',  buyScale:'512',  qty:'60',  buy:'512.40',  sl:'503.20',  risk:'Rs 1800', pdlPos:'16%', slPos:'34%', cmpPos:'51%', buyPos:'72%' },
+    { ticker:'RVNL',     status:'plan', pill:'PLAN', pdl:'479',  slScale:'481',  cmpScale:'482',  buyScale:'488',  qty:'50',  buy:'488.00',  sl:'479.10',  risk:'Rs 1200', pdlPos:'16%', slPos:'34%', cmpPos:'49%', buyPos:'68%' },
+  ];
+
+  execList.innerHTML = execMeta.map(meta => `
+    <div class="pos ${meta.status}" style="--pdl:${meta.pdlPos};--sl:${meta.slPos};--cmp:${meta.cmpPos};--buy:${meta.buyPos}">
+      <span class="chk"></span>
+      <div class="exec-left">
+        <span class="ticker">${meta.ticker}</span>
+      </div>
+      <div class="exec-mid">
+        <div class="exec-bar">
+          <span class="exec-marker pdl"></span>
+          <span class="exec-marker sl"></span>
+          <span class="exec-marker cmp"></span>
+          <span class="exec-marker buy"></span>
+        </div>
+        <div class="exec-scale">
+          <span class="pdl">${meta.pdl}</span>
+          <span class="sl">${meta.slScale}</span>
+          <span class="cmp">${meta.cmpScale}</span>
+          <span class="buy">${meta.buyScale}</span>
+        </div>
+      </div>
+      <div class="exec-qty">${meta.qty}</div>
+      <div class="exec-buy">${meta.buy}</div>
+      <div class="exec-sl">${meta.sl}</div>
+      <div class="exec-risk">${meta.risk}</div>
+    </div>
+  `).join('');
+
+  // ----- Position checkboxes -----
+  document.querySelectorAll('.pos .chk').forEach(c => {
+    c.addEventListener('click', () => c.classList.toggle('on'));
+  });
+
+  // ----- Win card check toggles when desc has content -----
+  document.querySelectorAll('.win-card').forEach(card => {
+    const check = card.querySelector('.check');
+    const desc  = card.querySelector('.desc-input');
+    const sync  = () => {
+      if (desc.value.trim().length > 0) {
+        card.classList.add('filled'); card.classList.remove('empty');
+        check.textContent = '✓';
+      } else {
+        card.classList.remove('filled'); card.classList.add('empty');
+        check.textContent = '○';
+      }
+    };
+    desc.addEventListener('input', sync);
+  });
+</script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 {
-  "date": "2026-04-30",
-  "saved_at": "2026-05-01T12:45:37",
+  "date": "2026-05-04",
+  "saved_at": "2026-05-01T12:45:24",
   "positions": [
     {
       "id": "p17770254578501mo0",
@@ -143,10 +143,10 @@
       "_avgQty": 85,
       "_execAvgEntry": 3473.55,
       "_execAvgQty": 65,
-      "_actualRisk": 1560,
-      "_avgSL": 3440.72,
       "_actualRps": 39,
-      "_availableRisk": 1462.5000000000023
+      "_availableRisk": 1462.5000000000023,
+      "_actualRisk": 1560,
+      "_avgSL": 3440.72
     },
     {
       "id": "p1777275356085ebju",
@@ -289,10 +289,10 @@
       "_avgQty": 48,
       "_execAvgEntry": 2802.31,
       "_execAvgQty": 40,
-      "_actualRisk": 1144.4,
-      "_avgSL": 2773.58,
       "_actualRps": 28.610000000000127,
-      "_availableRisk": 355.5999999999949
+      "_availableRisk": 355.5999999999949,
+      "_actualRisk": 1144.4,
+      "_avgSL": 2773.58
     },
     {
       "id": "p1777372385419pqw8",
@@ -425,10 +425,10 @@
       "_avgQty": 396,
       "_execAvgEntry": 837.34,
       "_execAvgQty": 263,
-      "_actualRisk": 761.6,
-      "_avgSL": 827.2,
       "_actualRps": 5.440000000000055,
-      "_availableRisk": 2569.2799999999856
+      "_availableRisk": 2569.2799999999856,
+      "_actualRisk": 761.6,
+      "_avgSL": 827.2
     },
     {
       "id": "p1777549077930piu7",
@@ -441,9 +441,9 @@
       "tacticalEntry": 1294.41,
       "tacticalSL": 1270.9,
       "tacticalRiskPct": 30,
-      "coreQty": null,
-      "coreEntry": null,
-      "coreSL": null,
+      "coreQty": 42,
+      "coreEntry": 1316,
+      "coreSL": 0.127,
       "riskAmount": 3500,
       "actualEntry": null,
       "daySL": null,
@@ -464,7 +464,7 @@
           "sq": null,
           "dt": "2026-05-01",
           "done": false,
-          "_sug": 1333.24,
+          "_sug": 1341.66,
           "_pnl": null
         },
         {
@@ -474,7 +474,7 @@
           "sq": null,
           "dt": "",
           "done": false,
-          "_sug": 1385.02,
+          "_sug": 1393.76,
           "_pnl": null
         },
         {
@@ -484,7 +484,7 @@
           "sq": null,
           "dt": "",
           "done": false,
-          "_sug": 1488.57,
+          "_sug": 1497.97,
           "_pnl": null
         },
         {
@@ -494,7 +494,7 @@
           "sq": null,
           "dt": "",
           "done": false,
-          "_sug": 1618.01,
+          "_sug": 1628.22,
           "_pnl": null
         }
       ],
@@ -533,14 +533,14 @@
       "_planRisk": 3478.59,
       "_avgEntry": 1302.24,
       "_avgQty": 111,
-      "_execAvgEntry": 1294.41,
-      "_execAvgQty": 69,
-      "_avgTacticalEntry": 1294.41,
+      "_execAvgEntry": 1302.58,
+      "_execAvgQty": 111,
+      "_avgTacticalEntry": 1302.58,
       "_avgPlanEntry": 1302.24,
-      "_suggestedQty": 21,
-      "_rem": 69,
+      "_suggestedQty": 33,
+      "_rem": 111,
       "_realPnl": 0,
-      "_openPnl": 65,
+      "_openPnl": -803,
       "_currentSL": 1270.9,
       "_days": 0,
       "_beSug": false,
@@ -549,6 +549,126 @@
       "_avgSL": 1270.9,
       "_actualRps": null,
       "_availableRisk": 1877.8100000000006
+    },
+    {
+      "id": "p1777551064332shma",
+      "symbol": "ATHERENERG",
+      "merits": "ev play",
+      "conviction": 3,
+      "cmp": 934.85,
+      "planEntry": null,
+      "planSL": null,
+      "tacticalEntry": 934.98,
+      "tacticalSL": 922.4,
+      "tacticalRiskPct": 30,
+      "coreQty": null,
+      "coreEntry": null,
+      "coreSL": null,
+      "riskAmount": 3000,
+      "actualEntry": null,
+      "daySL": null,
+      "actualQty": null,
+      "tacticalQty": 52,
+      "entryDate": "2026-05-04",
+      "posHigh": null,
+      "trailOverride": null,
+      "trailNote": "",
+      "thoughtTag": "NOTE",
+      "thoughtLog": [],
+      "movedBE": false,
+      "trims": [
+        {
+          "pct": 3,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "dt": "2026-05-04",
+          "done": false,
+          "_sug": 963.03,
+          "_pnl": null
+        },
+        {
+          "pct": 10,
+          "type": "trail",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 1000.43,
+          "_pnl": null
+        },
+        {
+          "pct": 15,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 1075.23,
+          "_pnl": null
+        },
+        {
+          "pct": 25,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 1168.72,
+          "_pnl": null
+        }
+      ],
+      "mgmt": {
+        "checklist": [
+          [
+            false,
+            false,
+            false
+          ],
+          [
+            false,
+            false,
+            false
+          ],
+          [
+            false,
+            false,
+            false
+          ]
+        ],
+        "note": ""
+      },
+      "collapsed": false,
+      "_coreRps": null,
+      "_tacticalRps": 12.580000000000041,
+      "_actualRps": null,
+      "_availableRisk": 2345.839999999998,
+      "_suggestedTacticalQty": null,
+      "_qty": 52,
+      "_tacticalQty": 52,
+      "_predQty": 0,
+      "_predRisk": 0,
+      "_tacticalRisk": 654.16,
+      "_actualRisk": 0,
+      "_planRisk": 654.16,
+      "_avgEntry": 934.98,
+      "_avgSL": 922.4,
+      "_avgQty": 52,
+      "_execAvgEntry": 934.98,
+      "_execAvgQty": 52,
+      "_avgTacticalEntry": 934.98,
+      "_avgPlanEntry": 934.98,
+      "_rps": 12.58,
+      "_blendRps": 12.58,
+      "_blendPct": 1.35,
+      "_suggestedQty": 16,
+      "_rem": 52,
+      "_realPnl": 0,
+      "_openPnl": -7,
+      "_currentSL": null,
+      "_days": -3,
+      "_beSug": false,
+      "_status": "active"
     }
   ]
 }
