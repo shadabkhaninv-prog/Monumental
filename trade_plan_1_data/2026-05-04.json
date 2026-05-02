@@ -1,6 +1,6 @@
 {
   "date": "2026-05-04",
-  "saved_at": "2026-05-01T22:32:32",
+  "saved_at": "2026-05-02T11:13:11",
   "positions": [
     {
       "id": "p17770254578501mo0",
@@ -13,13 +13,7 @@
       "tacticalEntry": 3449,
       "tacticalSL": 3449.9,
       "tacticalRiskPct": 30,
-      "coreQty": null,
-      "coreEntry": null,
-      "coreSL": null,
       "riskAmount": 3000,
-      "actualEntry": 3488.9,
-      "daySL": 3449.9,
-      "actualQty": 40,
       "tacticalQty": 25,
       "entryDate": "2026-04-27",
       "posHigh": null,
@@ -146,7 +140,13 @@
       "_actualRps": 39,
       "_availableRisk": 1462.5000000000023,
       "_actualRisk": 1560,
-      "_avgSL": 3440.72
+      "_avgSL": 3440.72,
+      "coreQty": 40,
+      "coreEntry": 3488.9,
+      "coreSL": 3449.9,
+      "actualQty": null,
+      "actualEntry": null,
+      "daySL": null
     },
     {
       "id": "p1777275356085ebju",
@@ -305,13 +305,7 @@
       "tacticalEntry": 837.34,
       "tacticalSL": 831.9,
       "tacticalRiskPct": 30,
-      "coreQty": null,
-      "coreEntry": null,
-      "coreSL": null,
       "riskAmount": 4000,
-      "actualEntry": 837.34,
-      "daySL": 831.9,
-      "actualQty": 140,
       "tacticalQty": 123,
       "entryDate": "2026-04-29",
       "posHigh": null,
@@ -428,7 +422,13 @@
       "_actualRps": 5.440000000000055,
       "_availableRisk": 2569.2799999999856,
       "_actualRisk": 761.6,
-      "_avgSL": 827.2
+      "_avgSL": 827.2,
+      "coreQty": 140,
+      "coreEntry": 837.34,
+      "coreSL": 831.9,
+      "actualQty": null,
+      "actualEntry": null,
+      "daySL": null
     },
     {
       "id": "p1777549077930piu7",

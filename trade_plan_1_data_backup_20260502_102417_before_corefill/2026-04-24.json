@@ -1,0 +1,501 @@
+﻿{
+    "date":  "2026-04-24",
+    "saved_at":  "2026-04-27T17:10:12",
+    "positions":  [
+                      {
+                          "id":  "p1776944248494n9mf",
+                          "symbol":  "GUJALKALI",
+                          "merits":  "BIG FUCKING MOVE ON HUGE VOLUMES . TWO TIGHTS ",
+                          "conviction":  3,
+                          "cmp":  769.45,
+                          "planEntry":  742,
+                          "planSL":  718.9,
+                          "riskAmount":  3000,
+                          "actualEntry":  740.2,
+                          "daySL":  null,
+                          "actualQty":  155,
+                          "entryDate":  "2026-04-23",
+                          "posHigh":  null,
+                          "trailOverride":  null,
+                          "trailNote":  "",
+                          "thoughtTag":  "LESSON",
+                          "thoughtLog":  [
+                                             {
+                                                 "ts":  "2026-04-24T05:44:55.269Z",
+                                                 "tag":  "NOTE",
+                                                 "text":  "wacky 5 min bar ,dump ed most qty"
+                                             },
+                                             {
+                                                 "ts":  "2026-04-24T05:45:10.550Z",
+                                                 "tag":  "NOTE",
+                                                 "text":  "not an ideal trade . the orb was so high for this type of stock"
+                                             },
+                                             {
+                                                 "ts":  "2026-04-24T08:11:36.206Z",
+                                                 "tag":  "NOTE",
+                                                 "text":  "hanging on to 60 qty .entry little hasty"
+                                             },
+                                             {
+                                                 "ts":  "2026-04-24T08:47:51.746Z",
+                                                 "tag":  "LESSON",
+                                                 "text":  "with such a huge bar 5 min bar in a jitter stock was bad trade 3% open bar fade avoid"
+                                             },
+                                             {
+                                                 "ts":  "2026-04-24T08:50:06.234Z",
+                                                 "tag":  "LESSON",
+                                                 "text":  "just patience and sticking to plan makes bad trade good"
+                                             }
+                                         ],
+                          "movedBE":  false,
+                          "trims":  [
+                                        {
+                                            "pct":  3,
+                                            "type":  "fixed",
+                                            "ap":  731.5,
+                                            "sq":  125,
+                                            "dt":  "2026-04-24",
+                                            "done":  true,
+                                            "_sug":  759.37,
+                                            "_pnl":  -1088
+                                        },
+                                        {
+                                            "pct":  10,
+                                            "type":  "trail",
+                                            "ap":  null,
+                                            "sq":  null,
+                                            "dt":  "",
+                                            "done":  false,
+                                            "_sug":  788.86,
+                                            "_pnl":  null
+                                        },
+                                        {
+                                            "pct":  15,
+                                            "type":  "fixed",
+                                            "ap":  null,
+                                            "sq":  null,
+                                            "dt":  "",
+                                            "done":  false,
+                                            "_sug":  847.84,
+                                            "_pnl":  null
+                                        },
+                                        {
+                                            "pct":  25,
+                                            "type":  "fixed",
+                                            "ap":  null,
+                                            "sq":  null,
+                                            "dt":  "",
+                                            "done":  false,
+                                            "_sug":  921.56,
+                                            "_pnl":  null
+                                        }
+                                    ],
+                          "mgmt":  {
+                                       "checklist":  [
+                                                         [
+                                                             false,
+                                                             false,
+                                                             false
+                                                         ],
+                                                         [
+                                                             false,
+                                                             false,
+                                                             false
+                                                         ],
+                                                         [
+                                                             false,
+                                                             false,
+                                                             false
+                                                         ]
+                                                     ],
+                                       "note":  ""
+                                   },
+                          "collapsed":  false,
+                          "_coreRps":  23.100000000000023,
+                          "_blendRps":  23.100000000000023,
+                          "_rps":  "23.10",
+                          "_qty":  129,
+                          "_predQty":  129,
+                          "_predRisk":  2979.9,
+                          "_planRisk":  2979.9,
+                          "_suggestedQty":  56,
+                          "_rem":  60,
+                          "_realPnl":  -1088,
+                          "_openPnl":  1932,
+                          "_currentSL":  718.9,
+                          "_days":  4,
+                          "_beSug":  true,
+                          "_status":  "partial",
+                          "_blendPct":  3.11,
+                          "_avgPlanEntry":  742,
+                          "tacticalQty":  30,
+                          "tacticalEntry":  722,
+                          "tacticalSL":  709.9
+                      },
+                      {
+                          "id":  "p17769441158332q6h",
+                          "symbol":  "AVANTIFEED",
+                          "merits":  "strongest stock , big buzz . shrimp exports do well on strong dollars. falling wedge .setting up a pivot for 1490.big spread though !",
+                          "conviction":  3,
+                          "cmp":  1421.1,
+                          "planEntry":  1491,
+                          "planSL":  1419.9,
+                          "riskAmount":  3000,
+                          "actualEntry":  null,
+                          "daySL":  null,
+                          "actualQty":  null,
+                          "entryDate":  "2026-04-23",
+                          "posHigh":  null,
+                          "trailOverride":  null,
+                          "trailNote":  "",
+                          "thoughtTag":  "NOTE",
+                          "thoughtLog":  [
+
+                                         ],
+                          "movedBE":  false,
+                          "trims":  [
+                                        {
+                                            "pct":  3,
+                                            "type":  "fixed",
+                                            "ap":  1453,
+                                            "sq":  15,
+                                            "dt":  "2026-04-23",
+                                            "done":  true,
+                                            "_sug":  1503.36,
+                                            "_pnl":  null
+                                        },
+                                        {
+                                            "pct":  10,
+                                            "type":  "trail",
+                                            "ap":  null,
+                                            "sq":  null,
+                                            "dt":  "",
+                                            "done":  false,
+                                            "_sug":  1561.74,
+                                            "_pnl":  null
+                                        },
+                                        {
+                                            "pct":  15,
+                                            "type":  "fixed",
+                                            "ap":  null,
+                                            "sq":  null,
+                                            "dt":  "",
+                                            "done":  false,
+                                            "_sug":  1678.51,
+                                            "_pnl":  null
+                                        },
+                                        {
+                                            "pct":  25,
+                                            "type":  "fixed",
+                                            "ap":  null,
+                                            "sq":  null,
+                                            "dt":  "",
+                                            "done":  false,
+                                            "_sug":  1824.46,
+                                            "_pnl":  null
+                                        }
+                                    ],
+                          "mgmt":  {
+                                       "checklist":  [
+                                                         [
+                                                             false,
+                                                             false,
+                                                             false
+                                                         ],
+                                                         [
+                                                             false,
+                                                             false,
+                                                             false
+                                                         ],
+                                                         [
+                                                             false,
+                                                             false,
+                                                             false
+                                                         ]
+                                                     ],
+                                       "note":  ""
+                                   },
+                          "collapsed":  false,
+                          "_coreRps":  71.09999999999991,
+                          "_blendRps":  71.09999999999991,
+                          "_rps":  "71.10",
+                          "_qty":  43,
+                          "_predQty":  42,
+                          "_predRisk":  2986.2,
+                          "_planRisk":  3057.3,
+                          "_suggestedQty":  5,
+                          "_rem":  0,
+                          "_realPnl":  0,
+                          "_openPnl":  null,
+                          "_currentSL":  1419.9,
+                          "_days":  4,
+                          "_beSug":  true,
+                          "_status":  "closed",
+                          "_blendPct":  4.77,
+                          "_avgPlanEntry":  1491,
+                          "tacticalSL":  null,
+                          "tacticalQty":  15,
+                          "tacticalEntry":  1459.57
+                      },
+                      {
+                          "id":  "p17768445300488kdi",
+                          "symbol":  "KRN",
+                          "merits":  "HOT SECTOR .MASSIVE .FALLING WEDGES ARE IN VOGUE . other datacentre related stuff is firing / IDEA IS TO GET SMALL OVERNIGHT QTY IF IT CLOSES STRONG HERE .THEN ADD ON BREAK OF DAY\u0027S HIGH . buy 5 min orb . then add on break of PDH",
+                          "conviction":  3,
+                          "cmp":  1247.7,
+                          "planEntry":  1226.1,
+                          "planSL":  1182.9,
+                          "riskAmount":  4000,
+                          "actualEntry":  1208.2,
+                          "daySL":  null,
+                          "actualQty":  50,
+                          "entryDate":  "2026-04-23",
+                          "posHigh":  null,
+                          "trailOverride":  1249,
+                          "trailNote":  "BIG MOVE .",
+                          "thoughtTag":  "EXIT",
+                          "thoughtLog":  [
+                                             {
+                                                 "ts":  "2026-04-23T03:53:48.009Z",
+                                                 "tag":  "NOTE",
+                                                 "text":  "wait for trigger orb and day\u0027s break"
+                                             },
+                                             {
+                                                 "ts":  "2026-04-23T05:03:50.638Z",
+                                                 "tag":  "NOTE",
+                                                 "text":  "tanking after morning surge.we hold the SL.taking some $$ helps"
+                                             },
+                                             {
+                                                 "ts":  "2026-04-23T08:38:02.065Z",
+                                                 "tag":  "NOTE",
+                                                 "text":  "nice i managed to hold ."
+                                             },
+                                             {
+                                                 "ts":  "2026-04-23T08:38:13.916Z",
+                                                 "tag":  "NOTE",
+                                                 "text":  "ran away , no fill"
+                                             },
+                                             {
+                                                 "ts":  "2026-04-23T08:38:24.637Z",
+                                                 "tag":  "ENTRY",
+                                                 "text":  "ran away no fill"
+                                             },
+                                             {
+                                                 "ts":  "2026-04-24T04:19:42.523Z",
+                                                 "tag":  "ENTRY",
+                                                 "text":  "market cratering . lets tighten sl"
+                                             },
+                                             {
+                                                 "ts":  "2026-04-24T08:10:34.018Z",
+                                                 "tag":  "ENTRY",
+                                                 "text":  "sold ramiaing krn ,pile driver"
+                                             },
+                                             {
+                                                 "ts":  "2026-04-24T08:10:43.745Z",
+                                                 "tag":  "EXIT",
+                                                 "text":  "had to tighten up stops"
+                                             }
+                                         ],
+                          "movedBE":  false,
+                          "trims":  [
+                                        {
+                                            "pct":  3,
+                                            "type":  "fixed",
+                                            "ap":  1246,
+                                            "sq":  25,
+                                            "dt":  "2026-04-23",
+                                            "done":  true,
+                                            "_sug":  1243.56,
+                                            "_pnl":  945
+                                        },
+                                        {
+                                            "pct":  10,
+                                            "type":  "trail",
+                                            "ap":  1264,
+                                            "sq":  15,
+                                            "dt":  "2026-04-24",
+                                            "done":  true,
+                                            "_sug":  1291.85,
+                                            "_pnl":  837
+                                        },
+                                        {
+                                            "pct":  15,
+                                            "type":  "fixed",
+                                            "ap":  1248.4,
+                                            "sq":  30,
+                                            "dt":  "2026-04-24",
+                                            "done":  true,
+                                            "_sug":  1388.44,
+                                            "_pnl":  1206
+                                        },
+                                        {
+                                            "pct":  25,
+                                            "type":  "fixed",
+                                            "ap":  null,
+                                            "sq":  null,
+                                            "dt":  "",
+                                            "done":  false,
+                                            "_sug":  1509.17,
+                                            "_pnl":  null
+                                        }
+                                    ],
+                          "mgmt":  {
+                                       "checklist":  [
+                                                         [
+                                                             false,
+                                                             false,
+                                                             false
+                                                         ],
+                                                         [
+                                                             false,
+                                                             false,
+                                                             false
+                                                         ],
+                                                         [
+                                                             false,
+                                                             false,
+                                                             false
+                                                         ]
+                                                     ],
+                                       "note":  "",
+                                       "fe":  false,
+                                       "fsl":  false,
+                                       "ft":  false,
+                                       "fbe":  false
+                                   },
+                          "collapsed":  false,
+                          "_coreRps":  43.19999999999982,
+                          "_blendRps":  43.19999999999982,
+                          "_rps":  "43.20",
+                          "_qty":  92,
+                          "_predQty":  92,
+                          "_predRisk":  3974.4,
+                          "_planRisk":  3974.4,
+                          "_suggestedQty":  21,
+                          "_rem":  0,
+                          "_realPnl":  2988,
+                          "_openPnl":  null,
+                          "_currentSL":  1249,
+                          "_days":  4,
+                          "_beSug":  true,
+                          "_status":  "closed",
+                          "_blendPct":  3.52,
+                          "_avgPlanEntry":  1226.1,
+                          "tacticalSL":  null,
+                          "tacticalQty":  20,
+                          "tacticalEntry":  1205.2
+                      },
+                      {
+                          "id":  "p17769527464429sro",
+                          "symbol":  "PRECWIRE",
+                          "merits":  "NEAR HIGHS . BULL FLAG . WICK PLAY SETTING ITSELF FOR A BREAKOUT OF 400 BUT ILLIQUID SLIPPER CHINALKA . IT NEEDS A VERY TIGHT INTRADAY SETUP FOR ME TO ENTER.\n",
+                          "conviction":  3,
+                          "cmp":  390.15,
+                          "planEntry":  400.1,
+                          "planSL":  383.9,
+                          "riskAmount":  3000,
+                          "actualEntry":  null,
+                          "daySL":  null,
+                          "actualQty":  null,
+                          "entryDate":  "",
+                          "posHigh":  null,
+                          "trailOverride":  null,
+                          "trailNote":  "",
+                          "thoughtTag":  "NOTE",
+                          "thoughtLog":  [
+                                             {
+                                                 "ts":  "2026-04-24T04:12:38.575Z",
+                                                 "tag":  "NOTE",
+                                                 "text":  "sloppy late cycle stop to be avoided"
+                                             },
+                                             {
+                                                 "ts":  "2026-04-24T04:13:10.959Z",
+                                                 "tag":  "NOTE",
+                                                 "text":  "go in with overnight position .or pointless this"
+                                             }
+                                         ],
+                          "movedBE":  false,
+                          "trims":  [
+                                        {
+                                            "pct":  3,
+                                            "type":  "fixed",
+                                            "ap":  null,
+                                            "sq":  null,
+                                            "dt":  "",
+                                            "done":  false,
+                                            "_sug":  412.1,
+                                            "_pnl":  null
+                                        },
+                                        {
+                                            "pct":  10,
+                                            "type":  "trail",
+                                            "ap":  null,
+                                            "sq":  null,
+                                            "dt":  "",
+                                            "done":  false,
+                                            "_sug":  428.11,
+                                            "_pnl":  null
+                                        },
+                                        {
+                                            "pct":  15,
+                                            "type":  "fixed",
+                                            "ap":  null,
+                                            "sq":  null,
+                                            "dt":  "",
+                                            "done":  false,
+                                            "_sug":  460.12,
+                                            "_pnl":  null
+                                        },
+                                        {
+                                            "pct":  25,
+                                            "type":  "fixed",
+                                            "ap":  null,
+                                            "sq":  null,
+                                            "dt":  "",
+                                            "done":  false,
+                                            "_sug":  500.13,
+                                            "_pnl":  null
+                                        }
+                                    ],
+                          "mgmt":  {
+                                       "checklist":  [
+                                                         [
+                                                             false,
+                                                             false,
+                                                             false
+                                                         ],
+                                                         [
+                                                             false,
+                                                             false,
+                                                             false
+                                                         ],
+                                                         [
+                                                             false,
+                                                             false,
+                                                             false
+                                                         ]
+                                                     ],
+                                       "note":  ""
+                                   },
+                          "collapsed":  false,
+                          "_coreRps":  16.200000000000045,
+                          "_blendRps":  16.200000000000045,
+                          "_rps":  "16.20",
+                          "_qty":  187,
+                          "_predQty":  185,
+                          "_predRisk":  2997,
+                          "_planRisk":  3029.4,
+                          "_suggestedQty":  null,
+                          "_rem":  null,
+                          "_realPnl":  0,
+                          "_openPnl":  null,
+                          "_currentSL":  383.9,
+                          "_days":  null,
+                          "_beSug":  false,
+                          "_status":  "planning",
+                          "_blendPct":  4.05,
+                          "_avgPlanEntry":  400.1,
+                          "tacticalEntry":  null,
+                          "tacticalSL":  null
+                      }
+                  ]
+}

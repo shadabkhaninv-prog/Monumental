@@ -1,0 +1,342 @@
+﻿[
+    {
+        "Before":  {
+                       "File":  "2026-04-08.json",
+                       "Symbol":  "POWERINDIA",
+                       "CoreQty":  4,
+                       "CoreSL":  null,
+                       "PlanSL":  25140,
+                       "CurrentSL":  25140,
+                       "DaySL":  null
+                   },
+        "After":  {
+                      "File":  "2026-04-08.json",
+                      "Symbol":  "POWERINDIA",
+                      "CoreQty":  4,
+                      "CoreSL":  25140,
+                      "PlanSL":  25140,
+                      "CurrentSL":  25140,
+                      "DaySL":  null
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-10.json",
+                       "Symbol":  "TDPOWERSYS",
+                       "CoreQty":  75,
+                       "CoreSL":  null,
+                       "PlanSL":  882.4,
+                       "CurrentSL":  882.4,
+                       "DaySL":  null
+                   },
+        "After":  {
+                      "File":  "2026-04-10.json",
+                      "Symbol":  "TDPOWERSYS",
+                      "CoreQty":  75,
+                      "CoreSL":  882.4,
+                      "PlanSL":  882.4,
+                      "CurrentSL":  882.4,
+                      "DaySL":  null
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-17.json",
+                       "Symbol":  "APARINDS",
+                       "CoreQty":  9,
+                       "CoreSL":  null,
+                       "PlanSL":  11078,
+                       "CurrentSL":  11078,
+                       "DaySL":  null
+                   },
+        "After":  {
+                      "File":  "2026-04-17.json",
+                      "Symbol":  "APARINDS",
+                      "CoreQty":  9,
+                      "CoreSL":  11078,
+                      "PlanSL":  11078,
+                      "CurrentSL":  11078,
+                      "DaySL":  null
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-18.json",
+                       "Symbol":  "APARINDS",
+                       "CoreQty":  9,
+                       "CoreSL":  null,
+                       "PlanSL":  11078,
+                       "CurrentSL":  11078,
+                       "DaySL":  null
+                   },
+        "After":  {
+                      "File":  "2026-04-18.json",
+                      "Symbol":  "APARINDS",
+                      "CoreQty":  9,
+                      "CoreSL":  11078,
+                      "PlanSL":  11078,
+                      "CurrentSL":  11078,
+                      "DaySL":  null
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-19.json",
+                       "Symbol":  "APARINDS",
+                       "CoreQty":  9,
+                       "CoreSL":  null,
+                       "PlanSL":  11078,
+                       "CurrentSL":  11078,
+                       "DaySL":  null
+                   },
+        "After":  {
+                      "File":  "2026-04-19.json",
+                      "Symbol":  "APARINDS",
+                      "CoreQty":  9,
+                      "CoreSL":  11078,
+                      "PlanSL":  11078,
+                      "CurrentSL":  11078,
+                      "DaySL":  null
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-20.json",
+                       "Symbol":  "APARINDS",
+                       "CoreQty":  9,
+                       "CoreSL":  null,
+                       "PlanSL":  11078,
+                       "CurrentSL":  11379,
+                       "DaySL":  null
+                   },
+        "After":  {
+                      "File":  "2026-04-20.json",
+                      "Symbol":  "APARINDS",
+                      "CoreQty":  9,
+                      "CoreSL":  11379,
+                      "PlanSL":  11078,
+                      "CurrentSL":  11379,
+                      "DaySL":  null
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-20.json",
+                       "Symbol":  "KTKBANK",
+                       "CoreQty":  340,
+                       "CoreSL":  null,
+                       "PlanSL":  242.4,
+                       "CurrentSL":  242.4,
+                       "DaySL":  null
+                   },
+        "After":  {
+                      "File":  "2026-04-20.json",
+                      "Symbol":  "KTKBANK",
+                      "CoreQty":  340,
+                      "CoreSL":  242.4,
+                      "PlanSL":  242.4,
+                      "CurrentSL":  242.4,
+                      "DaySL":  null
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-21.json",
+                       "Symbol":  "ARSSBL",
+                       "CoreQty":  182,
+                       "CoreSL":  null,
+                       "PlanSL":  575.9,
+                       "CurrentSL":  575.9,
+                       "DaySL":  null
+                   },
+        "After":  {
+                      "File":  "2026-04-21.json",
+                      "Symbol":  "ARSSBL",
+                      "CoreQty":  182,
+                      "CoreSL":  575.9,
+                      "PlanSL":  575.9,
+                      "CurrentSL":  575.9,
+                      "DaySL":  null
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-21.json",
+                       "Symbol":  "APARINDS",
+                       "CoreQty":  9,
+                       "CoreSL":  null,
+                       "PlanSL":  11078,
+                       "CurrentSL":  11974,
+                       "DaySL":  null
+                   },
+        "After":  {
+                      "File":  "2026-04-21.json",
+                      "Symbol":  "APARINDS",
+                      "CoreQty":  9,
+                      "CoreSL":  11974,
+                      "PlanSL":  11078,
+                      "CurrentSL":  11974,
+                      "DaySL":  null
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-22.json",
+                       "Symbol":  "ARSSBL",
+                       "CoreQty":  182,
+                       "CoreSL":  null,
+                       "PlanSL":  575.9,
+                       "CurrentSL":  575.9,
+                       "DaySL":  null
+                   },
+        "After":  {
+                      "File":  "2026-04-22.json",
+                      "Symbol":  "ARSSBL",
+                      "CoreQty":  182,
+                      "CoreSL":  575.9,
+                      "PlanSL":  575.9,
+                      "CurrentSL":  575.9,
+                      "DaySL":  null
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-22.json",
+                       "Symbol":  "BSE",
+                       "CoreQty":  5,
+                       "CoreSL":  null,
+                       "PlanSL":  3494.9,
+                       "CurrentSL":  3494.9,
+                       "DaySL":  null
+                   },
+        "After":  {
+                      "File":  "2026-04-22.json",
+                      "Symbol":  "BSE",
+                      "CoreQty":  5,
+                      "CoreSL":  3494.9,
+                      "PlanSL":  3494.9,
+                      "CurrentSL":  3494.9,
+                      "DaySL":  null
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-23.json",
+                       "Symbol":  "KRN",
+                       "CoreQty":  50,
+                       "CoreSL":  null,
+                       "PlanSL":  1182.9,
+                       "CurrentSL":  1182.9,
+                       "DaySL":  null
+                   },
+        "After":  {
+                      "File":  "2026-04-23.json",
+                      "Symbol":  "KRN",
+                      "CoreQty":  50,
+                      "CoreSL":  1182.9,
+                      "PlanSL":  1182.9,
+                      "CurrentSL":  1182.9,
+                      "DaySL":  null
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-23.json",
+                       "Symbol":  "ARSSBL",
+                       "CoreQty":  172,
+                       "CoreSL":  null,
+                       "PlanSL":  575.9,
+                       "CurrentSL":  584.9,
+                       "DaySL":  null
+                   },
+        "After":  {
+                      "File":  "2026-04-23.json",
+                      "Symbol":  "ARSSBL",
+                      "CoreQty":  172,
+                      "CoreSL":  584.9,
+                      "PlanSL":  575.9,
+                      "CurrentSL":  584.9,
+                      "DaySL":  null
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-24.json",
+                       "Symbol":  "GUJALKALI",
+                       "CoreQty":  155,
+                       "CoreSL":  null,
+                       "PlanSL":  718.9,
+                       "CurrentSL":  718.9,
+                       "DaySL":  null
+                   },
+        "After":  {
+                      "File":  "2026-04-24.json",
+                      "Symbol":  "GUJALKALI",
+                      "CoreQty":  155,
+                      "CoreSL":  718.9,
+                      "PlanSL":  718.9,
+                      "CurrentSL":  718.9,
+                      "DaySL":  null
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-24.json",
+                       "Symbol":  "KRN",
+                       "CoreQty":  50,
+                       "CoreSL":  null,
+                       "PlanSL":  1182.9,
+                       "CurrentSL":  1249,
+                       "DaySL":  null
+                   },
+        "After":  {
+                      "File":  "2026-04-24.json",
+                      "Symbol":  "KRN",
+                      "CoreQty":  50,
+                      "CoreSL":  1249,
+                      "PlanSL":  1182.9,
+                      "CurrentSL":  1249,
+                      "DaySL":  null
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-25.json",
+                       "Symbol":  "GUJALKALI",
+                       "CoreQty":  155,
+                       "CoreSL":  null,
+                       "PlanSL":  718.9,
+                       "CurrentSL":  718.9,
+                       "DaySL":  null
+                   },
+        "After":  {
+                      "File":  "2026-04-25.json",
+                      "Symbol":  "GUJALKALI",
+                      "CoreQty":  155,
+                      "CoreSL":  718.9,
+                      "PlanSL":  718.9,
+                      "CurrentSL":  718.9,
+                      "DaySL":  null
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-26.json",
+                       "Symbol":  "GUJALKALI",
+                       "CoreQty":  155,
+                       "CoreSL":  null,
+                       "PlanSL":  718.9,
+                       "CurrentSL":  718.9,
+                       "DaySL":  null
+                   },
+        "After":  {
+                      "File":  "2026-04-26.json",
+                      "Symbol":  "GUJALKALI",
+                      "CoreQty":  155,
+                      "CoreSL":  718.9,
+                      "PlanSL":  718.9,
+                      "CurrentSL":  718.9,
+                      "DaySL":  null
+                  }
+    }
+]

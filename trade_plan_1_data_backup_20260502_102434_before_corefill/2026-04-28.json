@@ -1,0 +1,555 @@
+{
+  "date": "2026-04-28",
+  "saved_at": "2026-05-02T10:07:08",
+  "positions": [
+    {
+      "id": "p17772657173905asf",
+      "symbol": "ADANIPOWER",
+      "merits": "HOTTEST SECTOR .hottest stock , powerful move , extended yes . SS intraday setup",
+      "conviction": 2,
+      "cmp": 223.35,
+      "planEntry": 220.31,
+      "planSL": 214.49,
+      "tacticalEntry": 219.93,
+      "tacticalSL": 217.9,
+      "tacticalRiskPct": 30,
+      "coreQty": 280,
+      "coreEntry": 219.93,
+      "coreSL": 214.58,
+      "riskAmount": 1200,
+      "actualEntry": null,
+      "daySL": null,
+      "actualQty": null,
+      "tacticalQty": 50,
+      "entryDate": "2026-04-27",
+      "posHigh": null,
+      "trailOverride": null,
+      "trailNote": "",
+      "thoughtTag": "NOTE",
+      "thoughtLog": [
+        {
+          "ts": "2026-04-27T05:39:20.268Z",
+          "tag": "NOTE",
+          "text": "not clean SS bar breakout i hoped"
+        },
+        {
+          "ts": "2026-04-27T05:39:38.534Z",
+          "tag": "NOTE",
+          "text": "follow the plan , think of it as a multi day swing afair , stick to plan"
+        },
+        {
+          "ts": "2026-04-27T05:40:18.041Z",
+          "tag": "NOTE",
+          "text": "lets start taking SLs. part of business"
+        },
+        {
+          "ts": "2026-04-27T05:51:10.105Z",
+          "tag": "NOTE",
+          "text": "big open crawls are my achilles hell we will conquer it today"
+        }
+      ],
+      "movedBE": false,
+      "trims": [
+        {
+          "pct": 3,
+          "type": "fixed",
+          "ap": 217.9,
+          "sq": 50,
+          "dt": "2026-04-27",
+          "done": true,
+          "_sug": 226.53,
+          "_pnl": -102
+        },
+        {
+          "pct": 10,
+          "type": "trail",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 235.33,
+          "_pnl": null
+        },
+        {
+          "pct": 15,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 252.92,
+          "_pnl": null
+        },
+        {
+          "pct": 25,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 274.91,
+          "_pnl": null
+        }
+      ],
+      "mgmt": {
+        "checklist": [
+          [
+            false,
+            false,
+            false
+          ],
+          [
+            true,
+            false,
+            false
+          ],
+          [
+            false,
+            false,
+            false
+          ]
+        ],
+        "note": ""
+      },
+      "collapsed": false,
+      "_coreRps": 5.819999999999993,
+      "_blendRps": 4.85,
+      "_rps": 4.85,
+      "_qty": 50,
+      "_predQty": 0,
+      "_predRisk": 0,
+      "_planRisk": 1599.5,
+      "_suggestedQty": 99,
+      "_rem": 280,
+      "_realPnl": -102,
+      "_openPnl": 958,
+      "_currentSL": 214.49,
+      "_days": 5,
+      "_beSug": true,
+      "_status": "partial",
+      "_avgPlanEntry": 219.93,
+      "_blendPct": 2.21,
+      "_tacticalRps": 2.030000000000001,
+      "_actualRps": 5.349999999999994,
+      "_availableRisk": 0,
+      "_suggestedTacticalQty": null,
+      "_tacticalQty": 50,
+      "_tacticalRisk": 101.5,
+      "_actualRisk": 1498,
+      "_avgEntry": 219.93,
+      "_avgSL": 215.08,
+      "_avgQty": 330,
+      "_execAvgEntry": 219.93,
+      "_execAvgQty": 330,
+      "_avgTacticalEntry": 219.93
+    },
+    {
+      "id": "p17770254578501mo0",
+      "symbol": "BSE",
+      "merits": "market tml . biggest whatle . shallow pullback to 8 ema , wait for break of fallng wedge",
+      "conviction": 3,
+      "cmp": 3626.1,
+      "planEntry": 3482.1,
+      "planSL": 3410.9,
+      "tacticalEntry": 3449,
+      "tacticalSL": 3411.9,
+      "tacticalRiskPct": 30,
+      "coreQty": 40,
+      "coreEntry": "3488.9",
+      "coreSL": "3449.9",
+      "riskAmount": 3000,
+      "actualEntry": null,
+      "daySL": null,
+      "actualQty": null,
+      "tacticalQty": 25,
+      "entryDate": "2026-04-27",
+      "posHigh": null,
+      "trailOverride": null,
+      "trailNote": "",
+      "thoughtTag": "NOTE",
+      "thoughtLog": [
+        {
+          "ts": "2026-04-27T04:40:28.750Z",
+          "tag": "NOTE",
+          "text": "wicky breakout"
+        },
+        {
+          "ts": "2026-04-27T04:41:57.576Z",
+          "tag": "NOTE",
+          "text": "stalling near 3525 , 3530 htere is a resistance . we are not going to be swayed by intraday"
+        },
+        {
+          "ts": "2026-04-27T05:06:08.934Z",
+          "tag": "NOTE",
+          "text": "reversing back 3479 should be protected"
+        }
+      ],
+      "movedBE": false,
+      "trims": [
+        {
+          "pct": 3,
+          "type": "fixed",
+          "ap": 3579.8,
+          "sq": 11,
+          "dt": "2026-04-24",
+          "done": true,
+          "_sug": 3577.76,
+          "_pnl": 1169
+        },
+        {
+          "pct": 10,
+          "type": "trail",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 3716.7,
+          "_pnl": null
+        },
+        {
+          "pct": 15,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 3994.58,
+          "_pnl": null
+        },
+        {
+          "pct": 25,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 4341.94,
+          "_pnl": null
+        }
+      ],
+      "mgmt": {
+        "checklist": [
+          [
+            false,
+            false,
+            false
+          ],
+          [
+            true,
+            false,
+            false
+          ],
+          [
+            false,
+            false,
+            false
+          ]
+        ],
+        "note": ""
+      },
+      "collapsed": false,
+      "_coreRps": 71.19999999999982,
+      "_blendRps": 55.41,
+      "_rps": 55.41,
+      "_qty": 54,
+      "_predQty": 29,
+      "_predRisk": 2064.8,
+      "_planRisk": 2992.3,
+      "_suggestedQty": 20,
+      "_rem": 54,
+      "_realPnl": 1169,
+      "_openPnl": 8238,
+      "_currentSL": 3410.9,
+      "_days": 5,
+      "_beSug": true,
+      "_status": "partial",
+      "_avgPlanEntry": 3466.78,
+      "_blendPct": 1.6,
+      "_tacticalRps": 37.09999999999991,
+      "_actualRps": null,
+      "_availableRisk": 2072.5000000000023,
+      "_suggestedTacticalQty": 9,
+      "_tacticalQty": 25,
+      "_tacticalRisk": 927.5,
+      "_actualRisk": 0,
+      "_avgEntry": 3466.78,
+      "_avgSL": 3411.36,
+      "_avgQty": 54,
+      "_execAvgEntry": 3473.55,
+      "_execAvgQty": 65,
+      "_avgTacticalEntry": 3473.55
+    },
+    {
+      "id": "p1777275356085ebju",
+      "symbol": "MCX",
+      "merits": "TML . but bit of a drag ,tracking BSE ",
+      "conviction": 2,
+      "cmp": 2898,
+      "planEntry": 2815,
+      "planSL": 2773,
+      "tacticalEntry": null,
+      "tacticalSL": null,
+      "tacticalRiskPct": 30,
+      "coreQty": 40,
+      "coreEntry": "2882.31",
+      "coreSL": "2773.7",
+      "riskAmount": 1500,
+      "actualEntry": null,
+      "daySL": null,
+      "actualQty": null,
+      "tacticalQty": null,
+      "entryDate": "2026-04-27",
+      "posHigh": null,
+      "trailOverride": null,
+      "trailNote": "",
+      "thoughtTag": "NOTE",
+      "thoughtLog": [
+        {
+          "ts": "2026-04-27T08:13:43.170Z",
+          "tag": "NOTE",
+          "text": "not convinced , its just jittery and sloppy but its a leader .bse is leading so lets see"
+        },
+        {
+          "ts": "2026-04-28T04:36:01.666Z",
+          "tag": "NOTE",
+          "text": "performing better than i had expected"
+        }
+      ],
+      "movedBE": false,
+      "trims": [
+        {
+          "pct": 3,
+          "type": "fixed",
+          "ap": 2870.8,
+          "sq": 12,
+          "dt": "2026-04-27",
+          "done": true,
+          "_sug": 2968.78,
+          "_pnl": -138
+        },
+        {
+          "pct": 10,
+          "type": "trail",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 3084.07,
+          "_pnl": null
+        },
+        {
+          "pct": 15,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 3314.66,
+          "_pnl": null
+        },
+        {
+          "pct": 25,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 3602.89,
+          "_pnl": null
+        }
+      ],
+      "mgmt": {
+        "checklist": [
+          [
+            false,
+            false,
+            false
+          ],
+          [
+            true,
+            false,
+            false
+          ],
+          [
+            false,
+            false,
+            false
+          ]
+        ],
+        "note": ""
+      },
+      "collapsed": false,
+      "_coreRps": 42,
+      "_blendRps": 42,
+      "_rps": 42,
+      "_qty": 35,
+      "_predQty": 35,
+      "_predRisk": 1470,
+      "_planRisk": 1470,
+      "_avgPlanEntry": 2815,
+      "_suggestedQty": 12,
+      "_rem": 28,
+      "_realPnl": -138,
+      "_openPnl": 439,
+      "_currentSL": 2773,
+      "_days": 5,
+      "_beSug": true,
+      "_status": "partial",
+      "_blendPct": 1.49,
+      "_tacticalRps": null,
+      "_actualRps": null,
+      "_availableRisk": 1500,
+      "_suggestedTacticalQty": 11,
+      "_tacticalQty": 0,
+      "_tacticalRisk": 0,
+      "_actualRisk": 0,
+      "_avgEntry": 2815,
+      "_avgSL": 2773,
+      "_avgQty": 35,
+      "_execAvgEntry": 2882.31,
+      "_execAvgQty": 40,
+      "_avgTacticalEntry": 2882.31
+    },
+    {
+      "id": "p1777309904927mw7g",
+      "symbol": "ARSSBL",
+      "merits": "big bounce .groww doing well , flag structure , nice tight inside day.tried rally in last attempt . intraday massive big bar open , so this will be a small position.",
+      "conviction": 2,
+      "cmp": 601.8,
+      "planEntry": 607,
+      "planSL": 584.9,
+      "tacticalEntry": 582.15,
+      "tacticalSL": 576.4,
+      "tacticalRiskPct": 30,
+      "coreQty": null,
+      "coreEntry": null,
+      "coreSL": null,
+      "riskAmount": 2000,
+      "actualEntry": 606.43,
+      "daySL": 597.9,
+      "actualQty": 20,
+      "tacticalQty": 60,
+      "entryDate": "2026-04-28",
+      "posHigh": null,
+      "trailOverride": null,
+      "trailNote": "",
+      "thoughtTag": "NOTE",
+      "thoughtLog": [
+        {
+          "ts": "2026-04-28T04:11:58.046Z",
+          "tag": "NOTE",
+          "text": "big opening , over 3% cant add position"
+        },
+        {
+          "ts": "2026-04-28T04:35:37.003Z",
+          "tag": "NOTE",
+          "text": "dabble with 100 qty witth intraday sl"
+        },
+        {
+          "ts": "2026-04-28T05:49:03.052Z",
+          "tag": "NOTE",
+          "text": "took a small one here . but hate this big opening bar strugglers"
+        },
+        {
+          "ts": "2026-04-28T05:59:27.014Z",
+          "tag": "NOTE",
+          "text": "TOSSED IT A VOILATION . INTRADAY SETUP IN A SLOPPY STOCK"
+        }
+      ],
+      "movedBE": false,
+      "trims": [
+        {
+          "pct": 3,
+          "type": "fixed",
+          "ap": 597,
+          "sq": 80,
+          "dt": "2026-04-28",
+          "done": true,
+          "_sug": 605.87,
+          "_pnl": 702
+        },
+        {
+          "pct": 10,
+          "type": "trail",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 629.4,
+          "_pnl": null
+        },
+        {
+          "pct": 15,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 676.45,
+          "_pnl": null
+        },
+        {
+          "pct": 25,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 735.28,
+          "_pnl": null
+        }
+      ],
+      "mgmt": {
+        "checklist": [
+          [
+            false,
+            false,
+            false
+          ],
+          [
+            false,
+            false,
+            false
+          ],
+          [
+            false,
+            false,
+            false
+          ]
+        ],
+        "note": ""
+      },
+      "collapsed": false,
+      "_coreRps": 22.100000000000023,
+      "_blendRps": 13.58,
+      "_blendPct": 2.28,
+      "_rps": 13.58,
+      "_qty": 127,
+      "_predQty": 67,
+      "_predRisk": 1480.7,
+      "_planRisk": 1996.3,
+      "_avgPlanEntry": 596.78,
+      "_suggestedQty": 24,
+      "_rem": 0,
+      "_realPnl": 702,
+      "_openPnl": null,
+      "_currentSL": 584.9,
+      "_days": 4,
+      "_beSug": true,
+      "_status": "closed",
+      "_tacticalRps": 5.75,
+      "_actualRps": 8.529999999999973,
+      "_availableRisk": 1484.4000000000005,
+      "_suggestedTacticalQty": 20,
+      "_tacticalQty": 60,
+      "_tacticalRisk": 345,
+      "_actualRisk": 170.6,
+      "_avgEntry": 596.78,
+      "_avgSL": 583.2,
+      "_avgQty": 147,
+      "_execAvgEntry": 588.22,
+      "_execAvgQty": 80,
+      "_avgTacticalEntry": 588.22
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-﻿{
+{
     "date":  "2026-04-10",
     "saved_at":  "2026-04-26T11:46:21",
     "positions":  [
@@ -11,8 +11,6 @@
                           "planEntry":  905.26,
                           "planSL":  882.4,
                           "riskAmount":  3000,
-                          "actualEntry":  905.26,
-                          "actualQty":  75,
                           "entryDate":  "2026-04-10",
                           "posHigh":  null,
                           "trailOverride":  null,
@@ -100,7 +98,13 @@
                           "_days":  16,
                           "_beSug":  true,
                           "_status":  "closed",
-                          "tacticalSL":  null
+                          "tacticalSL":  null,
+                          "coreQty":  75,
+                          "coreEntry":  905.26,
+                          "actualQty":  null,
+                          "actualEntry":  null,
+                          "daySL":  null,
+                          "coreSL":  882.4
                       }
                   ]
 }

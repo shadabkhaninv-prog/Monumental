@@ -1,4 +1,4 @@
-﻿{
+{
     "date":  "2026-04-24",
     "saved_at":  "2026-04-27T17:10:12",
     "positions":  [
@@ -11,9 +11,6 @@
                           "planEntry":  742,
                           "planSL":  718.9,
                           "riskAmount":  3000,
-                          "actualEntry":  740.2,
-                          "daySL":  null,
-                          "actualQty":  155,
                           "entryDate":  "2026-04-23",
                           "posHigh":  null,
                           "trailOverride":  null,
@@ -129,7 +126,13 @@
                           "_avgPlanEntry":  742,
                           "tacticalQty":  30,
                           "tacticalEntry":  722,
-                          "tacticalSL":  709.9
+                          "tacticalSL":  709.9,
+                          "coreQty":  155,
+                          "coreEntry":  740.2,
+                          "actualQty":  null,
+                          "actualEntry":  null,
+                          "daySL":  null,
+                          "coreSL":  718.9
                       },
                       {
                           "id":  "p17769441158332q6h",
@@ -245,9 +248,6 @@
                           "planEntry":  1226.1,
                           "planSL":  1182.9,
                           "riskAmount":  4000,
-                          "actualEntry":  1208.2,
-                          "daySL":  null,
-                          "actualQty":  50,
                           "entryDate":  "2026-04-23",
                           "posHigh":  null,
                           "trailOverride":  1249,
@@ -382,7 +382,13 @@
                           "_avgPlanEntry":  1226.1,
                           "tacticalSL":  null,
                           "tacticalQty":  20,
-                          "tacticalEntry":  1205.2
+                          "tacticalEntry":  1205.2,
+                          "coreQty":  50,
+                          "coreEntry":  1208.2,
+                          "actualQty":  null,
+                          "actualEntry":  null,
+                          "daySL":  null,
+                          "coreSL":  1249
                       },
                       {
                           "id":  "p17769527464429sro",

@@ -1,110 +1,132 @@
-﻿{
-    "date":  "2026-04-08",
-    "saved_at":  "2026-04-26T11:57:50",
-    "positions":  [
-                      {
-                          "id":  "p17771757001785k6g",
-                          "symbol":  "POWERINDIA",
-                          "merits":  "MARKET LEADER .POWER EQUIPMENT HOTTEST SECTOR . DATACENTRE POWER HUNGRY BOOM",
-                          "conviction":  3,
-                          "cmp":  25915,
-                          "planEntry":  25960,
-                          "planSL":  25140,
-                          "riskAmount":  3000,
-                          "actualEntry":  25960,
-                          "actualQty":  4,
-                          "entryDate":  "2026-04-08",
-                          "posHigh":  null,
-                          "trailOverride":  null,
-                          "trailNote":  "",
-                          "thoughtTag":  "NOTE",
-                          "thoughtLog":  [
-                                             {
-                                                 "ts":  "2026-04-26T03:57:41.820Z",
-                                                 "tag":  "NOTE",
-                                                 "text":  "OPENING DIP PANIC SELL"
-                                             }
-                                         ],
-                          "movedBE":  false,
-                          "trims":  [
-                                        {
-                                            "pct":  3,
-                                            "type":  "fixed",
-                                            "ap":  26120,
-                                            "sq":  4,
-                                            "dt":  "2026-04-09",
-                                            "done":  true,
-                                            "_sug":  26738.8,
-                                            "_pnl":  640
-                                        },
-                                        {
-                                            "pct":  10,
-                                            "type":  "trail",
-                                            "ap":  null,
-                                            "sq":  null,
-                                            "dt":  "",
-                                            "done":  false,
-                                            "_sug":  27777.2,
-                                            "_pnl":  null
-                                        },
-                                        {
-                                            "pct":  15,
-                                            "type":  "fixed",
-                                            "ap":  null,
-                                            "sq":  null,
-                                            "dt":  "",
-                                            "done":  false,
-                                            "_sug":  29854,
-                                            "_pnl":  null
-                                        },
-                                        {
-                                            "pct":  25,
-                                            "type":  "fixed",
-                                            "ap":  null,
-                                            "sq":  null,
-                                            "dt":  "",
-                                            "done":  false,
-                                            "_sug":  32450,
-                                            "_pnl":  null
-                                        }
-                                    ],
-                          "mgmt":  {
-                                       "checklist":  [
-                                                         [
-                                                             false,
-                                                             false,
-                                                             false
-                                                         ],
-                                                         [
-                                                             false,
-                                                             false,
-                                                             false
-                                                         ],
-                                                         [
-                                                             false,
-                                                             false,
-                                                             false
-                                                         ]
-                                                     ],
-                                       "note":  ""
-                                   },
-                          "collapsed":  false,
-                          "_coreRps":  820,
-                          "_blendRps":  820,
-                          "_rps":  "Core Rs 820.00 | Intra Rs 820.00 | Blend Rs 820.00",
-                          "_qty":  4,
-                          "_predQty":  3,
-                          "_predRisk":  2460,
-                          "_planRisk":  3280,
-                          "_suggestedQty":  1,
-                          "_rem":  0,
-                          "_realPnl":  640,
-                          "_openPnl":  null,
-                          "_currentSL":  25140,
-                          "_days":  18,
-                          "_beSug":  true,
-                          "_status":  "closed",
-                          "tacticalSL":  null
-                      }
-                  ]
+{
+  "date": "2026-04-08",
+  "saved_at": "2026-05-02T10:29:27",
+  "positions": [
+    {
+      "id": "p17771757001785k6g",
+      "symbol": "POWERINDIA",
+      "merits": "MARKET LEADER .POWER EQUIPMENT HOTTEST SECTOR . DATACENTRE POWER HUNGRY BOOM",
+      "conviction": 3,
+      "cmp": 25915,
+      "planEntry": 25960,
+      "planSL": 25140,
+      "tacticalEntry": null,
+      "tacticalSL": null,
+      "tacticalRiskPct": 30,
+      "coreQty": 4,
+      "coreEntry": 25960,
+      "coreSL": 25140,
+      "riskAmount": 3000,
+      "actualEntry": null,
+      "daySL": null,
+      "actualQty": null,
+      "tacticalQty": null,
+      "entryDate": "2026-04-08",
+      "posHigh": null,
+      "trailOverride": null,
+      "trailNote": "",
+      "thoughtTag": "NOTE",
+      "thoughtLog": [
+        {
+          "ts": "2026-04-26T03:57:41.820Z",
+          "tag": "NOTE",
+          "text": "OPENING DIP PANIC SELL"
+        }
+      ],
+      "movedBE": false,
+      "trims": [
+        {
+          "pct": 3,
+          "type": "fixed",
+          "ap": 26120,
+          "sq": 4,
+          "dt": "2026-04-09",
+          "done": true,
+          "_sug": 26738.8,
+          "_pnl": 640
+        },
+        {
+          "pct": 10,
+          "type": "trail",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 27777.2,
+          "_pnl": null
+        },
+        {
+          "pct": 15,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 29854,
+          "_pnl": null
+        },
+        {
+          "pct": 25,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 32450,
+          "_pnl": null
+        }
+      ],
+      "mgmt": {
+        "checklist": [
+          [
+            false,
+            false,
+            false
+          ],
+          [
+            false,
+            false,
+            false
+          ],
+          [
+            false,
+            false,
+            false
+          ]
+        ],
+        "note": ""
+      },
+      "collapsed": false,
+      "_coreRps": 820,
+      "_blendRps": 820,
+      "_rps": 820,
+      "_qty": 3,
+      "_predQty": 3,
+      "_predRisk": 2460,
+      "_planRisk": 2460,
+      "_suggestedQty": 1,
+      "_rem": 0,
+      "_realPnl": 640,
+      "_openPnl": null,
+      "_currentSL": 25140,
+      "_days": 24,
+      "_beSug": true,
+      "_status": "closed",
+      "_tacticalRps": null,
+      "_actualRps": null,
+      "_availableRisk": 3000,
+      "_suggestedTacticalQty": 1,
+      "_tacticalQty": 0,
+      "_tacticalRisk": 0,
+      "_actualRisk": 0,
+      "_avgEntry": 25960,
+      "_avgSL": 25140,
+      "_avgQty": 3,
+      "_execAvgEntry": 25960,
+      "_execAvgQty": 4,
+      "_avgTacticalEntry": 25960,
+      "_avgPlanEntry": 25960,
+      "_blendPct": 3.16
+    }
+  ]
 }

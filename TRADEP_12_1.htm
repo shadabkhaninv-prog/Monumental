@@ -60,7 +60,15 @@
 
   /* ============ SIDEBAR ============ */
   .sidebar{border-right:1px solid var(--line);padding:14px 14px 12px;overflow:hidden;display:flex;flex-direction:column;gap:11px;min-height:0}
-  .side-head{font-size:10px;letter-spacing:.22em;color:var(--text-faint);text-transform:uppercase;font-weight:500}
+  .side-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .side-head .label{font-size:10px;letter-spacing:.22em;color:var(--text-faint);text-transform:uppercase;font-weight:500}
+  .month-nav{display:flex;align-items:center;gap:4px}
+  .month-nav button{
+    width:24px;height:24px;padding:0;border:1px solid var(--line-2);border-radius:4px;
+    background:rgba(45,212,191,.06);color:var(--cyan);font-size:14px;line-height:1;
+    cursor:pointer;transition:all .15s
+  }
+  .month-nav button:hover{border-color:var(--cyan-dim);background:rgba(45,212,191,.12)}
   .side-day{display:flex;align-items:baseline;gap:11px;border-bottom:1px solid var(--line);padding-bottom:10px}
   .side-day .d{font-size:32px;color:var(--text);letter-spacing:.01em;font-weight:300;line-height:1}
   .side-day .meta{font-size:11px;color:var(--text-dim);letter-spacing:.04em}
@@ -72,6 +80,8 @@
 
   .cal{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
   .day{padding:7px 8px;border:1px solid var(--line);border-radius:5px;background:var(--panel);min-height:50px;display:flex;flex-direction:column;justify-content:space-between;gap:2px}
+  button.day{appearance:none;width:100%;text-align:left;cursor:pointer;font:inherit}
+  button.day:hover{border-color:var(--line-3);background:rgba(255,255,255,.03)}
   .day .num{font-size:14px;color:var(--text);letter-spacing:.01em;font-weight:500;line-height:1}
   .day .typ{font-size:9.5px;letter-spacing:.12em;color:var(--text-faint);text-transform:uppercase;font-weight:500}
   .day .pl{font-size:10px;color:var(--text-faint);font-variant-numeric:tabular-nums;font-weight:500}
@@ -87,6 +97,7 @@
   .day.today{outline:1.5px solid var(--cyan-dim);outline-offset:-2px;background:rgba(45,212,191,.05);border-color:transparent}
   .day.today .typ{color:var(--cyan-dim)}
   .day.today .pl{color:var(--cyan)}
+  .day.today:hover{background:rgba(45,212,191,.07)}
 
   /* ----- MONTH SUMMARY ----- */
   .month-summary{margin-top:auto;border:1px solid var(--line);border-radius:6px;background:var(--panel);padding:11px 12px}
@@ -264,18 +275,22 @@
   /* ============ MIDDLE ROW (PROTECT + EXECUTE) ============ */
   .middle{display:grid;grid-template-columns:1fr 1fr;gap:11px;flex:1 1 auto;min-height:0}
 
-  .pe-head{display:flex;align-items:center;gap:11px;padding:8px 14px;border-bottom:1px solid var(--line)}
+  .pe-head{position:relative;display:flex;align-items:center;gap:11px;padding:8px 44px 8px 14px;border-bottom:1px solid var(--line)}
   .pe-list{flex:1 1 auto;overflow:hidden;padding:5px 8px 4px;display:flex;flex-direction:column;gap:5px;min-height:0}
   .pe-head .head-btn{
-    margin-left:8px;
-    width:24px;
-    height:24px;
+    position:absolute;
+    right:14px;
+    top:50%;
+    transform:translateY(-50%);
+    margin-left:0;
+    width:22px;
+    height:22px;
     padding:0;
     border:1px solid var(--line-2);
     border-radius:5px;
     background:rgba(45,212,191,.08);
     color:var(--cyan);
-    font-size:12px;
+    font-size:11px;
     line-height:1;
     letter-spacing:0;
     text-transform:none;
@@ -293,6 +308,8 @@
   .pos{display:grid;grid-template-columns:18px minmax(0,1fr) 92px 56px 90px;gap:8px;align-items:center;padding:6px 10px 6px 8px;border:1px solid #1a2332;border-radius:4px;background:var(--panel-2);position:relative;min-height:44px}
   .pos::before{content:"";position:absolute;left:0;top:5px;bottom:5px;width:3px;border-radius:3px;background:var(--line-2)}
   .pos.safe::before{background:var(--green-dim)}
+  .pos.bravo::before{background:var(--amber-dim)}
+  .pos.insane::before{background:var(--cyan-dim)}
   .pos.watch::before{background:var(--amber-dim)}
   .pos.hold::before{background:var(--purple-dim)}
   .pos.plan::before{background:var(--purple-dim)}
@@ -305,14 +322,28 @@
   .pos .ticker{font-size:12px;color:var(--text);font-weight:700;letter-spacing:.02em;line-height:1;white-space:nowrap}
   .pos .pill{display:inline-flex;align-items:center;justify-content:center;padding:2px 7px 1px;border-radius:4px;font-size:8px;letter-spacing:.14em;text-transform:uppercase;font-weight:700;line-height:1}
   .pill.safe{background:rgba(34,197,94,.14);color:var(--green)}
+  .pill.bravo{background:rgba(245,158,11,.16);color:var(--amber)}
+  .pill.insane{background:rgba(45,212,191,.18);color:var(--cyan)}
   .pill.watch{background:rgba(245,158,11,.14);color:var(--amber)}
   .pill.hold{background:rgba(167,139,250,.16);color:var(--purple)}
   .pill.plan{background:rgba(167,139,250,.16);color:var(--purple)}
   .pill.cond{background:rgba(45,212,191,.16);color:var(--cyan)}
-  .risk-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:8.5px;line-height:1;letter-spacing:.025em;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
-  .risk-meta .sl{color:var(--red)}
-  .risk-meta .buy{color:var(--text-faint)}
-  .risk-meta .cmp{color:var(--green)}
+  .risk-meta{
+    display:grid;
+    grid-template-columns:auto 1fr auto;
+    align-items:center;
+    gap:10px;
+    width:100%;
+    font-size:11.8px;
+    line-height:1;
+    letter-spacing:0;
+    font-weight:800;
+    font-variant-numeric:tabular-nums;
+    white-space:nowrap;
+  }
+  .risk-meta .sl{color:var(--red);text-shadow:0 0 6px rgba(255,90,90,.12)}
+  .risk-meta .buy{color:var(--text-dim);justify-self:center;opacity:.95}
+  .risk-meta .cmp{color:var(--cyan);justify-self:end;text-shadow:0 0 6px rgba(45,212,191,.14)}
   .risk-bar{position:relative;height:4px;border-radius:999px;background:#212b3c;overflow:hidden;margin-top:0}
   .risk-fill{position:absolute;left:0;top:0;bottom:0;width:var(--fill,72%);border-radius:inherit;background:linear-gradient(90deg,rgba(255,255,255,.05),var(--bar-color,var(--green-dim)));box-shadow:0 0 0 1px rgba(0,0,0,.12) inset}
   .risk-dot{position:absolute;left:var(--fill,72%);top:50%;width:7px;height:7px;border-radius:50%;transform:translate(-50%,-50%);background:var(--bar-color,var(--green-dim));box-shadow:0 0 0 2px #0d1118,0 0 10px color-mix(in srgb, var(--bar-color,var(--green-dim)) 55%, transparent)}
@@ -399,6 +430,8 @@
   .pos .qty-col input.q-input:hover{border-color:var(--line-3)}
   .pos .qty-col input.q-input:focus{border-color:var(--cyan-dim);background:rgba(45,212,191,.05)}
   .exec-col-hdr{font-size:9.5px;letter-spacing:.18em;color:var(--text-faint);text-transform:uppercase;font-weight:500;text-align:center}
+  .pe-head .qty-hdr{margin-left:20px}
+  .pe-head .sl-hdr{margin-left:16px}
 
   /* ============ CLOSING â€” REDESIGNED, COMPACT ============ */
   .closing{flex:0 0 auto}
@@ -493,7 +526,13 @@
 
     <!-- ============ SIDEBAR ============ -->
     <div class="sidebar">
-      <div class="side-head">April · Recent Sessions</div>
+      <div class="side-head">
+        <span class="label" id="sidebar-month-label">April · Recent Sessions</span>
+        <div class="month-nav" aria-label="Month navigation">
+          <button id="sidebar-month-prev" type="button" aria-label="Previous month" title="Previous month">&lsaquo;</button>
+          <button id="sidebar-month-next" type="button" aria-label="Next month" title="Next month">&rsaquo;</button>
+        </div>
+      </div>
       <div class="side-day">
         <div class="d">30</div>
         <div class="meta">Thursday · 2026</div>
@@ -535,10 +574,6 @@
         <div class="ms-head">
           <span class="ms-title">Month · April</span>
           <span class="ms-month">21 sessions</span>
-        </div>
-        <div class="ms-pnl">
-          <span class="lbl">Total P&amp;L</span>
-          <span class="val">+ Rs 95,400</span>
         </div>
         <div class="ms-grid">
           <div class="ms-cell"><div class="l">Trading Days</div><div class="v">15</div></div>
@@ -1121,6 +1156,7 @@
   let dashboard = null;
   let currentDay = null;
   let selectedDate = qs.get('date') || '';
+  let sidebarMonth = '';
 
   const n = (v) => Number(v || 0);
   const normalizeSymbol = (value) => String(value == null ? '' : value).toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -1462,6 +1498,23 @@
     return { text: v ? v.toUpperCase() : 'NOTE', cls: 'watch' };
   }
 
+  function protectChip(pos) {
+    const buy = n(pos.planEntry || pos.actualEntry || pos.cmp);
+    const sl = effectiveProtectStop(pos);
+    const cmp = n(pos.cmp);
+    const pctChange = buy ? ((cmp - buy) / buy) * 100 : 0;
+    if (pctChange >= 20) return { text: 'INSANE', cls: 'insane' };
+    if (pctChange >= 10) return { text: 'BRAVO', cls: 'bravo' };
+    if (sl >= buy) return { text: 'SAFE', cls: 'safe' };
+    return { text: 'HOLD', cls: 'hold' };
+  }
+
+  function effectiveProtectStop(pos) {
+    const initial = n(pos.planSL || pos.daySL || pos._initialSL || 0);
+    const trail = n(pos._currentSL || pos.trailOverride || pos.trailSL || pos.currentSL || 0);
+    return trail > 0 ? trail : initial;
+  }
+
   function topRows(list, maxCount) {
     return list.slice().sort((a, b) => {
       const aw = Math.abs(n(a._realPnl)) + Math.abs(n(a._openPnl)) + n(a.conviction) * 10;
@@ -1581,6 +1634,14 @@
     return `${p.y}-${String(p.m + 1).padStart(2, '0')}`;
   }
 
+  function shiftSidebarMonth(delta) {
+    const base = sidebarMonth || monthKey(selectedDate || dashboard?.latest_date || new Date().toISOString().slice(0, 10));
+    const dt = new Date(`${base}-01T12:00:00`);
+    dt.setMonth(dt.getMonth() + delta);
+    sidebarMonth = dt.toISOString().slice(0, 7);
+    renderSidebar();
+  }
+
   function attachDateControl() {
     const subbar = document.querySelector('.subbar');
     const dateNode = document.querySelector('.subbar .date');
@@ -1603,12 +1664,12 @@
     if (label) label.innerHTML = formatDateLabel(selectedDate);
     if (input) input.value = selectedDate;
 
-    const items = (dashboard && dashboard.items) ? dashboard.items.slice().filter(item => String(item.date || '') <= selectedDate).slice(-5) : [];
+    const items = Array.isArray(dashboard?.last_core_positions) ? dashboard.last_core_positions : [];
     const seq = document.querySelector('.seq');
     if (seq) {
       seq.innerHTML = items.map(item => {
-        const net = n(item.realized_pnl) + n(item.open_pnl);
-        return `<i class="${net >= 0 ? 'w' : 'l'}">${net >= 0 ? 'W' : 'L'}</i>`;
+        const status = String(item.status || '').toUpperCase() === 'L' ? 'l' : 'w';
+        return `<i class="${status}">${status === 'w' ? 'W' : 'L'}</i>`;
       }).join('');
     }
 
@@ -1673,14 +1734,18 @@
 
   function renderSidebar() {
     const p = dateParts(selectedDate);
-    const month = monthKey(selectedDate);
+    const month = sidebarMonth || monthKey(selectedDate);
+    const monthParts = dateParts(`${month}-01`);
     const items = (dashboard?.items || []).filter(item => String(item.date || '').slice(0, 7) === month).sort((a, b) => String(a.date).localeCompare(String(b.date)));
     const net = (item) => n(item.realized_pnl) + n(item.open_pnl);
     const tradeDays = items.filter(item => n(item.open_positions_count) > 0 || n(item.planning_count) > 0 || n(item.closed_count) > 0).length;
-    const tradesTaken = items.reduce((sum, item) => sum + n(item.open_positions_count) + n(item.closed_count), 0);
+    const tradesTaken = items.reduce((sum, item) => {
+      const dayTrades = n(item.trade_count);
+      if (dayTrades > 0) return sum + dayTrades;
+      return sum + n(item.open_positions_count) + n(item.closed_count);
+    }, 0);
     const winDays = items.filter(item => net(item) > 0).length;
     const lossDays = items.filter(item => net(item) < 0).length;
-    const totalPnl = items.reduce((sum, item) => sum + net(item), 0);
     const winRate = items.length ? Math.round((winDays / items.length) * 100) : 0;
     const bestDay = items.reduce((best, item) => {
       const v = net(item);
@@ -1699,7 +1764,15 @@
 
     const sideHead = document.querySelector('.side-head');
     const sideDay = document.querySelector('.side-day');
-    if (sideHead) sideHead.textContent = `${p.monthName} · Recent Sessions`;
+    const sideLabel = document.getElementById('sidebar-month-label');
+    if (sideLabel) sideLabel.textContent = `${monthParts.monthName} · Recent Sessions`;
+    if (sideHead && !sideHead.dataset.bound) {
+      sideHead.dataset.bound = '1';
+      const prevMonth = document.getElementById('sidebar-month-prev');
+      const nextMonth = document.getElementById('sidebar-month-next');
+      prevMonth?.addEventListener('click', () => shiftSidebarMonth(-1));
+      nextMonth?.addEventListener('click', () => shiftSidebarMonth(1));
+    }
     if (sideDay) {
       const d = sideDay.querySelector('.d');
       const meta = sideDay.querySelector('.meta');
@@ -1719,15 +1792,26 @@
         const cls = n(item.planning_count) > 0 ? 'plan' : v > 0 ? 'win' : 'flat';
         const typ = n(item.planning_count) > 0 ? 'Plan' : '';
         const pl = nf0.format(Math.round(Math.abs(v)));
-        return `<div class="day ${cls}${String(item.date).slice(0, 10) === selectedDate ? ' today' : ''}"><span class="num">${pp.d}</span><span class="typ">${typ}</span><span class="pl">${pl}</span></div>`;
+        return `<button class="day ${cls}${String(item.date).slice(0, 10) === selectedDate ? ' today' : ''}" type="button" data-date="${esc(String(item.date).slice(0, 10))}"><span class="num">${pp.d}</span><span class="typ">${typ}</span><span class="pl">${pl}</span></button>`;
       }).join('');
+    }
+    if (cal && !cal.dataset.bound) {
+      cal.dataset.bound = '1';
+      cal.addEventListener('click', async (e) => {
+        const btn = e.target.closest('.day[data-date]');
+        if (!btn) return;
+        const date = btn.getAttribute('data-date');
+        if (!date || date === selectedDate) return;
+        await flushBriefingSave({ keepalive: true }).catch(() => {});
+        await loadDay(date);
+        history.replaceState({}, '', `?date=${selectedDate}`);
+      });
     }
 
     const monthSummary = document.querySelector('.month-summary');
     if (monthSummary) {
       monthSummary.querySelector('.ms-title').textContent = `Month · ${p.monthName}`;
       monthSummary.querySelector('.ms-month').textContent = `${items.length} sessions`;
-      monthSummary.querySelector('.ms-pnl .val').textContent = `${totalPnl >= 0 ? '+ ' : '- '}Rs ${nf0.format(Math.abs(totalPnl))}`;
       const vals = monthSummary.querySelectorAll('.ms-grid .ms-cell .v');
       if (vals[0]) vals[0].textContent = String(tradeDays);
       if (vals[1]) vals[1].textContent = String(tradesTaken);
@@ -1777,15 +1861,15 @@
   }
 
   function protectRow(pos, checked = null) {
-    const status = statusChip(pos._status);
+    const status = protectChip(pos);
     const cmp = n(pos.cmp);
-    const sl = n(pos.planSL || pos.daySL || pos._currentSL);
+    const sl = effectiveProtectStop(pos);
     const buy = n(pos.planEntry || pos.actualEntry || pos.cmp);
     const qtyVal = pos.actualQty != null ? pos.actualQty : (pos._qty || pos._predQty || 0);
     const pctChange = buy ? ((cmp - buy) / buy) * 100 : 0;
     const fill = Math.max(18, Math.min(88, 55 + pctChange * 2));
-    const barColor = status.cls === 'safe' ? 'var(--green-dim)' : status.cls === 'watch' ? 'var(--amber-dim)' : 'var(--purple-dim)';
-    const defaultChecked = status.cls === 'safe' || status.cls === 'active';
+    const barColor = status.cls === 'safe' ? 'var(--green-dim)' : status.cls === 'bravo' ? 'var(--amber-dim)' : status.cls === 'insane' ? 'var(--cyan-dim)' : 'var(--purple-dim)';
+    const defaultChecked = status.cls === 'safe' || status.cls === 'bravo' || status.cls === 'insane';
     const isChecked = checked == null ? defaultChecked : !!checked;
     return `
       <div class="pos ${status.cls}${isChecked ? ' executed' : ''}" data-protect-key="${esc(execKey(pos))}" style="--fill:${fill}%;--bar-color:${barColor}">
@@ -1794,7 +1878,7 @@
           <div class="pos-top"><span class="ticker">${esc(pos.symbol || 'SYMBOL')}</span><span class="pill ${status.cls}">${status.text}</span></div>
         </div>
         <div class="pos-mid">
-          <div class="risk-meta"><span class="sl">${fmt0(sl)} SL</span><span class="buy">${fmt0(buy)} buy</span><span class="cmp">${fmt0(cmp)} CMP</span></div>
+          <div class="risk-meta"><span class="sl">${fmt0(sl)}</span><span class="buy">${fmt0(buy)}</span><span class="cmp">${fmt0(cmp)}</span></div>
           <div class="risk-bar"><span class="risk-fill"></span><span class="risk-dot"></span></div>
         </div>
         <div class="price-col${pctChange < 0 ? ' neg' : ''}">
@@ -2057,6 +2141,7 @@
 
   async function loadDay(date) {
     selectedDate = String(date || '').slice(0, 10);
+    sidebarMonth = monthKey(selectedDate);
     currentDay = await api(`/api/day-view?date=${encodeURIComponent(selectedDate)}`);
     renderAll();
     bindWatchRowDeleteButtons();

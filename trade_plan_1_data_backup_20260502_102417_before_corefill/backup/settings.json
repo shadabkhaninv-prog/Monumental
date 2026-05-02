@@ -1,0 +1,39 @@
+{
+  "available_capital": 3000000,
+  "daily_risk": 7000,
+  "per_position_risk": 3000,
+  "checklist_groups": [
+    {
+      "title": "Entry",
+      "count": 1,
+      "items": [
+        "No hesistation - pull trigger as per plan",
+        "",
+        ""
+      ]
+    },
+    {
+      "title": "Holding",
+      "count": 1,
+      "items": [
+        "stuck to sls. ignore intraday jitters",
+        "",
+        ""
+      ]
+    },
+    {
+      "title": "Exit",
+      "count": 1,
+      "items": [
+        "exited as per plan",
+        "",
+        ""
+      ]
+    }
+  ],
+  "checklist_entry_1": "No hesistation - pull trigger as per plan",
+  "checklist_entry_2": "",
+  "checklist_risk_1": "stuck to sls. ignore intraday jitters",
+  "checklist_risk_2": "exited as per plan",
+  "saved_at": "2026-04-24T14:26:42"
+}

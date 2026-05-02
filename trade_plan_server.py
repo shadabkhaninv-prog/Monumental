@@ -2902,6 +2902,29 @@ class TradePlanStore:
 
         return round(risk, 2)
 
+    def _carry_forward_position_fields(self, existing: Dict[str, object], incoming: Dict[str, object]) -> Dict[str, object]:
+        merged = copy.deepcopy(incoming)
+        if not isinstance(existing, dict):
+            return merged
+
+        lane_fields = [
+            "entryDate",
+            "coreQty",
+            "coreEntry",
+            "coreSL",
+            "tacticalQty",
+            "tacticalEntry",
+            "tacticalSL",
+            "actualQty",
+            "actualEntry",
+            "daySL",
+        ]
+        has_lane = any(existing.get(field) not in (None, "") for field in lane_fields)
+        if has_lane:
+            for field in lane_fields:
+                merged[field] = copy.deepcopy(existing.get(field))
+        return merged
+
     def _collect_latest_positioned(self) -> List[Dict[str, object]]:
         latest_positions: Dict[str, Dict[str, object]] = {}
         for item_date in self.list_plan_dates():
@@ -2948,6 +2971,9 @@ class TradePlanStore:
                         open_positions.pop(key, None)
                         closed_keys.add(key)
                         continue
+                    existing = open_positions.get(key)
+                    if existing is not None:
+                        position = self._carry_forward_position_fields(existing, position)
                     open_positions[key] = position
                 elif item_date == plan_date and self._is_meaningful_position(position):
                     planning_for_day.append(position)
@@ -3035,14 +3061,65 @@ class TradePlanStore:
 
     def build_dashboard(self, repo: BhavRepository) -> Dict[str, object]:
         settings = self.load_settings()
-        items: List[Dict[str, object]] = []
+        dated_views: List[Tuple[str, Dict[str, object]]] = []
+        first_seen_entry_by_id: Dict[str, str] = {}
         for plan_date in self.list_plan_dates():
             view = self.build_day_view(plan_date, repo)
+            dated_views.append((plan_date, view))
+            positions = view.get("positions") if isinstance(view, dict) else []
+            if not isinstance(positions, list):
+                continue
+            for position in positions:
+                if not isinstance(position, dict):
+                    continue
+                pos_id = str(position.get("id") or "").strip()
+                entry_date = str(position.get("entryDate") or "")[:10]
+                if not pos_id or not entry_date:
+                    continue
+                previous = first_seen_entry_by_id.get(pos_id)
+                if not previous or entry_date < previous:
+                    first_seen_entry_by_id[pos_id] = entry_date
+
+        items: List[Dict[str, object]] = []
+        core_seen: Dict[str, Dict[str, object]] = {}
+        for plan_date, view in dated_views:
+            trade_count = 0
+            positions = view.get("positions") if isinstance(view, dict) else []
+            if isinstance(positions, list):
+                seen_ids = set()
+                for position in positions:
+                    if not isinstance(position, dict):
+                        continue
+                    pos_id = str(position.get("id") or "").strip()
+                    if not pos_id or pos_id in seen_ids:
+                        continue
+                    if first_seen_entry_by_id.get(pos_id) == plan_date:
+                        trade_count += 1
+                    seen_ids.add(pos_id)
+                    core_qty = self._as_float(position.get("coreQty"))
+                    if core_qty > 0:
+                        entry_date = str(position.get("entryDate") or "")[:10]
+                        net_value = self._as_float(position.get("_realPnl")) + self._as_float(position.get("_openPnl"))
+                        rec = core_seen.setdefault(
+                            pos_id,
+                            {
+                                "symbol": str(position.get("symbol") or ""),
+                                "firstEntryDate": entry_date,
+                                "latestDate": plan_date,
+                                "net": net_value,
+                            },
+                        )
+                        if entry_date and (not rec.get("firstEntryDate") or entry_date < str(rec.get("firstEntryDate") or "")):
+                            rec["firstEntryDate"] = entry_date
+                        if plan_date >= str(rec.get("latestDate") or ""):
+                            rec["latestDate"] = plan_date
+                            rec["net"] = net_value
             items.append(
                 {
                     "date": plan_date,
                     "open_positions_count": view["open_positions_count"],
                     "planning_count": view["planning_count"],
+                    "trade_count": trade_count,
                     "exposure": view["exposure"],
                     "exposure_pct": view["exposure_pct"],
                     "realized_pnl": view.get("realized_pnl", 0.0),
@@ -3053,8 +3130,17 @@ class TradePlanStore:
                     "carried_risk_total": view.get("carried_risk_total", 0.0),
                 }
             )
+        last_core_positions: List[Dict[str, object]] = []
+        if core_seen:
+            for rec in sorted(core_seen.values(), key=lambda item: str(item.get("firstEntryDate") or ""), reverse=True)[:5]:
+                last_core_positions.append(
+                    {
+                        "symbol": rec.get("symbol") or "",
+                        "status": "W" if self._as_float(rec.get("net")) >= 0 else "L",
+                    }
+                )
         latest_date = items[-1]["date"] if items else date.today().isoformat()
-        return {"ok": True, "items": items, "latest_date": latest_date, "settings": settings}
+        return {"ok": True, "items": items, "latest_date": latest_date, "last_core_positions": last_core_positions, "settings": settings}
 
     def build_goal_tracker(self, repo: BhavRepository) -> Dict[str, object]:
         dashboard = self.build_dashboard(repo)

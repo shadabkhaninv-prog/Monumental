@@ -1,0 +1,600 @@
+﻿[
+    {
+        "Before":  {
+                       "File":  "2026-04-08.json",
+                       "Symbol":  "POWERINDIA",
+                       "EntryDate":  "2026-04-08",
+                       "BeforeCoreQty":  null,
+                       "BeforeCoreEntry":  null,
+                       "BeforeCoreSL":  null,
+                       "BeforeActualQty":  4,
+                       "BeforeActualEntry":  25960,
+                       "BeforeDaySL":  null,
+                       "TacticalQty":  null
+                   },
+        "After":  {
+                      "File":  "2026-04-08.json",
+                      "Symbol":  "POWERINDIA",
+                      "EntryDate":  "2026-04-08",
+                      "AfterCoreQty":  4,
+                      "AfterCoreEntry":  25960,
+                      "AfterCoreSL":  null,
+                      "AfterActualQty":  null,
+                      "AfterActualEntry":  null,
+                      "AfterDaySL":  null,
+                      "TacticalQty":  null
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-10.json",
+                       "Symbol":  "TDPOWERSYS",
+                       "EntryDate":  "2026-04-10",
+                       "BeforeCoreQty":  null,
+                       "BeforeCoreEntry":  null,
+                       "BeforeCoreSL":  null,
+                       "BeforeActualQty":  75,
+                       "BeforeActualEntry":  905.26,
+                       "BeforeDaySL":  null,
+                       "TacticalQty":  null
+                   },
+        "After":  {
+                      "File":  "2026-04-10.json",
+                      "Symbol":  "TDPOWERSYS",
+                      "EntryDate":  "2026-04-10",
+                      "AfterCoreQty":  75,
+                      "AfterCoreEntry":  905.26,
+                      "AfterCoreSL":  null,
+                      "AfterActualQty":  null,
+                      "AfterActualEntry":  null,
+                      "AfterDaySL":  null,
+                      "TacticalQty":  null
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-17.json",
+                       "Symbol":  "APARINDS",
+                       "EntryDate":  "2026-04-17",
+                       "BeforeCoreQty":  null,
+                       "BeforeCoreEntry":  null,
+                       "BeforeCoreSL":  null,
+                       "BeforeActualQty":  9,
+                       "BeforeActualEntry":  11458,
+                       "BeforeDaySL":  null,
+                       "TacticalQty":  null
+                   },
+        "After":  {
+                      "File":  "2026-04-17.json",
+                      "Symbol":  "APARINDS",
+                      "EntryDate":  "2026-04-17",
+                      "AfterCoreQty":  9,
+                      "AfterCoreEntry":  11458,
+                      "AfterCoreSL":  null,
+                      "AfterActualQty":  null,
+                      "AfterActualEntry":  null,
+                      "AfterDaySL":  null,
+                      "TacticalQty":  null
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-18.json",
+                       "Symbol":  "APARINDS",
+                       "EntryDate":  "2026-04-17",
+                       "BeforeCoreQty":  null,
+                       "BeforeCoreEntry":  null,
+                       "BeforeCoreSL":  null,
+                       "BeforeActualQty":  9,
+                       "BeforeActualEntry":  11458,
+                       "BeforeDaySL":  null,
+                       "TacticalQty":  null
+                   },
+        "After":  {
+                      "File":  "2026-04-18.json",
+                      "Symbol":  "APARINDS",
+                      "EntryDate":  "2026-04-17",
+                      "AfterCoreQty":  9,
+                      "AfterCoreEntry":  11458,
+                      "AfterCoreSL":  null,
+                      "AfterActualQty":  null,
+                      "AfterActualEntry":  null,
+                      "AfterDaySL":  null,
+                      "TacticalQty":  null
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-19.json",
+                       "Symbol":  "APARINDS",
+                       "EntryDate":  "2026-04-17",
+                       "BeforeCoreQty":  null,
+                       "BeforeCoreEntry":  null,
+                       "BeforeCoreSL":  null,
+                       "BeforeActualQty":  9,
+                       "BeforeActualEntry":  11458,
+                       "BeforeDaySL":  null,
+                       "TacticalQty":  null
+                   },
+        "After":  {
+                      "File":  "2026-04-19.json",
+                      "Symbol":  "APARINDS",
+                      "EntryDate":  "2026-04-17",
+                      "AfterCoreQty":  9,
+                      "AfterCoreEntry":  11458,
+                      "AfterCoreSL":  null,
+                      "AfterActualQty":  null,
+                      "AfterActualEntry":  null,
+                      "AfterDaySL":  null,
+                      "TacticalQty":  null
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-20.json",
+                       "Symbol":  "APARINDS",
+                       "EntryDate":  "2026-04-17",
+                       "BeforeCoreQty":  null,
+                       "BeforeCoreEntry":  null,
+                       "BeforeCoreSL":  null,
+                       "BeforeActualQty":  9,
+                       "BeforeActualEntry":  11458,
+                       "BeforeDaySL":  null,
+                       "TacticalQty":  null
+                   },
+        "After":  {
+                      "File":  "2026-04-20.json",
+                      "Symbol":  "APARINDS",
+                      "EntryDate":  "2026-04-17",
+                      "AfterCoreQty":  9,
+                      "AfterCoreEntry":  11458,
+                      "AfterCoreSL":  null,
+                      "AfterActualQty":  null,
+                      "AfterActualEntry":  null,
+                      "AfterDaySL":  null,
+                      "TacticalQty":  null
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-20.json",
+                       "Symbol":  "KTKBANK",
+                       "EntryDate":  "2026-04-20",
+                       "BeforeCoreQty":  null,
+                       "BeforeCoreEntry":  null,
+                       "BeforeCoreSL":  null,
+                       "BeforeActualQty":  340,
+                       "BeforeActualEntry":  249.2,
+                       "BeforeDaySL":  null,
+                       "TacticalQty":  null
+                   },
+        "After":  {
+                      "File":  "2026-04-20.json",
+                      "Symbol":  "KTKBANK",
+                      "EntryDate":  "2026-04-20",
+                      "AfterCoreQty":  340,
+                      "AfterCoreEntry":  249.2,
+                      "AfterCoreSL":  null,
+                      "AfterActualQty":  null,
+                      "AfterActualEntry":  null,
+                      "AfterDaySL":  null,
+                      "TacticalQty":  null
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-21.json",
+                       "Symbol":  "ARSSBL",
+                       "EntryDate":  "2026-04-21",
+                       "BeforeCoreQty":  null,
+                       "BeforeCoreEntry":  null,
+                       "BeforeCoreSL":  null,
+                       "BeforeActualQty":  182,
+                       "BeforeActualEntry":  589.76,
+                       "BeforeDaySL":  null,
+                       "TacticalQty":  15
+                   },
+        "After":  {
+                      "File":  "2026-04-21.json",
+                      "Symbol":  "ARSSBL",
+                      "EntryDate":  "2026-04-21",
+                      "AfterCoreQty":  182,
+                      "AfterCoreEntry":  589.76,
+                      "AfterCoreSL":  null,
+                      "AfterActualQty":  null,
+                      "AfterActualEntry":  null,
+                      "AfterDaySL":  null,
+                      "TacticalQty":  15
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-21.json",
+                       "Symbol":  "APARINDS",
+                       "EntryDate":  "2026-04-17",
+                       "BeforeCoreQty":  null,
+                       "BeforeCoreEntry":  null,
+                       "BeforeCoreSL":  null,
+                       "BeforeActualQty":  9,
+                       "BeforeActualEntry":  11458,
+                       "BeforeDaySL":  null,
+                       "TacticalQty":  null
+                   },
+        "After":  {
+                      "File":  "2026-04-21.json",
+                      "Symbol":  "APARINDS",
+                      "EntryDate":  "2026-04-17",
+                      "AfterCoreQty":  9,
+                      "AfterCoreEntry":  11458,
+                      "AfterCoreSL":  null,
+                      "AfterActualQty":  null,
+                      "AfterActualEntry":  null,
+                      "AfterDaySL":  null,
+                      "TacticalQty":  null
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-22.json",
+                       "Symbol":  "ARSSBL",
+                       "EntryDate":  "2026-04-21",
+                       "BeforeCoreQty":  null,
+                       "BeforeCoreEntry":  null,
+                       "BeforeCoreSL":  null,
+                       "BeforeActualQty":  182,
+                       "BeforeActualEntry":  589.76,
+                       "BeforeDaySL":  null,
+                       "TacticalQty":  15
+                   },
+        "After":  {
+                      "File":  "2026-04-22.json",
+                      "Symbol":  "ARSSBL",
+                      "EntryDate":  "2026-04-21",
+                      "AfterCoreQty":  182,
+                      "AfterCoreEntry":  589.76,
+                      "AfterCoreSL":  null,
+                      "AfterActualQty":  null,
+                      "AfterActualEntry":  null,
+                      "AfterDaySL":  null,
+                      "TacticalQty":  15
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-22.json",
+                       "Symbol":  "BSE",
+                       "EntryDate":  "2026-04-22",
+                       "BeforeCoreQty":  null,
+                       "BeforeCoreEntry":  null,
+                       "BeforeCoreSL":  null,
+                       "BeforeActualQty":  5,
+                       "BeforeActualEntry":  3521,
+                       "BeforeDaySL":  null,
+                       "TacticalQty":  12
+                   },
+        "After":  {
+                      "File":  "2026-04-22.json",
+                      "Symbol":  "BSE",
+                      "EntryDate":  "2026-04-22",
+                      "AfterCoreQty":  5,
+                      "AfterCoreEntry":  3521,
+                      "AfterCoreSL":  null,
+                      "AfterActualQty":  null,
+                      "AfterActualEntry":  null,
+                      "AfterDaySL":  null,
+                      "TacticalQty":  12
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-23.json",
+                       "Symbol":  "KRN",
+                       "EntryDate":  "2026-04-23",
+                       "BeforeCoreQty":  null,
+                       "BeforeCoreEntry":  null,
+                       "BeforeCoreSL":  null,
+                       "BeforeActualQty":  50,
+                       "BeforeActualEntry":  1208.2,
+                       "BeforeDaySL":  null,
+                       "TacticalQty":  20
+                   },
+        "After":  {
+                      "File":  "2026-04-23.json",
+                      "Symbol":  "KRN",
+                      "EntryDate":  "2026-04-23",
+                      "AfterCoreQty":  50,
+                      "AfterCoreEntry":  1208.2,
+                      "AfterCoreSL":  null,
+                      "AfterActualQty":  null,
+                      "AfterActualEntry":  null,
+                      "AfterDaySL":  null,
+                      "TacticalQty":  20
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-23.json",
+                       "Symbol":  "ARSSBL",
+                       "EntryDate":  "2026-04-21",
+                       "BeforeCoreQty":  null,
+                       "BeforeCoreEntry":  null,
+                       "BeforeCoreSL":  null,
+                       "BeforeActualQty":  172,
+                       "BeforeActualEntry":  589.74,
+                       "BeforeDaySL":  null,
+                       "TacticalQty":  15
+                   },
+        "After":  {
+                      "File":  "2026-04-23.json",
+                      "Symbol":  "ARSSBL",
+                      "EntryDate":  "2026-04-21",
+                      "AfterCoreQty":  172,
+                      "AfterCoreEntry":  589.74,
+                      "AfterCoreSL":  null,
+                      "AfterActualQty":  null,
+                      "AfterActualEntry":  null,
+                      "AfterDaySL":  null,
+                      "TacticalQty":  15
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-24.json",
+                       "Symbol":  "GUJALKALI",
+                       "EntryDate":  "2026-04-23",
+                       "BeforeCoreQty":  null,
+                       "BeforeCoreEntry":  null,
+                       "BeforeCoreSL":  null,
+                       "BeforeActualQty":  155,
+                       "BeforeActualEntry":  740.2,
+                       "BeforeDaySL":  null,
+                       "TacticalQty":  30
+                   },
+        "After":  {
+                      "File":  "2026-04-24.json",
+                      "Symbol":  "GUJALKALI",
+                      "EntryDate":  "2026-04-23",
+                      "AfterCoreQty":  155,
+                      "AfterCoreEntry":  740.2,
+                      "AfterCoreSL":  null,
+                      "AfterActualQty":  null,
+                      "AfterActualEntry":  null,
+                      "AfterDaySL":  null,
+                      "TacticalQty":  30
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-24.json",
+                       "Symbol":  "KRN",
+                       "EntryDate":  "2026-04-23",
+                       "BeforeCoreQty":  null,
+                       "BeforeCoreEntry":  null,
+                       "BeforeCoreSL":  null,
+                       "BeforeActualQty":  50,
+                       "BeforeActualEntry":  1208.2,
+                       "BeforeDaySL":  null,
+                       "TacticalQty":  20
+                   },
+        "After":  {
+                      "File":  "2026-04-24.json",
+                      "Symbol":  "KRN",
+                      "EntryDate":  "2026-04-23",
+                      "AfterCoreQty":  50,
+                      "AfterCoreEntry":  1208.2,
+                      "AfterCoreSL":  null,
+                      "AfterActualQty":  null,
+                      "AfterActualEntry":  null,
+                      "AfterDaySL":  null,
+                      "TacticalQty":  20
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-25.json",
+                       "Symbol":  "GUJALKALI",
+                       "EntryDate":  "2026-04-23",
+                       "BeforeCoreQty":  null,
+                       "BeforeCoreEntry":  null,
+                       "BeforeCoreSL":  null,
+                       "BeforeActualQty":  155,
+                       "BeforeActualEntry":  740.2,
+                       "BeforeDaySL":  null,
+                       "TacticalQty":  30
+                   },
+        "After":  {
+                      "File":  "2026-04-25.json",
+                      "Symbol":  "GUJALKALI",
+                      "EntryDate":  "2026-04-23",
+                      "AfterCoreQty":  155,
+                      "AfterCoreEntry":  740.2,
+                      "AfterCoreSL":  null,
+                      "AfterActualQty":  null,
+                      "AfterActualEntry":  null,
+                      "AfterDaySL":  null,
+                      "TacticalQty":  30
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-26.json",
+                       "Symbol":  "GUJALKALI",
+                       "EntryDate":  "2026-04-23",
+                       "BeforeCoreQty":  null,
+                       "BeforeCoreEntry":  null,
+                       "BeforeCoreSL":  null,
+                       "BeforeActualQty":  155,
+                       "BeforeActualEntry":  740.2,
+                       "BeforeDaySL":  null,
+                       "TacticalQty":  30
+                   },
+        "After":  {
+                      "File":  "2026-04-26.json",
+                      "Symbol":  "GUJALKALI",
+                      "EntryDate":  "2026-04-23",
+                      "AfterCoreQty":  155,
+                      "AfterCoreEntry":  740.2,
+                      "AfterCoreSL":  null,
+                      "AfterActualQty":  null,
+                      "AfterActualEntry":  null,
+                      "AfterDaySL":  null,
+                      "TacticalQty":  30
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-27.json",
+                       "Symbol":  "GUJALKALI",
+                       "EntryDate":  "2026-04-23",
+                       "BeforeCoreQty":  null,
+                       "BeforeCoreEntry":  null,
+                       "BeforeCoreSL":  null,
+                       "BeforeActualQty":  155,
+                       "BeforeActualEntry":  740.2,
+                       "BeforeDaySL":  719.8,
+                       "TacticalQty":  30
+                   },
+        "After":  {
+                      "File":  "2026-04-27.json",
+                      "Symbol":  "GUJALKALI",
+                      "EntryDate":  "2026-04-23",
+                      "AfterCoreQty":  155,
+                      "AfterCoreEntry":  740.2,
+                      "AfterCoreSL":  719.8,
+                      "AfterActualQty":  null,
+                      "AfterActualEntry":  null,
+                      "AfterDaySL":  null,
+                      "TacticalQty":  30
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-28.json",
+                       "Symbol":  "ARSSBL",
+                       "EntryDate":  "2026-04-28",
+                       "BeforeCoreQty":  null,
+                       "BeforeCoreEntry":  null,
+                       "BeforeCoreSL":  null,
+                       "BeforeActualQty":  20,
+                       "BeforeActualEntry":  606.43,
+                       "BeforeDaySL":  597.9,
+                       "TacticalQty":  60
+                   },
+        "After":  {
+                      "File":  "2026-04-28.json",
+                      "Symbol":  "ARSSBL",
+                      "EntryDate":  "2026-04-28",
+                      "AfterCoreQty":  20,
+                      "AfterCoreEntry":  606.43,
+                      "AfterCoreSL":  597.9,
+                      "AfterActualQty":  null,
+                      "AfterActualEntry":  null,
+                      "AfterDaySL":  null,
+                      "TacticalQty":  60
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-30.json",
+                       "Symbol":  "BSE",
+                       "EntryDate":  "2026-04-27",
+                       "BeforeCoreQty":  null,
+                       "BeforeCoreEntry":  null,
+                       "BeforeCoreSL":  null,
+                       "BeforeActualQty":  40,
+                       "BeforeActualEntry":  3488.9,
+                       "BeforeDaySL":  3449.9,
+                       "TacticalQty":  25
+                   },
+        "After":  {
+                      "File":  "2026-04-30.json",
+                      "Symbol":  "BSE",
+                      "EntryDate":  "2026-04-27",
+                      "AfterCoreQty":  40,
+                      "AfterCoreEntry":  3488.9,
+                      "AfterCoreSL":  3449.9,
+                      "AfterActualQty":  null,
+                      "AfterActualEntry":  null,
+                      "AfterDaySL":  null,
+                      "TacticalQty":  25
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-04-30.json",
+                       "Symbol":  "CGPOWER",
+                       "EntryDate":  "2026-04-29",
+                       "BeforeCoreQty":  null,
+                       "BeforeCoreEntry":  null,
+                       "BeforeCoreSL":  null,
+                       "BeforeActualQty":  140,
+                       "BeforeActualEntry":  837.34,
+                       "BeforeDaySL":  831.9,
+                       "TacticalQty":  123
+                   },
+        "After":  {
+                      "File":  "2026-04-30.json",
+                      "Symbol":  "CGPOWER",
+                      "EntryDate":  "2026-04-29",
+                      "AfterCoreQty":  140,
+                      "AfterCoreEntry":  837.34,
+                      "AfterCoreSL":  831.9,
+                      "AfterActualQty":  null,
+                      "AfterActualEntry":  null,
+                      "AfterDaySL":  null,
+                      "TacticalQty":  123
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-05-04.json",
+                       "Symbol":  "BSE",
+                       "EntryDate":  "2026-04-27",
+                       "BeforeCoreQty":  null,
+                       "BeforeCoreEntry":  null,
+                       "BeforeCoreSL":  null,
+                       "BeforeActualQty":  40,
+                       "BeforeActualEntry":  3488.9,
+                       "BeforeDaySL":  3449.9,
+                       "TacticalQty":  25
+                   },
+        "After":  {
+                      "File":  "2026-05-04.json",
+                      "Symbol":  "BSE",
+                      "EntryDate":  "2026-04-27",
+                      "AfterCoreQty":  40,
+                      "AfterCoreEntry":  3488.9,
+                      "AfterCoreSL":  3449.9,
+                      "AfterActualQty":  null,
+                      "AfterActualEntry":  null,
+                      "AfterDaySL":  null,
+                      "TacticalQty":  25
+                  }
+    },
+    {
+        "Before":  {
+                       "File":  "2026-05-04.json",
+                       "Symbol":  "CGPOWER",
+                       "EntryDate":  "2026-04-29",
+                       "BeforeCoreQty":  null,
+                       "BeforeCoreEntry":  null,
+                       "BeforeCoreSL":  null,
+                       "BeforeActualQty":  140,
+                       "BeforeActualEntry":  837.34,
+                       "BeforeDaySL":  831.9,
+                       "TacticalQty":  123
+                   },
+        "After":  {
+                      "File":  "2026-05-04.json",
+                      "Symbol":  "CGPOWER",
+                      "EntryDate":  "2026-04-29",
+                      "AfterCoreQty":  140,
+                      "AfterCoreEntry":  837.34,
+                      "AfterCoreSL":  831.9,
+                      "AfterActualQty":  null,
+                      "AfterActualEntry":  null,
+                      "AfterDaySL":  null,
+                      "TacticalQty":  123
+                  }
+    }
+]
