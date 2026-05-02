@@ -269,6 +269,57 @@ class BhavRepository:
         self._with_retry_cursor(load, "load inactive symbol map from inactive_symbols")
         return result
 
+    def load_earnings_announcements(
+        self,
+        symbols: Sequence[str],
+        start_date: date,
+        end_date: date,
+    ) -> List[Dict[str, object]]:
+        normalized = []
+        seen: set[str] = set()
+        for symbol in symbols:
+            norm = normalize_symbol(str(symbol or ""))
+            if norm and norm not in seen:
+                normalized.append(norm)
+                seen.add(norm)
+        if not normalized:
+            return []
+
+        start_text = start_date.isoformat()
+        end_text = end_date.isoformat()
+        placeholders = ", ".join(["%s"] * len(normalized))
+
+        def load(cursor):
+            cursor.execute(
+                f"""
+                SELECT UPPER(symbol) AS symbol, announcement_date, status
+                FROM earnings_announcement_dates
+                WHERE UPPER(symbol) IN ({placeholders})
+                  AND announcement_date IS NOT NULL
+                  AND announcement_date BETWEEN %s AND %s
+                ORDER BY announcement_date ASC, symbol ASC
+                """,
+                tuple(normalized) + (start_text, end_text),
+            )
+            rows: List[Dict[str, object]] = []
+            for symbol, announcement_date, status in cursor.fetchall():
+                if not announcement_date:
+                    continue
+                rows.append(
+                    {
+                        "symbol": normalize_symbol(str(symbol or "")),
+                        "announcement_date": announcement_date.isoformat(),
+                        "days_ahead": max(0, (announcement_date - start_date).days),
+                        "status": str(status or "").strip() or "Found",
+                    }
+                )
+            return rows
+
+        try:
+            return self._with_retry_cursor(load, f"load earnings announcements for {','.join(normalized)}")
+        except Exception:
+            return []
+
     def available_year_tables(self) -> List[int]:
         if self._year_tables is None:
             years: List[int] = []
@@ -2994,7 +3045,9 @@ class TradePlanStore:
             price_info = repo.lookup_last_close(symbol, target_dt) if symbol else None
             if price_info and price_info.get("cmp") is not None:
                 position["cmp"] = price_info["cmp"]
-            remaining_qty = self._remaining_qty(position)
+            remaining_qty = self._as_float(position.get("_rem"))
+            if remaining_qty <= 0:
+                remaining_qty = self._remaining_qty(position) or 0
             if remaining_qty and remaining_qty > 0:
                 mark_price = position.get("cmp") or self._entry_value(position) or position.get("planEntry") or 0
                 exposure += float(mark_price) * remaining_qty
@@ -3022,7 +3075,9 @@ class TradePlanStore:
         carried_risk_total = 0.0
         for position in carried_positions:
             open_pnl += self._as_float(position.get("_openPnl"))
-            remaining_qty = self._remaining_qty(position)
+            remaining_qty = self._as_float(position.get("_rem"))
+            if remaining_qty <= 0:
+                remaining_qty = self._remaining_qty(position) or 0
             if remaining_qty is None or remaining_qty <= 0:
                 continue
             entry = self._entry_value(position)
@@ -3038,6 +3093,27 @@ class TradePlanStore:
                 sl = self._as_float(position.get("planSL"))
             if entry > 0 and sl > 0:
                 carried_risk_total += max(0.0, (entry - sl) * remaining_qty)
+
+        earnings_symbols: List[str] = []
+        seen_earnings: set[str] = set()
+        for position in carried_positions + planning_for_day:
+            symbol = normalize_symbol(str(position.get("symbol") or ""))
+            if not symbol or symbol in seen_earnings:
+                continue
+            status = str(position.get("_status") or "").strip().lower()
+            remaining_qty = self._as_float(position.get("_rem"))
+            if status not in {"planning", "planned"} and remaining_qty <= 0:
+                continue
+            if status == "closed":
+                continue
+            seen_earnings.add(symbol)
+            earnings_symbols.append(symbol)
+
+        earnings_due = repo.load_earnings_announcements(
+            earnings_symbols,
+            target_dt,
+            target_dt + timedelta(days=3),
+        ) if earnings_symbols else []
 
         return {
             "ok": True,
@@ -3056,6 +3132,7 @@ class TradePlanStore:
             "win_count": win_count,
             "loss_count": loss_count,
             "carried_risk_total": round(carried_risk_total, 2),
+            "earnings_due": earnings_due,
             "settings": settings,
         }
 
@@ -3063,6 +3140,7 @@ class TradePlanStore:
         settings = self.load_settings()
         dated_views: List[Tuple[str, Dict[str, object]]] = []
         first_seen_entry_by_id: Dict[str, str] = {}
+        first_seen_position_by_id: Dict[str, Dict[str, object]] = {}
         for plan_date in self.list_plan_dates():
             view = self.build_day_view(plan_date, repo)
             dated_views.append((plan_date, view))
@@ -3079,9 +3157,12 @@ class TradePlanStore:
                 previous = first_seen_entry_by_id.get(pos_id)
                 if not previous or entry_date < previous:
                     first_seen_entry_by_id[pos_id] = entry_date
+                    first_seen_position_by_id[pos_id] = copy.deepcopy(position)
 
         items: List[Dict[str, object]] = []
         core_seen: Dict[str, Dict[str, object]] = {}
+        latest_seen_by_id: Dict[str, Dict[str, object]] = {}
+        biggest_winner_item = None
         for plan_date, view in dated_views:
             trade_count = 0
             positions = view.get("positions") if isinstance(view, dict) else []
@@ -3096,6 +3177,7 @@ class TradePlanStore:
                     if first_seen_entry_by_id.get(pos_id) == plan_date:
                         trade_count += 1
                     seen_ids.add(pos_id)
+                    latest_seen_by_id[pos_id] = copy.deepcopy(position)
                     core_qty = self._as_float(position.get("coreQty"))
                     if core_qty > 0:
                         entry_date = str(position.get("entryDate") or "")[:10]
@@ -3139,8 +3221,59 @@ class TradePlanStore:
                         "status": "W" if self._as_float(rec.get("net")) >= 0 else "L",
                     }
                 )
+        highest_exposure_item = max(items, key=lambda item: self._as_float(item.get("exposure")), default=None)
+        highest_open_positions_item = max(items, key=lambda item: self._as_float(item.get("open_positions_count")), default=None)
+        biggest_position_item = None
+        for rec in first_seen_position_by_id.values():
+            qty = self._total_qty(rec) or 0.0
+            entry = self._entry_value(rec) or 0.0
+            value = round(float(qty) * float(entry), 2) if qty > 0 and entry > 0 else 0.0
+            if value <= 0:
+                continue
+            if biggest_position_item is None or value > float(biggest_position_item["value"]):
+                biggest_position_item = {
+                    "symbol": str(rec.get("symbol") or ""),
+                    "value": value,
+                    "qty": round(float(qty), 6),
+                    "entry": round(float(entry), 2),
+                    "date": str(rec.get("entryDate") or ""),
+                }
+        biggest_winner_item = None
+        for pos_id, first_rec in first_seen_position_by_id.items():
+            latest_rec = latest_seen_by_id.get(pos_id) or first_rec
+            qty = self._total_qty(first_rec) or 0.0
+            entry = self._entry_value(first_rec) or 0.0
+            if qty <= 0 or entry <= 0:
+                continue
+            net = self._as_float(latest_rec.get("_realPnl")) + self._as_float(latest_rec.get("_openPnl"))
+            pct_value = (net / (qty * entry)) * 100.0
+            if biggest_winner_item is None or pct_value > float(biggest_winner_item["pct"]):
+                biggest_winner_item = {
+                    "symbol": str(first_rec.get("symbol") or ""),
+                    "pct": pct_value,
+                    "date": str(first_rec.get("entryDate") or ""),
+                }
         latest_date = items[-1]["date"] if items else date.today().isoformat()
-        return {"ok": True, "items": items, "latest_date": latest_date, "last_core_positions": last_core_positions, "settings": settings}
+        return {
+            "ok": True,
+            "items": items,
+            "latest_date": latest_date,
+            "last_core_positions": last_core_positions,
+            "highlights": {
+                "highest_exposure": {
+                    "amount": round(self._as_float(highest_exposure_item.get("exposure")) if highest_exposure_item else 0.0, 2),
+                    "pct": round(self._as_float(highest_exposure_item.get("exposure_pct")) if highest_exposure_item else 0.0, 2),
+                    "date": str(highest_exposure_item.get("date") or "") if highest_exposure_item else "",
+                },
+                "highest_open_positions": {
+                    "count": int(self._as_float(highest_open_positions_item.get("open_positions_count")) if highest_open_positions_item else 0),
+                    "date": str(highest_open_positions_item.get("date") or "") if highest_open_positions_item else "",
+                },
+                "biggest_position": biggest_position_item or {},
+                "biggest_winner": biggest_winner_item or {},
+            },
+            "settings": settings,
+        }
 
     def build_goal_tracker(self, repo: BhavRepository) -> Dict[str, object]:
         dashboard = self.build_dashboard(repo)

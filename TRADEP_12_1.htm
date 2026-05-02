@@ -79,12 +79,12 @@
   .quick-cell .v{font-size:15px;color:var(--text);margin-top:2px;font-weight:500}
 
   .cal{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
-  .day{padding:7px 8px;border:1px solid var(--line);border-radius:5px;background:var(--panel);min-height:50px;display:flex;flex-direction:column;justify-content:space-between;gap:2px}
+  .day{padding:8px 9px;border:1px solid var(--line);border-radius:5px;background:var(--panel);min-height:68px;display:flex;flex-direction:column;justify-content:space-between;gap:3px}
   button.day{appearance:none;width:100%;text-align:left;cursor:pointer;font:inherit}
   button.day:hover{border-color:var(--line-3);background:rgba(255,255,255,.03)}
   .day .num{font-size:14px;color:var(--text);letter-spacing:.01em;font-weight:500;line-height:1}
-  .day .typ{font-size:9.5px;letter-spacing:.12em;color:var(--text-faint);text-transform:uppercase;font-weight:500}
-  .day .pl{font-size:10px;color:var(--text-faint);font-variant-numeric:tabular-nums;font-weight:500}
+  .day .typ{font-size:10.5px;letter-spacing:.12em;color:var(--text-faint);text-transform:uppercase;font-weight:500}
+  .day .pl{font-size:11.5px;color:var(--text-faint);font-variant-numeric:tabular-nums;font-weight:500}
   .day.win{border-color:rgba(34,197,94,.45);background:rgba(34,197,94,.06)}
   .day.win .typ{color:var(--green)}
   .day.win .pl{color:var(--green)}
@@ -94,26 +94,42 @@
   .day.plan{border-color:rgba(167,139,250,.45);background:rgba(167,139,250,.06)}
   .day.plan .typ{color:var(--purple)}
   .day.plan .pl{color:var(--purple)}
-  .day.today{outline:1.5px solid var(--cyan-dim);outline-offset:-2px;background:rgba(45,212,191,.05);border-color:transparent}
+  .day.today{outline:2px solid var(--cyan);outline-offset:-2px;background:rgba(45,212,191,.09);border-color:transparent;box-shadow:0 0 0 1px rgba(45,212,191,.18) inset}
   .day.today .typ{color:var(--cyan-dim)}
   .day.today .pl{color:var(--cyan)}
   .day.today:hover{background:rgba(45,212,191,.07)}
 
   /* ----- MONTH SUMMARY ----- */
-  .month-summary{margin-top:auto;border:1px solid var(--line);border-radius:6px;background:var(--panel);padding:11px 12px}
-  .ms-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px}
-  .ms-title{font-size:10px;letter-spacing:.22em;color:var(--cyan-dim);text-transform:uppercase;font-weight:600}
-  .ms-month{font-size:11px;color:var(--text-dim);letter-spacing:.04em}
-  .ms-pnl{display:flex;align-items:baseline;gap:8px;padding:8px 0;border-bottom:1px solid var(--line)}
-  .ms-pnl .lbl{font-size:10px;letter-spacing:.16em;color:var(--text-faint);text-transform:uppercase;font-weight:500}
-  .ms-pnl .val{font-size:20px;color:var(--green);font-weight:600;letter-spacing:.01em;font-variant-numeric:tabular-nums;margin-left:auto}
-  .ms-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:9px}
-  .ms-cell{display:flex;flex-direction:column;gap:2px}
-  .ms-cell .l{font-size:9.5px;letter-spacing:.14em;color:var(--text-faint);text-transform:uppercase;font-weight:500}
-  .ms-cell .v{font-size:13px;color:var(--text);font-variant-numeric:tabular-nums;font-weight:500}
+  .sidebar-stack{margin-top:auto;display:flex;flex-direction:column;gap:9px}
+  .month-summary{margin-top:0;border:1px solid var(--line);border-radius:6px;background:var(--panel);padding:10px 11px 11px;min-height:168px}
+  .ms-head{display:flex;align-items:center;justify-content:flex-start;gap:8px;margin-bottom:8px}
+  .ms-title{font-size:10px;letter-spacing:.28em;color:var(--cyan-dim);text-transform:uppercase;font-weight:600}
+  .ms-month{display:none}
+  .ms-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0;margin-top:0;position:relative;align-content:start}
+  .ms-grid::before{content:"";position:absolute;left:50%;top:6px;bottom:6px;width:1px;background:var(--line)}
+  .ms-grid::after{content:"";position:absolute;left:8px;right:8px;top:50%;height:1px;background:var(--line)}
+  .ms-cell{display:flex;flex-direction:column;gap:4px;min-width:0;min-height:66px;padding:9px 12px 10px 10px;position:relative}
+  .ms-cell:nth-child(even){padding-left:14px;padding-right:10px}
+  .ms-cell:nth-child(odd){padding-right:14px}
+  .hs-ico{width:28px;height:28px;border-radius:999px;border:1px solid var(--line-2);display:inline-flex;align-items:center;justify-content:center;margin-bottom:9px;font-size:13px;line-height:1;background:rgba(255,255,255,.02)}
+  .hs-exp .hs-ico{color:var(--amber);box-shadow:0 0 0 1px rgba(245,158,11,.06) inset;background:rgba(245,158,11,.05)}
+  .hs-pos .hs-ico{color:var(--green);box-shadow:0 0 0 1px rgba(34,197,94,.06) inset;background:rgba(34,197,94,.04)}
+  .hs-win .hs-ico{color:var(--cyan);box-shadow:0 0 0 1px rgba(45,212,191,.06) inset;background:rgba(45,212,191,.04)}
+  .hs-open .hs-ico{color:var(--green);box-shadow:0 0 0 1px rgba(34,197,94,.06) inset;background:rgba(34,197,94,.04)}
+  .ms-cell .l{font-size:10px;letter-spacing:.2em;color:var(--text-faint);text-transform:uppercase;font-weight:500}
+  .ms-cell .v{font-size:11.5px;color:var(--text);font-variant-numeric:tabular-nums;font-weight:700;line-height:1.06;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ms-cell .v.am{color:var(--amber)}
   .ms-cell .v.gn{color:var(--green)}
   .ms-cell .v.cy{color:var(--cyan)}
-  .ms-cell .v.am{color:var(--amber)}
+  .earnings-box{margin-top:0;border:1px solid var(--line);border-radius:6px;background:rgba(10,16,31,.72);padding:9px 10px}
+  .earn-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+  .earn-title{font-size:10px;letter-spacing:.18em;color:var(--cyan-dim);text-transform:uppercase;font-weight:600}
+  .earn-note{font-size:10px;color:var(--text-faint);letter-spacing:.04em}
+  .earn-list{display:flex;flex-direction:column;gap:6px}
+  .earn-row{display:grid;grid-template-columns:78px 1fr;gap:8px;align-items:center;padding:6px 8px;border:1px solid var(--line);border-radius:5px;background:rgba(255,255,255,.015)}
+  .earn-row .sym{font-size:12px;font-weight:700;color:var(--text);letter-spacing:.04em}
+  .earn-row .meta{font-size:11px;color:var(--text-dim);letter-spacing:.03em;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
+  .earn-empty{padding:6px 8px;font-size:11px;color:var(--text-faint);letter-spacing:.02em}
 
   /* ============ MAIN ============ */
   .main{display:flex;flex-direction:column;padding:10px 18px 12px;gap:9px;overflow:hidden;min-height:0}
@@ -570,20 +586,42 @@
       </div>
 
       <!-- ===== MONTH SUMMARY ===== -->
-      <div class="month-summary">
-        <div class="ms-head">
-          <span class="ms-title">Month · April</span>
-          <span class="ms-month">21 sessions</span>
+      <div class="sidebar-stack">
+        <div class="month-summary">
+          <div class="ms-head">
+            <span class="ms-title">HIGHS</span>
+          </div>
+          <div class="ms-grid">
+            <div class="ms-cell hs-exp">
+              <div class="hs-ico">↗</div>
+              <div class="l">Exposure</div>
+              <div class="v am" id="month-highest-exposure">-</div>
+            </div>
+            <div class="ms-cell hs-pos">
+              <div class="hs-ico">⌖</div>
+              <div class="l">Position</div>
+              <div class="v gn" id="month-biggest-position">-</div>
+            </div>
+            <div class="ms-cell hs-win">
+              <div class="hs-ico">✦</div>
+              <div class="l">Winner</div>
+              <div class="v cy" id="month-biggest-winner">-</div>
+            </div>
+            <div class="ms-cell hs-open">
+              <div class="hs-ico">◔</div>
+              <div class="l">Open Pos</div>
+              <div class="v gn" id="month-highest-open-positions">-</div>
+            </div>
+          </div>
         </div>
-        <div class="ms-grid">
-          <div class="ms-cell"><div class="l">Trading Days</div><div class="v">15</div></div>
-          <div class="ms-cell"><div class="l">Trades Taken</div><div class="v">14</div></div>
-          <div class="ms-cell"><div class="l">Win Rate</div><div class="v gn">79%</div></div>
-          <div class="ms-cell"><div class="l">Best Day</div><div class="v gn">Rs 13,000</div></div>
-          <div class="ms-cell"><div class="l">Max Exposure</div><div class="v am">18.2%</div></div>
-          <div class="ms-cell"><div class="l">Avg Risk</div><div class="v">Rs 3,600</div></div>
-          <div class="ms-cell"><div class="l">Win Streak</div><div class="v cy">11 days</div></div>
-          <div class="ms-cell"><div class="l">Plan Hit Rate</div><div class="v gn">86%</div></div>
+        <div class="earnings-box">
+          <div class="earn-head">
+            <span class="earn-title">Upcoming</span>
+            <span class="earn-note">Next 3 days</span>
+          </div>
+          <div class="earn-list" id="month-earnings-list">
+            <div class="earn-empty">No matching earnings due.</div>
+          </div>
         </div>
       </div>
     </div>
@@ -719,10 +757,10 @@
           <div class="pe-head">
             <span class="sec-num mono">2</span>
             <span class="sec-title">Protect</span>
+            <button class="head-btn protect-all-btn" type="button" aria-label="Select all" title="Select all" style="margin-left:6px"><span class="ico">☐</span></button>
             <span style="flex:1"></span>
             <span class="exec-col-hdr qty-hdr" style="width:70px">Qty</span>
             <span class="exec-col-hdr sl-hdr" style="width:90px">SL</span>
-            <button class="head-btn protect-all-btn" type="button" aria-label="Select all" title="Select all"><span class="ico">☐</span></button>
           </div>
           <div class="pe-list prot-list">
             <div class="pos safe">
@@ -1739,28 +1777,14 @@
     const items = (dashboard?.items || []).filter(item => String(item.date || '').slice(0, 7) === month).sort((a, b) => String(a.date).localeCompare(String(b.date)));
     const net = (item) => n(item.realized_pnl) + n(item.open_pnl);
     const tradeDays = items.filter(item => n(item.open_positions_count) > 0 || n(item.planning_count) > 0 || n(item.closed_count) > 0).length;
-    const tradesTaken = items.reduce((sum, item) => {
-      const dayTrades = n(item.trade_count);
-      if (dayTrades > 0) return sum + dayTrades;
-      return sum + n(item.open_positions_count) + n(item.closed_count);
-    }, 0);
+    const tradesTaken = items.reduce((sum, item) => sum + n(item.trade_count), 0);
     const winDays = items.filter(item => net(item) > 0).length;
     const lossDays = items.filter(item => net(item) < 0).length;
     const winRate = items.length ? Math.round((winDays / items.length) * 100) : 0;
-    const bestDay = items.reduce((best, item) => {
-      const v = net(item);
-      return !best || v > best.v ? { v, item } : best;
-    }, null);
-    const maxExposure = items.reduce((m, item) => Math.max(m, n(item.exposure_pct)), 0);
-    const avgRisk = items.length ? items.reduce((sum, item) => sum + n(item.carried_risk_total), 0) / items.length : 0;
-    let streak = 0;
-    let bestStreak = 0;
-    items.forEach(item => {
-      if (net(item) > 0) streak += 1;
-      else streak = 0;
-      bestStreak = Math.max(bestStreak, streak);
-    });
-    const planHit = items.length ? Math.round((items.filter(item => n(item.planning_count) > 0).length / items.length) * 100) : 0;
+    const highlights = dashboard?.highlights || {};
+    const highestExposure = highlights.highest_exposure || {};
+    const biggestPosition = highlights.biggest_position || {};
+    const biggestWinner = highlights.biggest_winner || {};
 
     const sideHead = document.querySelector('.side-head');
     const sideDay = document.querySelector('.side-day');
@@ -1788,10 +1812,11 @@
     if (cal) {
       cal.innerHTML = items.map(item => {
         const pp = dateParts(item.date);
-        const v = n(item.exposure);
-        const cls = n(item.planning_count) > 0 ? 'plan' : v > 0 ? 'win' : 'flat';
-        const typ = n(item.planning_count) > 0 ? 'Plan' : '';
-        const pl = nf0.format(Math.round(Math.abs(v)));
+        const exposure = n(item.exposure);
+        const exposurePct = item.exposure_pct != null ? `${Number(item.exposure_pct).toFixed(1)}%` : '';
+        const cls = n(item.planning_count) > 0 ? 'plan' : exposure > 0 ? 'win' : 'flat';
+        const typ = exposurePct;
+        const pl = nf0.format(Math.round(Math.abs(exposure)));
         return `<button class="day ${cls}${String(item.date).slice(0, 10) === selectedDate ? ' today' : ''}" type="button" data-date="${esc(String(item.date).slice(0, 10))}"><span class="num">${pp.d}</span><span class="typ">${typ}</span><span class="pl">${pl}</span></button>`;
       }).join('');
     }
@@ -1810,17 +1835,44 @@
 
     const monthSummary = document.querySelector('.month-summary');
     if (monthSummary) {
-      monthSummary.querySelector('.ms-title').textContent = `Month · ${p.monthName}`;
-      monthSummary.querySelector('.ms-month').textContent = `${items.length} sessions`;
-      const vals = monthSummary.querySelectorAll('.ms-grid .ms-cell .v');
-      if (vals[0]) vals[0].textContent = String(tradeDays);
-      if (vals[1]) vals[1].textContent = String(tradesTaken);
-      if (vals[2]) vals[2].textContent = `${winRate}%`;
-      if (vals[3]) vals[3].textContent = bestDay ? `${bestDay.v >= 0 ? '+' : '-'}Rs ${nf0.format(Math.abs(bestDay.v))}` : 'Rs 0';
-      if (vals[4]) vals[4].textContent = `${maxExposure.toFixed(1)}%`;
-      if (vals[5]) vals[5].textContent = `Rs ${nf0.format(Math.round(avgRisk))}`;
-      if (vals[6]) vals[6].textContent = `${bestStreak} days`;
-      if (vals[7]) vals[7].textContent = `${planHit}%`;
+      const msTitle = monthSummary.querySelector('.ms-title');
+      if (msTitle) msTitle.textContent = 'HIGHS';
+      const highestExposureCell = monthSummary.querySelector('#month-highest-exposure');
+      const biggestPositionCell = monthSummary.querySelector('#month-biggest-position');
+      const biggestWinnerCell = monthSummary.querySelector('#month-biggest-winner');
+      const highestOpenCell = monthSummary.querySelector('#month-highest-open-positions');
+      if (highestExposureCell) {
+        const amount = Number(highestExposure.amount || 0);
+        const pct = Number(highestExposure.pct || 0);
+        highestExposureCell.textContent = amount > 0 ? `${String(Math.round(amount))} (${Math.round(pct)}%)` : '-';
+      }
+      if (biggestPositionCell) {
+        biggestPositionCell.textContent = biggestPosition.value ? `${String(Math.round(n(biggestPosition.value)))}` : '-';
+      }
+      if (biggestWinnerCell) {
+        biggestWinnerCell.textContent = biggestWinner.pct != null ? `${n(biggestWinner.pct) >= 0 ? '+' : ''}${Number(biggestWinner.pct || 0).toFixed(1)}%` : '-';
+      }
+      if (highestOpenCell) {
+        const count = Number(highlights.highest_open_positions?.count || 0);
+        highestOpenCell.textContent = count > 0 ? String(count) : '-';
+      }
+    }
+
+    const upcomingPanel = document.querySelector('.earnings-box');
+    if (upcomingPanel) {
+      const earningsList = upcomingPanel.querySelector('#month-earnings-list');
+      if (earningsList) {
+        const earnings = Array.isArray(currentDay?.earnings_due) ? currentDay.earnings_due : [];
+        if (earnings.length) {
+          earningsList.innerHTML = earnings.map(row => {
+            const symbol = String(row.symbol || 'TICKER');
+            const ann = String(row.announcement_date || '');
+            return `<div class="earn-row"><div class="sym">${esc(symbol)}</div><div class="meta">${esc(ann)}</div></div>`;
+          }).join('');
+        } else {
+          earningsList.innerHTML = '<div class="earn-empty">No open or planned positions with earnings in the next 3 days.</div>';
+        }
+      }
     }
   }
 
@@ -1865,7 +1917,7 @@
     const cmp = n(pos.cmp);
     const sl = effectiveProtectStop(pos);
     const buy = n(pos.planEntry || pos.actualEntry || pos.cmp);
-    const qtyVal = pos.actualQty != null ? pos.actualQty : (pos._qty || pos._predQty || 0);
+        const qtyVal = pos._rem != null ? pos._rem : (pos.actualQty != null ? pos.actualQty : (pos._qty || pos._predQty || 0));
     const pctChange = buy ? ((cmp - buy) / buy) * 100 : 0;
     const fill = Math.max(18, Math.min(88, 55 + pctChange * 2));
     const barColor = status.cls === 'safe' ? 'var(--green-dim)' : status.cls === 'bravo' ? 'var(--amber-dim)' : status.cls === 'insane' ? 'var(--cyan-dim)' : 'var(--purple-dim)';
@@ -1895,7 +1947,7 @@
     const sl = n(pos.planSL || pos.daySL || pos._currentSL);
     const cmp = n(pos.cmp);
     const buy = n(pos.planEntry || pos.actualEntry || pos.cmp);
-    const qtyVal = pos.actualQty != null ? pos.actualQty : (pos._qty || pos._predQty || 0);
+        const qtyVal = pos._rem != null ? pos._rem : (pos.actualQty != null ? pos.actualQty : (pos._qty || pos._predQty || 0));
     const riskAmt = n(pos.riskAmount || pos._planRisk);
     const key = execKey(pos);
     const rowClass = checked ? ' executed' : '';
