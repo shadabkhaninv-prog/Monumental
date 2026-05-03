@@ -301,6 +301,84 @@ def ensure_inactive_symbols_table(conn) -> None:
     cursor.close()
 
 
+def ensure_stock_rating_sector_summary_table(conn) -> None:
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS stock_rating_sector_summary (
+            run_date DATE NOT NULL,
+            sector VARCHAR(100) NOT NULL,
+            sector_score DECIMAL(12,4) NOT NULL,
+            PRIMARY KEY (run_date, sector)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        """
+    )
+    cursor.execute(
+        """
+        ALTER TABLE stock_rating_sector_summary
+        ADD COLUMN IF NOT EXISTS sector_score DECIMAL(12,4) NOT NULL AFTER sector
+        """
+    )
+    conn.commit()
+    cursor.close()
+
+
+def persist_stock_rating_top_sectors(conn, sector_summary: pd.DataFrame, run_date: date, top_n: int = 5) -> None:
+    ensure_stock_rating_sector_summary_table(conn)
+
+    top_rows = sector_summary.head(top_n).copy()
+    new_rows: List[tuple[str, float]] = []
+    for _, row in top_rows.iterrows():
+        sector_value = row.get("sector", "")
+        if pd.isna(sector_value):
+            continue
+        sector = str(sector_value).strip()
+        if sector:
+            sector_score = row.get("leadership_score", row.get("score_sector", 0))
+            if pd.isna(sector_score):
+                sector_score = 0
+            new_rows.append((sector, round(float(sector_score), 4)))
+
+    if not new_rows:
+        print("  Top sector persistence skipped: no sector summary rows were available.")
+        return
+
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            SELECT sector, sector_score
+            FROM stock_rating_sector_summary
+            WHERE run_date = %s
+            ORDER BY sector
+            """,
+            (run_date,),
+        )
+        existing_rows = []
+        for row in cursor.fetchall():
+            sector = str(row[0]).strip()
+            if not sector:
+                continue
+            existing_rows.append((sector, round(float(row[1] or 0), 4)))
+
+        if len(existing_rows) == len(new_rows) and sorted(existing_rows) == sorted(new_rows):
+            print(f"  Top 5 sectors unchanged for {run_date.isoformat()} - no DB update needed.")
+            return
+
+        cursor.execute("DELETE FROM stock_rating_sector_summary WHERE run_date = %s", (run_date,))
+        cursor.executemany(
+            """
+            INSERT INTO stock_rating_sector_summary (run_date, sector, sector_score)
+            VALUES (%s, %s, %s)
+            """,
+            [(run_date, sector, sector_score) for sector, sector_score in new_rows],
+        )
+        conn.commit()
+        print(f"  Persisted {len(new_rows)} top sectors for {run_date.isoformat()} to stock_rating_sector_summary.")
+    finally:
+        cursor.close()
+
+
 def load_symbol_replacements(conn) -> Dict[str, str]:
     ensure_inactive_symbols_table(conn)
     cursor = conn.cursor()
@@ -1693,6 +1771,7 @@ def robust_force_close_excel_workbook(path: Path) -> None:
 
 
 def export_workbook(
+    conn,
     scored: pd.DataFrame,
     warnings: List[WarningLog],
     output_dir: Path,
@@ -3419,6 +3498,7 @@ def export_workbook(
     # ── Set active sheet to Dashboard ────────────────────────────────
     wb.active = dash
     wb.save(out_path)
+    persist_stock_rating_top_sectors(conn, sector_summary, cutoff_date, top_n=5)
     return out_path
 
 
@@ -3587,7 +3667,7 @@ def main() -> None:
 
     # ── Export workbook ───────────────────────────────────────────────────
     output_dir.mkdir(parents=True, exist_ok=True)
-    wb_path = export_workbook(scored, warnings, output_dir, cutoff_date, reset_date, symbol_file)
+    wb_path = export_workbook(conn, scored, warnings, output_dir, cutoff_date, reset_date, symbol_file)
     print(f"\n  Excel  → {wb_path}")
 
     # ── Export TradingView day-one list ───────────────────────────────────

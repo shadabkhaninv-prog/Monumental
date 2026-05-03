@@ -182,7 +182,7 @@
 
   /* ============ PLAN â€” REDESIGNED ============ */
   .plan{flex:0 0 auto}
-  .plan-body{padding:11px 14px;display:grid;grid-template-columns:1.25fr 0.65fr 1.35fr;gap:14px}
+  .plan-body{padding:11px 14px;display:grid;grid-template-columns:minmax(0,1.25fr) minmax(180px,0.52fr) minmax(0,1.48fr);gap:14px}
 
   /* subtle vertical separator between plan columns â€” zero layout impact */
   .plan-body > div:not(:last-child){box-shadow:1px 0 0 0 var(--line-2)}
@@ -250,9 +250,14 @@
 
   /* chips â€” col 2 sectors: bigger rows to fill 5 slots */
   .chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
+  .chips.sectors-chips{width:100%}
   .chip{display:inline-flex;align-items:center;gap:6px;padding:7px 10px;border:1px solid var(--line-2);border-radius:13px;font-size:12.5px;color:var(--text-dim);background:var(--panel-2);font-weight:500;cursor:pointer;user-select:none}
   .chip .strength{display:inline-flex;gap:2px}
   .chip .strength i{width:3px;height:8px;background:var(--line-2);border-radius:1px;display:inline-block}
+  .chip.gold{border-color:rgba(245, 197, 66, .55);color:#ffd86b;background:rgba(245, 197, 66, .08)}
+  .chip.gold .strength i{background:#f5c542}
+  .chip.rest{border-color:rgba(45,212,191,.28);color:var(--cyan);background:rgba(45,212,191,.05)}
+  .chip.rest .strength i{background:var(--cyan-dim)}
   .chip.hot{border-color:rgba(34,197,94,.5);color:var(--green)}
   .chip.hot .strength i{background:var(--green-dim)}
   .chip.warm{border-color:rgba(245,158,11,.5);color:var(--amber)}
@@ -380,47 +385,68 @@
   .pe-foot .red{color:var(--red);font-weight:600}
   .pe-foot .green{color:var(--green);font-weight:600}
 
-  /* execute panel */
-  .exec-head{display:grid;grid-template-columns:18px 60px minmax(260px,1fr) 54px 70px 70px 82px;gap:8px;align-items:center;padding:8px 14px;border-bottom:1px solid var(--line)}
-  .exec-head .track-hdr{font-size:9.5px;letter-spacing:.18em;color:var(--text-faint);text-transform:uppercase;font-weight:500;white-space:nowrap}
-  .exec-head .track-hdr .pdl{color:var(--red-dim)}
-  .exec-head .track-hdr .sl{color:var(--red)}
-  .exec-head .track-hdr .cmp{color:var(--cyan-dim)}
-  .exec-head .track-hdr .buy{color:var(--green)}
-  .exec-head .exec-hdr{font-size:9.5px;letter-spacing:.18em;color:var(--text-faint);text-transform:uppercase;font-weight:500;text-align:center;white-space:nowrap}
-  .exec-head .qty-hdr{color:var(--amber-dim)}
-  .exec-head .buy-hdr{color:var(--green)}
-  .exec-head .sl-hdr{color:var(--red-dim)}
-  .exec-head .risk-hdr{color:var(--cyan-dim)}
-  .exec-list .pos{grid-template-columns:18px 60px minmax(260px,1fr) 54px 70px 70px 82px;gap:8px;align-items:center;padding:5px 10px 5px 8px;border:1px solid #1a2332;border-radius:4px;background:var(--panel-2);position:relative;min-height:40px}
-  .exec-list .pos.executed{border-color:rgba(34,197,94,.55);background:linear-gradient(90deg,rgba(34,197,94,.08),rgba(16,22,34,.98) 42%,rgba(16,22,34,.98));box-shadow:inset 0 0 0 1px rgba(34,197,94,.06)}
-  .exec-list .pos.executed::before{background:var(--green)}
-  .exec-list .pos.executed .ticker{color:var(--green)}
-  .exec-list .pos.executed .exec-buy,
-  .exec-list .pos.executed .exec-sl,
-  .exec-list .pos.executed .exec-risk{color:var(--text)}
-  .exec-left{display:flex;align-items:center;gap:8px;min-width:0}
-  .exec-left .ticker{font-size:12px;color:var(--text);font-weight:700;letter-spacing:.02em;line-height:1;white-space:nowrap}
-  .exec-mid{display:flex;flex-direction:column;gap:1px;min-width:0}
-  .exec-bar{position:relative;height:4px;border-radius:999px;background:#223041;overflow:hidden}
-  .exec-bar::before{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(255,255,255,.03),rgba(125,211,252,.12) 48%,rgba(34,197,94,.18));opacity:.8}
-  .exec-marker{position:absolute;top:50%;width:8px;height:8px;border-radius:50%;transform:translate(-50%,-50%);box-shadow:0 0 0 2px #0d1118}
-  .exec-marker.pdl{left:var(--pdl);background:var(--red-dim)}
-  .exec-marker.sl{left:var(--sl);background:#ff6b6b}
-  .exec-marker.cmp{left:var(--cmp);background:var(--cyan-dim)}
-  .exec-marker.buy{left:var(--buy);background:var(--green-dim)}
-  .exec-scale{position:relative;height:10px}
-  .exec-scale span{position:absolute;top:0;transform:translateX(-50%);font-size:8px;line-height:1;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
-  .exec-scale .pdl{left:var(--pdl);color:var(--text-faint)}
-  .exec-scale .sl{left:var(--sl);color:var(--red)}
-  .exec-scale .cmp{left:var(--cmp);color:var(--cyan)}
-  .exec-scale .buy{left:var(--buy);color:var(--green)}
-  .exec-qty{display:flex;align-items:center;justify-content:center;height:21px;border:1px solid rgba(245,158,11,.45);border-radius:4px;color:var(--amber);font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums}
-  .exec-buy,.exec-sl,.exec-risk{display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1;white-space:nowrap}
-  .exec-buy{color:var(--green)}
-  .exec-sl{color:var(--red)}
-  .exec-risk{color:var(--cyan)}
-  .exec-list .qty-col,.exec-list .right{display:none}
+  /* execute panel — card grid */
+  .exec-card-area{flex:1 1 auto;overflow:hidden;padding:8px;min-height:0}
+  .exec-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}
+  .ec{background:var(--panel-2);border:1px solid var(--line);border-radius:6px;overflow:hidden;position:relative;cursor:pointer;transition:border-color .15s,background .15s;user-select:none}
+  .ec:hover{background:rgba(255,255,255,.012)}
+  .ec.done{border-color:rgba(34,197,94,.4);background:linear-gradient(90deg,rgba(34,197,94,.07),var(--panel-2) 55%)}
+  .ec::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px}
+  .ec.plan::before{background:var(--purple-dim)}
+  .ec.cond::before{background:var(--cyan-dim)}
+  .ec.done::before{background:var(--green-dim)}
+  .ec-top{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 9px 8px 12px;border-bottom:1px solid var(--line)}
+  .ec-left{display:flex;align-items:center;gap:8px;min-width:0}
+  .ec-chk{width:15px;height:15px;border:1.5px solid var(--line-2);border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;color:transparent;flex-shrink:0;transition:all .12s}
+  .ec.done .ec-chk{border-color:var(--green-dim);background:rgba(34,197,94,.12);color:var(--green)}
+  .ec-ticker{font-size:12.5px;font-weight:800;letter-spacing:.03em;color:var(--text);white-space:nowrap}
+  .ec.done .ec-ticker{color:var(--green)}
+  .ec-badges{display:flex;align-items:stretch;gap:4px;flex-shrink:0}
+  .ec-badge{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;padding:3px 7px;border-radius:4px;min-width:52px}
+  .ec-badge .bl{font-size:7px;letter-spacing:.16em;font-weight:700;text-transform:uppercase;opacity:.8;white-space:nowrap}
+  .ec-badge .bp{
+    font-size:12px;
+    font-weight:700;
+    font-variant-numeric:tabular-nums;
+    font-family:'JetBrains Mono',ui-monospace,monospace;
+    line-height:1;
+    display:inline-block;
+    transform:scale(1.12);
+    transform-origin:center;
+  }
+  .ec-badge.pdl{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.26)}
+  .ec-badge.pdl .bl,.ec-badge.pdl .bp{color:var(--red)}
+  .ec-badge.pdh{background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.3)}
+  .ec-badge.pdh .bl,.ec-badge.pdh .bp{color:var(--green)}
+  .ec-bot{display:grid;grid-template-columns:1fr 1px 1fr 1px 1fr 1px 1fr;align-items:stretch}
+  .ec-div{background:var(--line)}
+  .ec-stat{display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 3px}
+  .ec-stat .sl{font-size:7.5px;letter-spacing:.16em;color:var(--text-faint);text-transform:uppercase;font-weight:600}
+  .ec-stat .sv{
+    font-size:12px;
+    font-weight:700;
+    font-variant-numeric:tabular-nums;
+    font-family:'JetBrains Mono',ui-monospace,monospace;
+    line-height:1;
+    display:inline-block;
+    transform:scale(1.12);
+    transform-origin:center;
+  }
+  .ec-stat .sv.qty{color:var(--amber)}
+  .ec-stat .sv.buy{color:var(--green)}
+  .ec-stat .sv.stop{color:var(--red)}
+  .ec-stat .sv.risk{
+    color:var(--cyan);
+    font-size:10.5px;
+    transform:scale(1.12);
+  }
+  .exec-foot{padding:6px 14px;border-top:1px solid var(--line);display:flex;justify-content:space-between;font-size:11px;color:var(--text-faint);letter-spacing:.02em;flex-shrink:0}
+  .exec-foot .ef-leg{display:flex;gap:10px;align-items:center}
+  .exec-foot .efl{display:flex;align-items:center;gap:4px;font-size:10px}
+  .exec-foot .efl-dot{width:7px;height:7px;border-radius:2px}
+  .exec-foot .efl-dot.plan{background:var(--purple-dim)}
+  .exec-foot .efl-dot.cond{background:var(--cyan-dim)}
+  .exec-foot .efl-dot.done{background:var(--green-dim)}
 
   /* qty + sl columns in protect */
   .prot-list .pos{grid-template-columns:18px 126px minmax(298px,1fr) 46px 52px 84px;padding:3px 8px 3px 7px;min-height:36px}
@@ -689,13 +715,7 @@
           <!-- COL 2: SECTORS (vertical pills) -->
           <div>
             <div class="col-label"><span class="dot" style="background:var(--green-dim)"></span> Sectors with the wind</div>
-            <div class="chips" style="flex-direction:column;flex-wrap:nowrap">
-              <span class="chip hot">PSU Banks <span class="strength"><i></i><i></i><i></i></span></span>
-              <span class="chip hot">Defence <span class="strength"><i></i><i></i><i></i></span></span>
-              <span class="chip warm">Power <span class="strength"><i></i><i></i><i></i></span></span>
-              <span class="chip warm">Cap Goods <span class="strength"><i></i><i></i><i></i></span></span>
-              <span class="chip cool">IT <span class="strength"><i></i><i></i><i></i></span></span>
-            </div>
+            <div class="chips sectors-chips" style="flex-direction:column;flex-wrap:nowrap"></div>
           </div>
 
           <!-- COL 3: STOCKS STANDING OUT -->
@@ -857,111 +877,23 @@
 
         <!-- EXECUTE -->
         <div class="block">
-          <div class="pe-head exec-head">
+          <div class="pe-head" style="display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid var(--line)">
             <span class="sec-num mono">3</span>
             <span class="sec-title">Execute</span>
-            <div class="track-hdr"><span class="pdl">PDL</span> <span class="sl">SL</span> <span class="cmp">CMP</span> <span class="buy">BUY</span></div>
-            <span class="exec-hdr qty-hdr">Qty</span>
-            <span class="exec-hdr buy-hdr">Buy</span>
-            <span class="exec-hdr sl-hdr">SL</span>
-            <span class="exec-hdr risk-hdr">Risk</span>
+            <span class="sec-meta" id="exec-meta" style="margin-left:auto">7 orders · 0 executed · PDH break entries</span>
           </div>
-          <div class="pe-list exec-list">
-            <div class="pos plan">
-              <span class="chk"></span>
-              <div>
-                <div class="l1">SBIN <span class="ltp-inline dn">738.15 â†“</span> <span class="pill plan">Plan</span></div>
-                <div class="l2">Risk Rs 2,400 &nbsp;·&nbsp; 1.5R target 750</div>
-              </div>
-              <div class="qty-col"><input class="q-input" value="120" /></div>
-              <div class="right">
-                <span class="price">742.50</span>
-                <span style="font-size:9px;color:var(--text-faint);letter-spacing:.06em;">PDH</span>
-              </div>
+          <div class="exec-card-area">
+            <div class="exec-grid" id="exec-grid"></div>
+          </div>
+          <div class="exec-foot">
+            <div id="exec-foot-stats" style="display:flex;gap:16px;align-items:center;font-size:11px">
+              <span style="color:var(--text-faint)">Total Risk <span id="exec-total-risk" style="color:var(--red);font-weight:600">Rs 0</span></span>
+              <span style="color:var(--text-faint)">Deployed <span id="exec-deployed" style="color:var(--cyan);font-weight:600">Rs 0</span></span>
             </div>
-            <div class="pos cond">
-              <span class="chk"></span>
-              <div>
-                <div class="l1">HDFCBANK <span class="ltp-inline dn">1,594.20 â†“</span> <span class="pill cond">Cond</span></div>
-                <div class="l2">only if Bank Nifty breadth &gt; 60%</div>
-              </div>
-              <div class="qty-col"><input class="q-input" value="50" /></div>
-              <div class="right">
-                <span class="price">1,602.10</span>
-                <span style="font-size:9px;color:var(--text-faint);letter-spacing:.06em;">PDH</span>
-              </div>
-            </div>
-            <div class="pos plan">
-              <span class="chk"></span>
-              <div>
-                <div class="l1">MCX <span class="ltp-inline up">2,968.30 â†‘</span> <span class="pill plan">Plan</span></div>
-                <div class="l2">risk Rs 1,500 &nbsp;·&nbsp; 1.6R target 3,170</div>
-              </div>
-              <div class="qty-col"><input class="q-input" value="40" /></div>
-              <div class="right">
-                <span class="price">2,829.00</span>
-                <span style="font-size:9px;color:var(--text-faint);letter-spacing:.06em;">PDH</span>
-              </div>
-            </div>
-            <div class="pos cond">
-              <span class="chk"></span>
-              <div>
-                <div class="l1">CGPOWER <span class="ltp-inline up">825.60 â†‘</span> <span class="pill cond">Cond</span></div>
-                <div class="l2">power leader &nbsp;·&nbsp; risk Rs 4,000</div>
-              </div>
-              <div class="qty-col"><input class="q-input" value="140" /></div>
-              <div class="right">
-                <span class="price">817.90</span>
-                <span style="font-size:9px;color:var(--text-faint);letter-spacing:.06em;">PDH</span>
-              </div>
-            </div>
-            <div class="pos plan">
-              <span class="chk"></span>
-              <div>
-                <div class="l1">CPPLUS <span class="ltp-inline up">2,338.40 â†‘</span> <span class="pill plan">Plan</span></div>
-                <div class="l2">fresh carry &nbsp;·&nbsp; risk Rs 3,000</div>
-              </div>
-              <div class="qty-col"><input class="q-input" value="96" /></div>
-              <div class="right">
-                <span class="price">2,291.90</span>
-                <span style="font-size:9px;color:var(--text-faint);letter-spacing:.06em;">PDH</span>
-              </div>
-            </div>
-            <div class="pos plan">
-              <span class="chk"></span>
-              <div>
-                <div class="l1">BEL <span class="ltp-inline dn">320.85 â†“</span> <span class="pill plan">Plan</span></div>
-                <div class="l2">defence leader &nbsp;·&nbsp; risk Rs 2,000</div>
-              </div>
-              <div class="qty-col"><input class="q-input" value="80" /></div>
-              <div class="right">
-                <span class="price">324.50</span>
-                <span style="font-size:9px;color:var(--text-faint);letter-spacing:.06em;">PDH</span>
-              </div>
-            </div>
-            <div class="pos cond">
-              <span class="chk"></span>
-              <div>
-                <div class="l1">PFC <span class="ltp-inline dn">508.20 â†“</span> <span class="pill cond">Cond</span></div>
-                <div class="l2">PSU breadth &gt; 70% &nbsp;·&nbsp; risk Rs 1,800</div>
-              </div>
-              <div class="qty-col"><input class="q-input" value="60" /></div>
-              <div class="right">
-                <span class="price">512.40</span>
-                <span style="font-size:9px;color:var(--text-faint);letter-spacing:.06em;">PDH</span>
-              </div>
-            </div>
-            <div class="pos plan">
-              <span class="chk"></span>
-              <div>
-                <div class="l1">RVNL <span class="ltp-inline dn">481.60 â†“</span> <span class="pill plan">Plan</span></div>
-                <div class="l2">railway PSU &nbsp;·&nbsp; risk Rs 1,200</div>
-              </div>
-              <div class="qty-col"><input class="q-input" value="50" /></div>
-              <div class="right">
-                <span class="price">488.00</span>
-                <span style="font-size:9px;color:var(--text-faint);letter-spacing:.06em;">PDH</span>
-              </div>
+            <div class="ef-leg">
+              <div class="efl"><div class="efl-dot plan"></div><span style="color:var(--text-faint)">Plan</span></div>
+              <div class="efl"><div class="efl-dot cond"></div><span style="color:var(--text-faint)">Cond</span></div>
+              <div class="efl"><div class="efl-dot done"></div><span style="color:var(--text-faint)">Done</span></div>
             </div>
           </div>
 
@@ -1108,49 +1040,7 @@
     `;
   });
 
-  // ----- Rebuild execute rows to match the target screenshot -----
-  const execList = document.querySelector('.exec-list');
-  const execMeta = [
-    { ticker:'SBIN',     status:'plan', pill:'PLAN', pdl:'728',  slScale:'736',  cmpScale:'738',  buyScale:'742',  qty:'120', buy:'742.50',  sl:'736.00',  risk:'Rs 2400', pdlPos:'16%', slPos:'34%', cmpPos:'52%', buyPos:'74%' },
-    { ticker:'MCX',      status:'plan', pill:'PLAN', pdl:'2791', slScale:'2801', cmpScale:'2829', buyScale:'2968', qty:'40',  buy:'2,829.00', sl:'2,791.50', risk:'Rs 1500', pdlPos:'16%', slPos:'34%', cmpPos:'53%', buyPos:'80%' },
-    { ticker:'CGPOWER',  status:'cond', pill:'COND', pdl:'804',  slScale:'810',  cmpScale:'817',  buyScale:'825',  qty:'140', buy:'817.90',  sl:'804.20',  risk:'Rs 4000', pdlPos:'16%', slPos:'34%', cmpPos:'55%', buyPos:'79%' },
-    { ticker:'BEL',      status:'plan', pill:'PLAN', pdl:'318',  slScale:'320',  cmpScale:'324',  buyScale:'324',  qty:'80',  buy:'324.50',  sl:'318.60',  risk:'Rs 2000', pdlPos:'16%', slPos:'34%', cmpPos:'48%', buyPos:'68%' },
-    { ticker:'HDFCBANK', status:'cond', pill:'COND', pdl:'1581', slScale:'1588', cmpScale:'1594', buyScale:'1602', qty:'50',  buy:'1,602.10', sl:'1,581.00', risk:'Rs 1600', pdlPos:'16%', slPos:'34%', cmpPos:'56%', buyPos:'80%' },
-    { ticker:'PFC',      status:'cond', pill:'COND', pdl:'503',  slScale:'506',  cmpScale:'508',  buyScale:'512',  qty:'60',  buy:'512.40',  sl:'503.20',  risk:'Rs 1800', pdlPos:'16%', slPos:'34%', cmpPos:'51%', buyPos:'72%' },
-    { ticker:'RVNL',     status:'plan', pill:'PLAN', pdl:'479',  slScale:'481',  cmpScale:'482',  buyScale:'488',  qty:'50',  buy:'488.00',  sl:'479.10',  risk:'Rs 1200', pdlPos:'16%', slPos:'34%', cmpPos:'49%', buyPos:'68%' },
-  ];
-
-  execList.innerHTML = execMeta.map(meta => `
-    <div class="pos ${meta.status}" style="--pdl:${meta.pdlPos};--sl:${meta.slPos};--cmp:${meta.cmpPos};--buy:${meta.buyPos}">
-      <span class="chk"></span>
-      <div class="exec-left">
-        <span class="ticker">${meta.ticker}</span>
-      </div>
-      <div class="exec-mid">
-        <div class="exec-bar">
-          <span class="exec-marker pdl"></span>
-          <span class="exec-marker sl"></span>
-          <span class="exec-marker cmp"></span>
-          <span class="exec-marker buy"></span>
-        </div>
-        <div class="exec-scale">
-          <span class="pdl">${meta.pdl}</span>
-          <span class="sl">${meta.slScale}</span>
-          <span class="cmp">${meta.cmpScale}</span>
-          <span class="buy">${meta.buyScale}</span>
-        </div>
-      </div>
-      <div class="exec-qty">${meta.qty}</div>
-      <div class="exec-buy">${meta.buy}</div>
-      <div class="exec-sl">${meta.sl}</div>
-      <div class="exec-risk">${meta.risk}</div>
-    </div>
-  `).join('');
-
-  // ----- Position checkboxes -----
-  document.querySelectorAll('.pos .chk').forEach(c => {
-    c.addEventListener('click', () => c.classList.toggle('on'));
-  });
+  // Execute panel is rendered later from live briefing data.
 
   // ----- Win card check toggles when desc has content -----
   document.querySelectorAll('.win-card').forEach(card => {
@@ -1422,10 +1312,10 @@
       protectChecks[key] = row.classList.contains('executed') || row.querySelector('.chk')?.classList.contains('on');
     });
     const executeChecks = {};
-    document.querySelectorAll('.exec-list .pos').forEach(row => {
+    document.querySelectorAll('#exec-grid .ec').forEach(row => {
       const key = normalizeSymbol(row.dataset.execKey || row.dataset.execSymbol || '');
       if (!key) return;
-      executeChecks[key] = row.classList.contains('executed') || row.querySelector('.chk')?.classList.contains('on');
+      executeChecks[key] = row.classList.contains('done');
     });
     return {
       gamePlan: String(gamePlan ?? '').trim(),
@@ -1524,6 +1414,45 @@
     if (/ev|battery|energy|auto/.test(v)) return 'EV';
     if (/metal|steel|mining/.test(v)) return 'Metals';
     return 'Core';
+  }
+
+  function sectorLabel(text) {
+    const raw = String(text || '').trim();
+    if (!raw) return '';
+    const normalized = raw.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+    const lookup = {
+      'AQUACULTURE': 'Aquaculture',
+      'DATACENTRE': 'Data Centre',
+      'DEFENSE': 'Defence',
+      'POWER EQUIPMENT': 'Power Equipment',
+      'STEEL PIPES': 'Steel Pipes',
+    };
+    const upper = normalized.toUpperCase();
+    if (lookup[upper]) return lookup[upper];
+    return normalized
+      .toLowerCase()
+      .replace(/\b\w/g, ch => ch.toUpperCase());
+  }
+
+  function sectorChipClass(index) {
+    return index < 3 ? 'gold' : 'rest';
+  }
+
+  function renderSectorChips(items) {
+    const rows = Array.isArray(items) ? items.slice() : [];
+    const sorted = rows.sort((a, b) => {
+      const as = n(a?.sector_score);
+      const bs = n(b?.sector_score);
+      if (bs !== as) return bs - as;
+      return sectorLabel(a?.sector || '').localeCompare(sectorLabel(b?.sector || ''));
+    });
+    return sorted.slice(0, 5).map((item, idx) => {
+      const raw = String(item?.sector || item || '').trim();
+      if (!raw) return '';
+      const label = sectorLabel(raw);
+      const barsCount = idx < 3 ? 3 : 2;
+      return `<span class="chip ${sectorChipClass(idx)}">${esc(label)} ${bars(barsCount)}</span>`;
+    }).filter(Boolean).join('');
   }
 
   function statusChip(status) {
@@ -1941,40 +1870,88 @@
       </div>`;
   }
 
-  function execRow(pos, checked = false) {
+  function execCard(pos, checked = false) {
     const status = String(pos._status || 'plan').toLowerCase() === 'cond' ? 'cond' : 'plan';
-    const pdl = n(pos.planSL || pos.daySL || pos._currentSL) * 0.98;
-    const sl = n(pos.planSL || pos.daySL || pos._currentSL);
-    const cmp = n(pos.cmp);
-    const buy = n(pos.planEntry || pos.actualEntry || pos.cmp);
-        const qtyVal = pos._rem != null ? pos._rem : (pos.actualQty != null ? pos.actualQty : (pos._qty || pos._predQty || 0));
-    const riskAmt = n(pos.riskAmount || pos._planRisk);
+    const slRaw = pos.planSL;
+    const buyRaw = pos.planEntry;
+    const qtyRaw = pos._predQty;
+    const riskRaw = pos._planRisk;
+    const pdlRaw = pos.prev_day_low;
+    const pdhRaw = pos.prev_day_high;
+    const sl = n(slRaw);
+    const buy = n(buyRaw);
+    const qtyVal = n(qtyRaw);
+    const riskAmt = n(riskRaw);
+    const pdl = n(pdlRaw);
+    const pdh = n(pdhRaw);
+    const pdlText = pdl > 0 ? fmt0(pdl) : '-';
+    const pdhText = pdh > 0 ? fmt0(pdh) : '-';
+    const qtyText = qtyVal > 0 ? qty(qtyVal) : '-';
+    const buyText = buy > 0 ? price(buy) : '-';
+    const slText = sl > 0 ? price(sl) : '-';
+    const riskText = riskAmt > 0 ? money(riskAmt) : '-';
     const key = execKey(pos);
-    const rowClass = checked ? ' executed' : '';
+    const doneCls = checked ? ' done' : '';
     return `
-      <div class="pos ${status}${rowClass}" data-exec-key="${esc(key)}" data-exec-symbol="${esc(pos.symbol || '')}" style="--pdl:16%;--sl:34%;--cmp:54%;--buy:80%">
-        <span class="chk${checked ? ' on' : ''}" role="checkbox" aria-checked="${checked ? 'true' : 'false'}" tabindex="0" title="Mark executed">${checked ? '✓' : ''}</span>
-        <div class="exec-left"><span class="ticker">${esc(pos.symbol || 'SYMBOL')}</span></div>
-        <div class="exec-mid">
-          <div class="exec-bar">
-            <span class="exec-marker pdl"></span>
-            <span class="exec-marker sl"></span>
-            <span class="exec-marker cmp"></span>
-            <span class="exec-marker buy"></span>
+      <div class="ec ${status}${doneCls}" onclick="toggleExecCard(this)" data-exec-key="${esc(key)}" data-risk="${riskAmt}">
+        <div class="ec-top">
+          <div class="ec-left">
+            <div class="ec-chk">${checked ? '✓' : ''}</div>
+            <div class="ec-ticker">${esc(pos.symbol || 'SYMBOL')}</div>
           </div>
-          <div class="exec-scale">
-            <span class="pdl">${fmt0(pdl)}</span>
-            <span class="sl">${fmt0(sl)}</span>
-            <span class="cmp">${fmt0(cmp)}</span>
-            <span class="buy">${fmt0(buy)}</span>
+          <div class="ec-badges">
+            <div class="ec-badge pdl"><span class="bl">PDL</span><span class="bp">${pdlText}</span></div>
+            <div class="ec-badge pdh"><span class="bl">PDH</span><span class="bp">${pdhText}</span></div>
           </div>
         </div>
-        <div class="exec-qty">${qty(qtyVal)}</div>
-        <div class="exec-buy">${price(buy)}</div>
-        <div class="exec-sl">${price(sl)}</div>
-        <div class="exec-risk">${money(riskAmt)}</div>
+        <div class="ec-bot">
+          <div class="ec-stat"><span class="sl">Qty</span><span class="sv qty">${qtyText}</span></div>
+          <div class="ec-div"></div>
+          <div class="ec-stat"><span class="sl">Entry</span><span class="sv buy">${buyText}</span></div>
+          <div class="ec-div"></div>
+          <div class="ec-stat"><span class="sl">Stop</span><span class="sv stop">${slText}</span></div>
+          <div class="ec-div"></div>
+          <div class="ec-stat"><span class="sl">Risk</span><span class="sv risk">${riskText}</span></div>
+        </div>
       </div>`;
   }
+
+  function updateExecSummary() {
+    const grid = document.getElementById('exec-grid');
+    const meta = document.getElementById('exec-meta');
+    const totalRiskNode = document.getElementById('exec-total-risk');
+    const deployed = document.getElementById('exec-deployed');
+    if (!grid) return;
+    const cards = Array.from(grid.querySelectorAll('.ec'));
+    const done = cards.filter(card => card.classList.contains('done'));
+    if (meta) meta.textContent = `${cards.length} orders · ${done.length} executed · PDH entries`;
+    if (totalRiskNode) {
+      const totalRisk = cards.reduce((sum, card) => sum + n(card.dataset.risk), 0);
+      totalRiskNode.textContent = money(totalRisk);
+    }
+    if (deployed) {
+      const totalRisk = done.reduce((sum, card) => sum + n(card.dataset.risk), 0);
+      deployed.textContent = money(totalRisk);
+    }
+  }
+
+  window.toggleExecCard = function(card) {
+    const chk = card.querySelector('.ec-chk');
+    const on = card.classList.toggle('done');
+    if (chk) chk.textContent = on ? '✓' : '';
+    const key = normalizeSymbol(card.dataset.execKey || card.querySelector('.ec-ticker')?.textContent || '');
+    if (!key) {
+      updateExecSummary();
+      return;
+    }
+    const base = currentDay?.briefing && typeof currentDay.briefing === 'object'
+      ? normalizeBriefing(currentDay.briefing)
+      : briefingDefaults([]);
+    base.executeChecks[key] = on;
+    if (currentDay && typeof currentDay === 'object') currentDay.briefing = base;
+    updateExecSummary();
+    scheduleBriefingSave();
+  };
 
   function fmt0(v) {
     return nf0.format(Math.round(n(v)));
@@ -1998,13 +1975,16 @@
       positions.filter(pos => n(pos.actualQty) <= 0 && n(pos.coreQty) <= 0),
       7
     );
+    const sectorSummary = currentDay?.sector_summary && typeof currentDay.sector_summary === 'object'
+      ? currentDay.sector_summary
+      : null;
     const briefing = currentDay?.briefing && typeof currentDay.briefing === 'object'
       ? normalizeBriefing(currentDay.briefing)
       : briefingDefaults(sorted);
     const protectChecks = briefing.protectChecks || {};
     const execChecks = briefing.executeChecks || {};
     const prot = document.querySelector('.prot-list');
-    const exec = document.querySelector('.exec-list');
+    const exec = document.querySelector('#exec-grid');
     if (prot) {
       prot.innerHTML = protectRows.map(pos => {
         const key = execKey(pos);
@@ -2014,8 +1994,14 @@
     }
     if (exec) {
       exec.innerHTML = plannedOnly.length
-        ? plannedOnly.map(pos => execRow(pos, !!execChecks[execKey(pos)])).join('')
+        ? plannedOnly.map(pos => execCard(pos, !!execChecks[execKey(pos)])).join('')
         : `<div class="briefing-empty">No planned positions without core qty.</div>`;
+      updateExecSummary();
+    }
+
+    const chips = document.querySelector('.sectors-chips');
+    if (chips) {
+      chips.innerHTML = renderSectorChips(sectorSummary?.items || []);
     }
 
     const selectAll = document.querySelector('.protect-all-btn');
@@ -2086,34 +2072,6 @@
       });
     }
 
-    document.querySelectorAll('.exec-list .pos .chk').forEach(c => {
-      if (c.dataset.bound) return;
-      c.dataset.bound = '1';
-      const toggle = () => {
-        const row = c.closest('.pos');
-        if (!row) return;
-        const key = normalizeSymbol(row.dataset.execKey || row.dataset.execSymbol || '');
-        if (!key) return;
-        const checked = !c.classList.contains('on');
-        c.classList.toggle('on', checked);
-        c.textContent = checked ? '✓' : '';
-        c.setAttribute('aria-checked', checked ? 'true' : 'false');
-        row.classList.toggle('executed', checked);
-        const base = currentDay?.briefing && typeof currentDay.briefing === 'object'
-          ? normalizeBriefing(currentDay.briefing)
-          : briefingDefaults([]);
-        base.executeChecks[key] = checked;
-        if (currentDay && typeof currentDay === 'object') currentDay.briefing = base;
-        scheduleBriefingSave();
-      };
-      c.addEventListener('click', toggle);
-      c.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          toggle();
-        }
-      });
-    });
   }
 
   function renderClosing() {
@@ -2164,11 +2122,14 @@
     const sorted = topRows(positions, 5);
     const hasSavedBriefing = currentDay?.briefing && typeof currentDay.briefing === 'object' && Object.keys(currentDay.briefing).length > 0;
     const briefing = hasSavedBriefing ? normalizeBriefing(currentDay.briefing) : briefingDefaults(sorted);
+    const sectorSummary = currentDay?.sector_summary && typeof currentDay.sector_summary === 'object'
+      ? currentDay.sector_summary
+      : null;
     const textarea = document.querySelector('.gameplan textarea.field');
     if (textarea) textarea.value = briefing.gamePlan || planText(sorted);
-    const chips = document.querySelector('.chips');
+    const chips = document.querySelector('.sectors-chips') || document.querySelector('.chips');
     if (chips) {
-      chips.innerHTML = themeCounts(sorted).slice(0, 5).map(([theme, count]) => `<span class="chip ${theme === 'PSU Banks' || theme === 'Defence' ? 'hot' : theme === 'Power' || theme === 'Cap Goods' ? 'warm' : 'cool'}">${esc(theme)} ${bars(count)}</span>`).join('');
+      chips.innerHTML = renderSectorChips(sectorSummary?.items || []);
     }
     const watch = document.querySelector('.watch-list');
     if (watch) {

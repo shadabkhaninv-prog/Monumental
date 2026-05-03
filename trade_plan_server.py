@@ -320,6 +320,48 @@ class BhavRepository:
         except Exception:
             return []
 
+    def load_sector_summary(self, as_of_date: date) -> Dict[str, object]:
+        target_text = as_of_date.isoformat()
+        result: Dict[str, object] = {
+            "as_of": target_text,
+            "source_date": None,
+            "items": [],
+        }
+
+        def load(cursor):
+            cursor.execute(
+                """
+                SELECT TRIM(sector) AS sector, sector_score, run_date
+                FROM stock_rating_sector_summary
+                WHERE run_date = (
+                    SELECT MAX(run_date)
+                    FROM stock_rating_sector_summary
+                    WHERE run_date <= %s
+                )
+                ORDER BY sector_score DESC, sector ASC
+                """,
+                (target_text,),
+            )
+            rows = cursor.fetchall()
+            if not rows:
+                return result
+            source_date = rows[0][2]
+            result["source_date"] = source_date.isoformat() if source_date else None
+            result["items"] = [
+                {
+                    "sector": str(sector or "").strip(),
+                    "sector_score": float(score) if score is not None else None,
+                }
+                for sector, score, _run_date in rows
+                if str(sector or "").strip()
+            ]
+            return result
+
+        try:
+            return self._with_retry_cursor(load, f"load sector summary for {target_text}")
+        except Exception:
+            return result
+
     def available_year_tables(self) -> List[int]:
         if self._year_tables is None:
             years: List[int] = []
@@ -415,6 +457,46 @@ class BhavRepository:
                     "symbol": normalize_symbol(actual_symbol),
                     "cmp": float(close_price) if close_price is not None else None,
                     "price_date": price_date.isoformat(),
+                    "table": f"bhav{year}",
+                }
+        return None
+
+    def lookup_previous_session_bar(self, symbol: str, trade_date: date) -> Optional[Dict[str, object]]:
+        normalized = normalize_symbol(symbol)
+        if not normalized:
+            return None
+
+        candidate_years = [year for year in self.available_year_tables() if year <= trade_date.year]
+        for year in candidate_years:
+            row = None
+
+            def lookup(cursor):
+                cursor.execute(
+                    f"""
+                    SELECT MKTDATE, HIGH, LOW, CLOSE
+                    FROM bhav{year}
+                    WHERE UPPER(SYMBOL) = %s
+                      AND MKTDATE < %s
+                    ORDER BY MKTDATE DESC
+                    LIMIT 1
+                    """,
+                    (normalized, trade_date),
+                )
+                return cursor.fetchone()
+
+            try:
+                row = self._with_retry_cursor(lookup, f"lookup_previous_session_bar symbol={normalized} table=bhav{year}")
+            except Exception as exc:
+                self._log_debug(f"lookup_previous_session_bar failed for {normalized} year={year}: {exc}")
+                continue
+            if row:
+                price_date, high_price, low_price, close_price = row
+                return {
+                    "symbol": normalize_symbol(symbol),
+                    "mktdate": price_date,
+                    "high": float(high_price) if high_price is not None else None,
+                    "low": float(low_price) if low_price is not None else None,
+                    "close": float(close_price) if close_price is not None else None,
                     "table": f"bhav{year}",
                 }
         return None
@@ -547,20 +629,7 @@ class TradePlanStore:
             pass
 
     def _trim_position_key(self, position: dict) -> str:
-        pid = str(position.get("id") or "").strip()
-        if pid:
-            return pid
-        return "|".join(
-            [
-                normalize_symbol(str(position.get("symbol") or "")),
-                str(position.get("entryDate") or ""),
-                str(position.get("actualEntry") or ""),
-                str(position.get("coreEntry") or ""),
-                str(position.get("tacticalEntry") or ""),
-                str(position.get("planSL") or ""),
-                str(position.get("trailOverride") or ""),
-            ]
-        )
+        return self._canonical_position_key(position)
 
     def _strip_legacy_trade_fields(self, position: Dict[str, object]) -> Dict[str, object]:
         if not isinstance(position, dict):
@@ -569,6 +638,29 @@ class TradePlanStore:
         for legacy_key in ("overnightEntry", "overnightQty", "overnightSL", "intraQty", "intraEntry", "intraSL", "intraRiskPct"):
             normalized.pop(legacy_key, None)
         return normalized
+
+    def _canonical_position_key(self, position: Dict[str, object], fallback_date: str = "") -> str:
+        if not isinstance(position, dict):
+            return ""
+        key = str(position.get("positionKey") or position.get("id") or "").strip()
+        if key:
+            return key
+        symbol = normalize_symbol(str(position.get("symbol") or ""))
+        entry_date = str(position.get("entryDate") or fallback_date or "").strip()[:10]
+        entry = self._entry_value(position)
+        if entry is not None and entry > 0:
+            return "|".join([symbol, entry_date, f"{entry:.2f}"])
+        return "|".join([symbol, entry_date])
+
+    def _ensure_position_identity(self, position: Dict[str, object], fallback_date: str = "") -> Dict[str, object]:
+        if not isinstance(position, dict):
+            return position
+        key = self._canonical_position_key(position, fallback_date)
+        if key:
+            position["positionKey"] = key
+            if not str(position.get("id") or "").strip():
+                position["id"] = key
+        return position
 
     def _parse_trim_date(self, value: object) -> Optional[date]:
         text = str(value or "").strip()
@@ -615,6 +707,7 @@ class TradePlanStore:
             if not isinstance(raw_position, dict):
                 continue
             position = copy.deepcopy(raw_position)
+            self._ensure_position_identity(position)
             pid = self._trim_position_key(position)
             trim_hints = hints.get(pid, {})
             trims = position.get("trims") if isinstance(position.get("trims"), list) else []
@@ -2882,10 +2975,7 @@ class TradePlanStore:
         return False
 
     def _live_position_key(self, position: Dict[str, object], fallback_date: str) -> str:
-        symbol = normalize_symbol(str(position.get("symbol", "")))
-        entry_date = str(position.get("entryDate") or fallback_date)
-        actual_entry = self._entry_value(position)
-        return f"live:{symbol}:{entry_date}:{actual_entry}"
+        return self._canonical_position_key(position, fallback_date)
 
     def _as_float(self, value: object) -> float:
         try:
@@ -2959,7 +3049,14 @@ class TradePlanStore:
             return merged
 
         lane_fields = [
+            "id",
+            "positionKey",
+            "symbol",
             "entryDate",
+            "planEntry",
+            "planSL",
+            "_predQty",
+            "_planRisk",
             "coreQty",
             "coreEntry",
             "coreSL",
@@ -2974,6 +3071,56 @@ class TradePlanStore:
         if has_lane:
             for field in lane_fields:
                 merged[field] = copy.deepcopy(existing.get(field))
+
+        existing_trims = existing.get("trims") if isinstance(existing.get("trims"), list) else None
+        merged_trims = merged.get("trims") if isinstance(merged.get("trims"), list) else None
+        if isinstance(existing_trims, list) and isinstance(merged_trims, list):
+            # Carry sold trim details forward so a later day cannot accidentally
+            # shrink the recorded qty for the same trim slot.
+            for idx, previous_trim in enumerate(existing_trims):
+                if idx >= len(merged_trims) or not isinstance(previous_trim, dict):
+                    continue
+                current_trim = merged_trims[idx]
+                if not isinstance(current_trim, dict):
+                    merged_trims[idx] = copy.deepcopy(previous_trim)
+                    continue
+                previous_done = bool(previous_trim.get("done"))
+                previous_sq = self._as_float(previous_trim.get("sq"))
+                current_sq = self._as_float(current_trim.get("sq"))
+                if previous_done and previous_sq > 0 and (not current_trim.get("done") or current_sq <= 0 or current_sq < previous_sq):
+                    for field in ("ap", "sq", "dt", "done"):
+                        current_trim[field] = copy.deepcopy(previous_trim.get(field))
+        self._ensure_position_identity(merged)
+        return merged
+
+    def _collect_prior_position_snapshots(self, plan_date: str) -> Dict[str, Dict[str, object]]:
+        prior_positions: Dict[str, Dict[str, object]] = {}
+        for item_date in self.list_plan_dates():
+            if item_date >= plan_date:
+                break
+            payload = self.load_plan(item_date)
+            for raw_position in payload.get("positions", []):
+                if self._entry_value(raw_position) is None:
+                    continue
+                position = copy.deepcopy(raw_position)
+                if not position.get("entryDate"):
+                    position["entryDate"] = item_date
+                key = self._live_position_key(position, item_date)
+                if not key:
+                    continue
+                prior_positions[key] = position
+        return prior_positions
+
+    def _fill_missing_position_fields(self, existing: Dict[str, object], incoming: Dict[str, object], fields: Sequence[str]) -> Dict[str, object]:
+        merged = copy.deepcopy(incoming)
+        if not isinstance(existing, dict):
+            return merged
+        for field in fields:
+            current = merged.get(field)
+            prior = existing.get(field)
+            if current in (None, "") and prior not in (None, ""):
+                merged[field] = copy.deepcopy(prior)
+        self._ensure_position_identity(merged)
         return merged
 
     def _collect_latest_positioned(self) -> List[Dict[str, object]]:
@@ -2994,6 +3141,9 @@ class TradePlanStore:
         target_dt = datetime.strptime(plan_date, "%Y-%m-%d").date()
         dates = [d for d in self.list_plan_dates() if d <= plan_date]
         settings = self.load_settings()
+
+        def previous_session_bar(symbol: str) -> Optional[Dict[str, object]]:
+            return repo.lookup_previous_session_bar(symbol, target_dt)
 
         open_positions: Dict[str, Dict[str, object]] = {}
         closed_keys: set[str] = set()
@@ -3038,6 +3188,17 @@ class TradePlanStore:
             key=lambda p: (str(p.get("entryDate") or plan_date), normalize_symbol(str(p.get("symbol", "")))),
         )
         day_positions = carried_positions + exited_today_positions + planning_for_day
+
+        for position in day_positions:
+            if not isinstance(position, dict):
+                continue
+            symbol = str(position.get("symbol", ""))
+            prev_bar = previous_session_bar(symbol)
+            if prev_bar:
+                position["prev_day_high"] = prev_bar.get("high")
+                position["prev_day_low"] = prev_bar.get("low")
+                position["prev_day_close"] = prev_bar.get("close")
+                position["prev_day_date"] = prev_bar.get("mktdate").isoformat() if prev_bar.get("mktdate") else ""
 
         exposure = 0.0
         for position in carried_positions:
@@ -3114,12 +3275,14 @@ class TradePlanStore:
             target_dt,
             target_dt + timedelta(days=3),
         ) if earnings_symbols else []
+        sector_summary = repo.load_sector_summary(target_dt)
 
         return {
             "ok": True,
             "date": plan_date,
             "positions": day_positions,
             "briefing": self.load_plan(plan_date).get("briefing", {}),
+            "sector_summary": sector_summary,
             "raw_path": str(self.plan_path(plan_date)),
             "open_positions_count": len(carried_positions),
             "exited_today_count": len(exited_today_positions),
@@ -3420,7 +3583,11 @@ class TradePlanStore:
         path = self.plan_path(plan_date)
         if not isinstance(payload, dict):
             payload = {"positions": []}
-        normalized_positions = [self._strip_legacy_trade_fields(position) for position in payload.get("positions", []) if isinstance(position, dict)]
+        normalized_positions = [
+            self._ensure_position_identity(self._strip_legacy_trade_fields(position), plan_date)
+            for position in payload.get("positions", [])
+            if isinstance(position, dict)
+        ]
         payload["positions"] = self._apply_trim_date_hints(self._dedupe_positions(normalized_positions))
         payload["date"] = plan_date
         payload["path"] = str(path)
@@ -3441,7 +3608,31 @@ class TradePlanStore:
 
     def save_plan(self, plan_date: str, positions: Sequence[dict]) -> Dict[str, object]:
         path = self.plan_path(plan_date)
-        normalized_positions = [self._strip_legacy_trade_fields(position) for position in positions if isinstance(position, dict)]
+        prior_positions = self._collect_prior_position_snapshots(plan_date)
+        carry_fields = [
+            "planEntry",
+            "planSL",
+            "_predQty",
+            "_planRisk",
+            "tacticalEntry",
+            "tacticalSL",
+            "tacticalQty",
+            "coreQty",
+            "coreEntry",
+            "coreSL",
+            "actualQty",
+            "actualEntry",
+            "daySL",
+        ]
+        normalized_positions = [
+            self._ensure_position_identity(self._strip_legacy_trade_fields(position), plan_date)
+            for position in positions
+            if isinstance(position, dict)
+        ]
+        normalized_positions = [
+            self._fill_missing_position_fields(prior_positions.get(self._trim_position_key(position), {}), position, carry_fields)
+            for position in normalized_positions
+        ]
         cleaned_positions = [position for position in self._apply_trim_date_hints(normalized_positions) if self._is_meaningful_position(position)]
         cleaned_positions = self._dedupe_positions(cleaned_positions)
         payload = {
@@ -3475,6 +3666,7 @@ class TradePlanStore:
         for position in positions:
             if not isinstance(position, dict):
                 continue
+            self._ensure_position_identity(position)
             pid = self._trim_position_key(position)
             deduped[pid] = position
         return list(deduped.values())

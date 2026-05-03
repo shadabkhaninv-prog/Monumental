@@ -1,6 +1,6 @@
 {
   "date": "2026-05-02",
-  "saved_at": "2026-05-02T13:47:49",
+  "saved_at": "2026-05-03T13:24:25",
   "positions": [
     {
       "id": "p17770254578501mo0",
@@ -129,7 +129,7 @@
       "_realPnl": 3817,
       "_openPnl": 5008,
       "_currentSL": 3539.8,
-      "_days": 5,
+      "_days": 6,
       "_beSug": true,
       "_status": "partial",
       "_avgPlanEntry": 3466.78,
@@ -146,7 +146,12 @@
       "_actualRps": null,
       "_availableRisk": 2072.5000000000023,
       "_actualRisk": 0,
-      "_avgSL": 3411.36
+      "_avgSL": 3411.36,
+      "positionKey": "p17770254578501mo0",
+      "prev_day_high": 3663,
+      "prev_day_low": 3568,
+      "prev_day_close": 3640.5,
+      "prev_day_date": "2026-04-30"
     },
     {
       "id": "p1777275356085ebju",
@@ -160,7 +165,7 @@
       "tacticalSL": null,
       "tacticalRiskPct": 30,
       "coreQty": 40,
-      "coreEntry": "2882.31",
+      "coreEntry": "2817.23",
       "coreSL": "2773.7",
       "riskAmount": 1500,
       "actualEntry": null,
@@ -208,8 +213,8 @@
           "sq": 12,
           "dt": "2026-04-27",
           "done": true,
-          "_sug": 2968.78,
-          "_pnl": -138
+          "_sug": 2901.75,
+          "_pnl": 643
         },
         {
           "pct": 10,
@@ -218,8 +223,8 @@
           "sq": 10,
           "dt": "",
           "done": true,
-          "_sug": 3084.07,
-          "_pnl": 6
+          "_sug": 3014.44,
+          "_pnl": 657
         },
         {
           "pct": 15,
@@ -228,7 +233,7 @@
           "sq": null,
           "dt": "",
           "done": false,
-          "_sug": 3314.66,
+          "_sug": 3239.81,
           "_pnl": null
         },
         {
@@ -238,7 +243,7 @@
           "sq": null,
           "dt": "",
           "done": false,
-          "_sug": 3602.89,
+          "_sug": 3521.54,
           "_pnl": null
         }
       ],
@@ -273,26 +278,31 @@
       "_avgPlanEntry": 2815,
       "_suggestedQty": 12,
       "_rem": 18,
-      "_realPnl": -132,
-      "_openPnl": 1605,
+      "_realPnl": 1300,
+      "_openPnl": 2777,
       "_currentSL": 2829,
-      "_days": 5,
+      "_days": 6,
       "_beSug": true,
       "_status": "partial",
       "_blendPct": 1.49,
       "_tacticalRps": null,
       "_tacticalQty": 0,
       "_tacticalRisk": 0,
-      "_avgTacticalEntry": 2882.31,
+      "_avgTacticalEntry": 2817.23,
       "_suggestedTacticalQty": 11,
       "_avgEntry": 2815,
       "_avgQty": 35,
-      "_execAvgEntry": 2882.31,
+      "_execAvgEntry": 2817.23,
       "_execAvgQty": 40,
       "_actualRps": null,
       "_availableRisk": 1500,
       "_actualRisk": 0,
-      "_avgSL": 2773
+      "_avgSL": 2773,
+      "positionKey": "p1777275356085ebju",
+      "prev_day_high": 2985.1,
+      "prev_day_low": 2925.7,
+      "prev_day_close": 2971.5,
+      "prev_day_date": "2026-04-30"
     },
     {
       "id": "p1777372385419pqw8",
@@ -351,11 +361,11 @@
           "pct": 10,
           "type": "trail",
           "ap": 827,
-          "sq": 83,
+          "sq": 257,
           "dt": "2026-04-29",
           "done": true,
           "_sug": 893.65,
-          "_pnl": -680
+          "_pnl": -2105
         },
         {
           "pct": 15,
@@ -409,11 +419,11 @@
       "_planRisk": 3983.3,
       "_avgPlanEntry": 834.78,
       "_suggestedQty": 131,
-      "_rem": 214,
-      "_realPnl": -1267,
-      "_openPnl": -4674,
+      "_rem": 40,
+      "_realPnl": -2692,
+      "_openPnl": -874,
       "_currentSL": 817.9,
-      "_days": 3,
+      "_days": 4,
       "_beSug": true,
       "_status": "partial",
       "_tacticalRps": 12.300000000000068,
@@ -428,7 +438,12 @@
       "_actualRps": 5.440000000000055,
       "_availableRisk": 1725.499999999984,
       "_actualRisk": 761.6,
-      "_avgSL": 823.47
+      "_avgSL": 823.47,
+      "positionKey": "p1777372385419pqw8",
+      "prev_day_high": 824.75,
+      "prev_day_low": 803.9,
+      "prev_day_close": 813.35,
+      "prev_day_date": "2026-04-30"
     },
     {
       "id": "p1777549077930piu7",
@@ -542,13 +557,18 @@
       "_realPnl": 0,
       "_openPnl": 65,
       "_currentSL": 1270.9,
-      "_days": 1,
-      "_beSug": false,
+      "_days": 2,
+      "_beSug": true,
       "_status": "active",
       "_actualRisk": 0,
       "_avgSL": 1270.9,
       "_actualRps": null,
-      "_availableRisk": 1877.8100000000006
+      "_availableRisk": 1877.8100000000006,
+      "positionKey": "p1777549077930piu7",
+      "prev_day_high": 1314,
+      "prev_day_low": 1271,
+      "prev_day_close": 1295.35,
+      "prev_day_date": "2026-04-30"
     }
   ]
 }

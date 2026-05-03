@@ -1,8 +1,8 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>TradePlan — Morning Briefing</title>
+<title>TradePlan - Morning Briefing</title>
 <style>
   :root{
     --bg:#070a10;
@@ -60,7 +60,15 @@
 
   /* ============ SIDEBAR ============ */
   .sidebar{border-right:1px solid var(--line);padding:14px 14px 12px;overflow:hidden;display:flex;flex-direction:column;gap:11px;min-height:0}
-  .side-head{font-size:10px;letter-spacing:.22em;color:var(--text-faint);text-transform:uppercase;font-weight:500}
+  .side-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .side-head .label{font-size:10px;letter-spacing:.22em;color:var(--text-faint);text-transform:uppercase;font-weight:500}
+  .month-nav{display:flex;align-items:center;gap:4px}
+  .month-nav button{
+    width:24px;height:24px;padding:0;border:1px solid var(--line-2);border-radius:4px;
+    background:rgba(45,212,191,.06);color:var(--cyan);font-size:14px;line-height:1;
+    cursor:pointer;transition:all .15s
+  }
+  .month-nav button:hover{border-color:var(--cyan-dim);background:rgba(45,212,191,.12)}
   .side-day{display:flex;align-items:baseline;gap:11px;border-bottom:1px solid var(--line);padding-bottom:10px}
   .side-day .d{font-size:32px;color:var(--text);letter-spacing:.01em;font-weight:300;line-height:1}
   .side-day .meta{font-size:11px;color:var(--text-dim);letter-spacing:.04em}
@@ -71,10 +79,12 @@
   .quick-cell .v{font-size:15px;color:var(--text);margin-top:2px;font-weight:500}
 
   .cal{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
-  .day{padding:7px 8px;border:1px solid var(--line);border-radius:5px;background:var(--panel);min-height:50px;display:flex;flex-direction:column;justify-content:space-between;gap:2px}
+  .day{padding:8px 9px;border:1px solid var(--line);border-radius:5px;background:var(--panel);min-height:68px;display:flex;flex-direction:column;justify-content:space-between;gap:3px}
+  button.day{appearance:none;width:100%;text-align:left;cursor:pointer;font:inherit}
+  button.day:hover{border-color:var(--line-3);background:rgba(255,255,255,.03)}
   .day .num{font-size:14px;color:var(--text);letter-spacing:.01em;font-weight:500;line-height:1}
-  .day .typ{font-size:9.5px;letter-spacing:.12em;color:var(--text-faint);text-transform:uppercase;font-weight:500}
-  .day .pl{font-size:10px;color:var(--text-faint);font-variant-numeric:tabular-nums;font-weight:500}
+  .day .typ{font-size:10.5px;letter-spacing:.12em;color:var(--text-faint);text-transform:uppercase;font-weight:500}
+  .day .pl{font-size:11.5px;color:var(--text-faint);font-variant-numeric:tabular-nums;font-weight:500}
   .day.win{border-color:rgba(34,197,94,.45);background:rgba(34,197,94,.06)}
   .day.win .typ{color:var(--green)}
   .day.win .pl{color:var(--green)}
@@ -84,25 +94,42 @@
   .day.plan{border-color:rgba(167,139,250,.45);background:rgba(167,139,250,.06)}
   .day.plan .typ{color:var(--purple)}
   .day.plan .pl{color:var(--purple)}
-  .day.today{outline:1.5px solid var(--cyan-dim);outline-offset:-2px;background:rgba(45,212,191,.05);border-color:transparent}
+  .day.today{outline:2px solid var(--cyan);outline-offset:-2px;background:rgba(45,212,191,.09);border-color:transparent;box-shadow:0 0 0 1px rgba(45,212,191,.18) inset}
   .day.today .typ{color:var(--cyan-dim)}
   .day.today .pl{color:var(--cyan)}
+  .day.today:hover{background:rgba(45,212,191,.07)}
 
   /* ----- MONTH SUMMARY ----- */
-  .month-summary{margin-top:auto;border:1px solid var(--line);border-radius:6px;background:var(--panel);padding:11px 12px}
-  .ms-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px}
-  .ms-title{font-size:10px;letter-spacing:.22em;color:var(--cyan-dim);text-transform:uppercase;font-weight:600}
-  .ms-month{font-size:11px;color:var(--text-dim);letter-spacing:.04em}
-  .ms-pnl{display:flex;align-items:baseline;gap:8px;padding:8px 0;border-bottom:1px solid var(--line)}
-  .ms-pnl .lbl{font-size:10px;letter-spacing:.16em;color:var(--text-faint);text-transform:uppercase;font-weight:500}
-  .ms-pnl .val{font-size:20px;color:var(--green);font-weight:600;letter-spacing:.01em;font-variant-numeric:tabular-nums;margin-left:auto}
-  .ms-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:9px}
-  .ms-cell{display:flex;flex-direction:column;gap:2px}
-  .ms-cell .l{font-size:9.5px;letter-spacing:.14em;color:var(--text-faint);text-transform:uppercase;font-weight:500}
-  .ms-cell .v{font-size:13px;color:var(--text);font-variant-numeric:tabular-nums;font-weight:500}
+  .sidebar-stack{margin-top:auto;display:flex;flex-direction:column;gap:9px}
+  .month-summary{margin-top:0;border:1px solid var(--line);border-radius:6px;background:var(--panel);padding:10px 11px 11px;min-height:168px}
+  .ms-head{display:flex;align-items:center;justify-content:flex-start;gap:8px;margin-bottom:8px}
+  .ms-title{font-size:10px;letter-spacing:.28em;color:var(--cyan-dim);text-transform:uppercase;font-weight:600}
+  .ms-month{display:none}
+  .ms-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0;margin-top:0;position:relative;align-content:start}
+  .ms-grid::before{content:"";position:absolute;left:50%;top:6px;bottom:6px;width:1px;background:var(--line)}
+  .ms-grid::after{content:"";position:absolute;left:8px;right:8px;top:50%;height:1px;background:var(--line)}
+  .ms-cell{display:flex;flex-direction:column;gap:4px;min-width:0;min-height:66px;padding:9px 12px 10px 10px;position:relative}
+  .ms-cell:nth-child(even){padding-left:14px;padding-right:10px}
+  .ms-cell:nth-child(odd){padding-right:14px}
+  .hs-ico{width:28px;height:28px;border-radius:999px;border:1px solid var(--line-2);display:inline-flex;align-items:center;justify-content:center;margin-bottom:9px;font-size:13px;line-height:1;background:rgba(255,255,255,.02)}
+  .hs-exp .hs-ico{color:var(--amber);box-shadow:0 0 0 1px rgba(245,158,11,.06) inset;background:rgba(245,158,11,.05)}
+  .hs-pos .hs-ico{color:var(--green);box-shadow:0 0 0 1px rgba(34,197,94,.06) inset;background:rgba(34,197,94,.04)}
+  .hs-win .hs-ico{color:var(--cyan);box-shadow:0 0 0 1px rgba(45,212,191,.06) inset;background:rgba(45,212,191,.04)}
+  .hs-open .hs-ico{color:var(--green);box-shadow:0 0 0 1px rgba(34,197,94,.06) inset;background:rgba(34,197,94,.04)}
+  .ms-cell .l{font-size:10px;letter-spacing:.2em;color:var(--text-faint);text-transform:uppercase;font-weight:500}
+  .ms-cell .v{font-size:11.5px;color:var(--text);font-variant-numeric:tabular-nums;font-weight:700;line-height:1.06;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ms-cell .v.am{color:var(--amber)}
   .ms-cell .v.gn{color:var(--green)}
   .ms-cell .v.cy{color:var(--cyan)}
-  .ms-cell .v.am{color:var(--amber)}
+  .earnings-box{margin-top:0;border:1px solid var(--line);border-radius:6px;background:rgba(10,16,31,.72);padding:9px 10px}
+  .earn-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+  .earn-title{font-size:10px;letter-spacing:.18em;color:var(--cyan-dim);text-transform:uppercase;font-weight:600}
+  .earn-note{font-size:10px;color:var(--text-faint);letter-spacing:.04em}
+  .earn-list{display:flex;flex-direction:column;gap:6px}
+  .earn-row{display:grid;grid-template-columns:78px 1fr;gap:8px;align-items:center;padding:6px 8px;border:1px solid var(--line);border-radius:5px;background:rgba(255,255,255,.015)}
+  .earn-row .sym{font-size:12px;font-weight:700;color:var(--text);letter-spacing:.04em}
+  .earn-row .meta{font-size:11px;color:var(--text-dim);letter-spacing:.03em;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
+  .earn-empty{padding:6px 8px;font-size:11px;color:var(--text-faint);letter-spacing:.02em}
 
   /* ============ MAIN ============ */
   .main{display:flex;flex-direction:column;padding:10px 18px 12px;gap:9px;overflow:hidden;min-height:0}
@@ -110,8 +137,12 @@
   /* sub-header */
   .subbar{display:flex;align-items:center;gap:14px;padding:2px 2px}
   .live{padding:4px 10px;border:1px solid var(--green-dim);color:var(--green);background:rgba(34,197,94,.07);border-radius:3px;font-size:10px;letter-spacing:.18em;font-weight:600;flex:0 0 auto}
-  .subbar .date{color:var(--text);font-size:14px;letter-spacing:.02em;font-weight:500;flex:0 0 auto}
+  .date-wrap{display:flex;align-items:center;gap:6px;flex:0 0 auto}
+  .date-btn{width:26px;height:26px;border:1px solid var(--line-2);border-radius:6px;background:var(--panel-2);color:var(--text-faint);font-size:16px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer;font-family:var(--mono)}
+  .date-btn:hover{border-color:var(--line-3);color:var(--text)}
+  .subbar .date{color:var(--text);font-size:14px;letter-spacing:.02em;font-weight:500;flex:0 0 auto;cursor:pointer;display:flex;align-items:center;gap:6px}
   .subbar .date .small{color:var(--text-dim);font-size:12px;margin-left:6px;font-weight:400}
+  .date-input{position:absolute;left:-9999px;opacity:0;width:1px;height:1px}
   .seglbl{font-size:10px;letter-spacing:.18em;color:var(--text-faint);text-transform:uppercase;font-weight:500;flex:0 0 auto}
   .seq{display:inline-flex;gap:3px;flex:0 0 auto}
   .seq i{width:22px;height:22px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;font-style:normal;letter-spacing:0}
@@ -149,22 +180,54 @@
   .field::placeholder{color:var(--text-faint);font-style:italic}
   textarea.field{resize:none;line-height:1.55;overflow:hidden}
 
-  /* ============ PLAN — REDESIGNED ============ */
+  /* ============ PLAN â€” REDESIGNED ============ */
   .plan{flex:0 0 auto}
-  .plan-body{padding:11px 14px;display:grid;grid-template-columns:1.25fr 0.65fr 1.35fr;gap:14px}
+  .plan-body{padding:11px 14px;display:grid;grid-template-columns:minmax(0,1.25fr) minmax(180px,0.52fr) minmax(0,1.48fr);gap:14px}
 
-  /* subtle vertical separator between plan columns — zero layout impact */
+  /* subtle vertical separator between plan columns â€” zero layout impact */
   .plan-body > div:not(:last-child){box-shadow:1px 0 0 0 var(--line-2)}
 
   .col-label{font-size:10px;letter-spacing:.18em;color:var(--text-faint);text-transform:uppercase;margin-bottom:7px;display:flex;align-items:center;gap:7px;font-weight:600}
   .col-label .dot{width:5px;height:5px;border-radius:50%;background:var(--cyan)}
   .col-label .meta{margin-left:auto;color:var(--text-faint);font-size:9px;letter-spacing:.05em;font-weight:400;text-transform:none}
 
-  /* game plan textarea — col 1 -- now bigger */
+  /* game plan textarea â€” col 1 -- now bigger */
   .gameplan{display:flex;flex-direction:column;min-height:0}
   .gameplan textarea.field{flex:1;font-size:12.5px;line-height:1.6;padding:10px 12px;min-height:80px}
+  .gameplan-banner{
+    display:none;
+    flex:1;
+    position:relative;
+    padding:10px 12px;
+    min-height:80px;
+    border:1px solid rgba(45,212,191,.2);
+    border-radius:4px;
+    background:linear-gradient(180deg,rgba(10,16,24,.98),rgba(8,12,18,.98));
+    color:var(--text);
+    white-space:pre-wrap;
+    line-height:1.75;
+    font-size:13px;
+    overflow:auto;
+    box-shadow:inset 0 0 0 1px rgba(45,212,191,.06),0 0 0 1px rgba(45,212,191,.03);
+  }
+  .gameplan-banner::before{
+    content:"";
+    position:absolute;
+    inset:0 auto 0 0;
+    width:3px;
+    border-radius:4px 0 0 4px;
+    background:linear-gradient(180deg,var(--cyan),var(--green));
+    opacity:.95;
+  }
+  .gameplan.locked .gameplan-banner{display:block}
+  .gameplan.locked textarea.field{
+    display:none;
+  }
+  .gameplan.locked .col-label .meta{color:var(--cyan);font-weight:600}
+  .gameplan.locked .col-label{color:var(--cyan)}
+  .gameplan.locked .field::placeholder{color:transparent}
 
-  /* aggression + timing — col 2 */
+  /* aggression + timing â€” col 2 */
   .dial-head{display:flex;justify-content:space-between;align-items:baseline;margin:0 0 6px}
   .dial-head .small{font-size:10px;letter-spacing:.14em;color:var(--text-faint);text-transform:uppercase;font-weight:500}
   .dial-val{font-size:12px;color:var(--cyan);letter-spacing:.03em;font-weight:500}
@@ -185,11 +248,16 @@
   .timing-cell.on .t-time{color:var(--cyan)}
   .timing-cell.on .t-label{color:var(--cyan-dim)}
 
-  /* chips — col 2 sectors: bigger rows to fill 5 slots */
+  /* chips â€” col 2 sectors: bigger rows to fill 5 slots */
   .chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
+  .chips.sectors-chips{width:100%}
   .chip{display:inline-flex;align-items:center;gap:6px;padding:7px 10px;border:1px solid var(--line-2);border-radius:13px;font-size:12.5px;color:var(--text-dim);background:var(--panel-2);font-weight:500;cursor:pointer;user-select:none}
   .chip .strength{display:inline-flex;gap:2px}
   .chip .strength i{width:3px;height:8px;background:var(--line-2);border-radius:1px;display:inline-block}
+  .chip.gold{border-color:rgba(245, 197, 66, .55);color:#ffd86b;background:rgba(245, 197, 66, .08)}
+  .chip.gold .strength i{background:#f5c542}
+  .chip.rest{border-color:rgba(45,212,191,.28);color:var(--cyan);background:rgba(45,212,191,.05)}
+  .chip.rest .strength i{background:var(--cyan-dim)}
   .chip.hot{border-color:rgba(34,197,94,.5);color:var(--green)}
   .chip.hot .strength i{background:var(--green-dim)}
   .chip.warm{border-color:rgba(245,158,11,.5);color:var(--amber)}
@@ -198,48 +266,105 @@
   .chip-add{border-style:dashed;color:var(--text-faint)}
   .chip-add:hover{color:var(--text-dim);border-color:var(--line-3)}
 
-  /* watchlist as inputs — col 3 stocks: bigger rows to match 5 slots */
-  .watch-list{display:flex;flex-direction:column;gap:5px;margin-top:5px}
-  .watch-row{display:grid;grid-template-columns:62px 1fr 60px;gap:6px;align-items:center}
-  .watch-row .field{padding:7px 9px;font-size:13px}
-  .watch-row .sym-input{font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--text)}
-  .watch-row .why-wrap{position:relative;display:flex;align-items:center;gap:6px}
-  .watch-row .why-wrap .field{padding-right:54px}
-  .watch-row .conv{position:absolute;right:8px;top:50%;transform:translateY(-50%);display:inline-flex;gap:2.5px;cursor:pointer}
-  .watch-row .conv i{width:5px;height:5px;border-radius:50%;background:var(--line-2);transition:background .15s;cursor:pointer}
-  .watch-row .conv i.on{background:var(--cyan);box-shadow:0 0 4px rgba(45,212,191,.5)}
-  .watch-row .lvl-input{font-variant-numeric:tabular-nums;color:var(--cyan);text-align:right;font-weight:500}
+  /* watchlist as inputs â€” col 3 stocks: bigger rows to match 5 slots */
+  .watch-list{display:flex;flex-direction:column;gap:6px;margin-top:5px;max-height:248px;overflow-y:auto;padding-right:2px}
+  .watch-row{display:grid;grid-template-columns:150px minmax(0,1fr);gap:8px;align-items:center}
+  .watch-row .field{padding:8px 10px;font-size:12.5px;min-height:36px}
+  .watch-row .sym-input{
+    font-family:"SF Mono",Consolas,monospace;
+    font-weight:800;
+    letter-spacing:.08em;
+    text-transform:uppercase;
+    color:#c8fbff;
+    font-size:11.75px;
+    min-width:0;
+    background:linear-gradient(180deg,rgba(10,24,36,.98),rgba(8,15,26,.98));
+    border-color:rgba(45,212,191,.22);
+    border-left:3px solid rgba(45,212,191,.45);
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.03);
+  }
+  .watch-row .sym-input::placeholder{color:rgba(125,185,197,.62);font-style:italic;letter-spacing:.1em}
+  .watch-row .sym-input:focus{border-color:rgba(45,212,191,.72);box-shadow:0 0 0 1px rgba(45,212,191,.12),inset 0 0 0 1px rgba(255,255,255,.03)}
+  .watch-row .why-wrap{position:relative;display:grid;grid-template-columns:minmax(0,1fr) 22px;gap:4px;align-items:center}
+  .watch-row .why-wrap .field{padding-right:10px;background:rgba(255,255,255,.015);border-color:rgba(52,66,90,.75)}
+  .watch-row .row-del{width:22px;height:22px;padding:0;border:1px solid var(--line-2);border-radius:4px;background:rgba(255,255,255,.02);color:var(--text-faint);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transition:all .15s;font-size:11px;line-height:1}
+  .watch-row .row-del:hover{border-color:var(--red-dim);color:var(--red);background:rgba(239,68,68,.08)}
+  .watch-add-btn{padding:2px 8px;border:1px solid var(--line-2);border-radius:999px;background:rgba(45,212,191,.08);color:var(--cyan);font-size:10px;letter-spacing:.08em;text-transform:uppercase;font-weight:700;cursor:pointer;transition:all .15s}
+  .watch-add-btn:hover{border-color:var(--cyan-dim);background:rgba(45,212,191,.14)}
   .watch-row.add .field{border-style:dashed;background:transparent}
 
   /* ============ MIDDLE ROW (PROTECT + EXECUTE) ============ */
   .middle{display:grid;grid-template-columns:1fr 1fr;gap:11px;flex:1 1 auto;min-height:0}
 
-  .pe-head{display:flex;align-items:center;gap:11px;padding:8px 14px;border-bottom:1px solid var(--line)}
+  .pe-head{position:relative;display:flex;align-items:center;gap:11px;padding:8px 44px 8px 14px;border-bottom:1px solid var(--line)}
   .pe-list{flex:1 1 auto;overflow:hidden;padding:5px 8px 4px;display:flex;flex-direction:column;gap:5px;min-height:0}
+  .pe-head .head-btn{
+    position:absolute;
+    right:14px;
+    top:50%;
+    transform:translateY(-50%);
+    margin-left:0;
+    width:22px;
+    height:22px;
+    padding:0;
+    border:1px solid var(--line-2);
+    border-radius:5px;
+    background:rgba(45,212,191,.08);
+    color:var(--cyan);
+    font-size:11px;
+    line-height:1;
+    letter-spacing:0;
+    text-transform:none;
+    font-weight:700;
+    cursor:pointer;
+    transition:all .15s;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    flex:0 0 auto;
+  }
+  .pe-head .head-btn:hover{border-color:var(--cyan-dim);background:rgba(45,212,191,.15)}
+  .pe-head .head-btn .ico{display:block;transform:translateY(-.5px)}
 
   .pos{display:grid;grid-template-columns:18px minmax(0,1fr) 92px 56px 90px;gap:8px;align-items:center;padding:6px 10px 6px 8px;border:1px solid #1a2332;border-radius:4px;background:var(--panel-2);position:relative;min-height:44px}
   .pos::before{content:"";position:absolute;left:0;top:5px;bottom:5px;width:3px;border-radius:3px;background:var(--line-2)}
   .pos.safe::before{background:var(--green-dim)}
+  .pos.bravo::before{background:var(--amber-dim)}
+  .pos.insane::before{background:var(--cyan-dim)}
   .pos.watch::before{background:var(--amber-dim)}
   .pos.hold::before{background:var(--purple-dim)}
   .pos.plan::before{background:var(--purple-dim)}
   .pos.cond::before{background:var(--cyan-dim)}
   .pos .chk{width:15px;height:15px;border:1px solid var(--line-2);border-radius:3px;display:inline-flex;align-items:center;justify-content:center;color:transparent;font-size:0;cursor:pointer;background:transparent}
-  .pos .chk.on{border-color:var(--green-dim);background:rgba(34,197,94,.06);box-shadow:inset 0 0 0 1px rgba(34,197,94,.08)}
-  .pos-left{display:flex;align-items:center;gap:8px;min-width:0}
+  .pos .chk.on{border-color:var(--green-dim);background:rgba(34,197,94,.06);box-shadow:inset 0 0 0 1px rgba(34,197,94,.08);color:var(--green);font-size:10px;font-weight:700}
+  .pos-left{display:flex;flex-direction:column;align-items:flex-start;gap:0;min-width:0;overflow:hidden}
   .pos-mid{display:flex;flex-direction:column;gap:1px;min-width:0}
-  .pos-top{display:flex;align-items:center;gap:8px;min-width:0}
+  .pos-top{display:flex;align-items:center;gap:8px;min-width:0;white-space:nowrap}
   .pos .ticker{font-size:12px;color:var(--text);font-weight:700;letter-spacing:.02em;line-height:1;white-space:nowrap}
   .pos .pill{display:inline-flex;align-items:center;justify-content:center;padding:2px 7px 1px;border-radius:4px;font-size:8px;letter-spacing:.14em;text-transform:uppercase;font-weight:700;line-height:1}
   .pill.safe{background:rgba(34,197,94,.14);color:var(--green)}
+  .pill.bravo{background:rgba(245,158,11,.16);color:var(--amber)}
+  .pill.insane{background:rgba(45,212,191,.18);color:var(--cyan)}
   .pill.watch{background:rgba(245,158,11,.14);color:var(--amber)}
   .pill.hold{background:rgba(167,139,250,.16);color:var(--purple)}
   .pill.plan{background:rgba(167,139,250,.16);color:var(--purple)}
   .pill.cond{background:rgba(45,212,191,.16);color:var(--cyan)}
-  .risk-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:8.5px;line-height:1;letter-spacing:.025em;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
-  .risk-meta .sl{color:var(--red)}
-  .risk-meta .buy{color:var(--text-faint)}
-  .risk-meta .cmp{color:var(--green)}
+  .risk-meta{
+    display:grid;
+    grid-template-columns:auto 1fr auto;
+    align-items:center;
+    gap:10px;
+    width:100%;
+    font-size:11.8px;
+    line-height:1;
+    letter-spacing:0;
+    font-weight:800;
+    font-variant-numeric:tabular-nums;
+    white-space:nowrap;
+  }
+  .risk-meta .sl{color:var(--red);text-shadow:0 0 6px rgba(255,90,90,.12)}
+  .risk-meta .buy{color:var(--text-dim);justify-self:center;opacity:.95}
+  .risk-meta .cmp{color:var(--cyan);justify-self:end;text-shadow:0 0 6px rgba(45,212,191,.14)}
   .risk-bar{position:relative;height:4px;border-radius:999px;background:#212b3c;overflow:hidden;margin-top:0}
   .risk-fill{position:absolute;left:0;top:0;bottom:0;width:var(--fill,72%);border-radius:inherit;background:linear-gradient(90deg,rgba(255,255,255,.05),var(--bar-color,var(--green-dim)));box-shadow:0 0 0 1px rgba(0,0,0,.12) inset}
   .risk-dot{position:absolute;left:var(--fill,72%);top:50%;width:7px;height:7px;border-radius:50%;transform:translate(-50%,-50%);background:var(--bar-color,var(--green-dim));box-shadow:0 0 0 2px #0d1118,0 0 10px color-mix(in srgb, var(--bar-color,var(--green-dim)) 55%, transparent)}
@@ -260,14 +385,47 @@
   .pe-foot .red{color:var(--red);font-weight:600}
   .pe-foot .green{color:var(--green);font-weight:600}
 
-  /* qty column in execute */
-  .exec-list .pos{grid-template-columns:18px 1fr 70px 90px}
-  .pos .qty-col{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px}
-  .pos .qty-col .q-v{font-size:13px;color:var(--text);font-weight:600;font-variant-numeric:tabular-nums;line-height:1.2}
-  .pos .qty-col .q-l{font-size:9px;letter-spacing:.12em;color:var(--text-faint);text-transform:uppercase}
-  .pos .qty-col input.q-input{width:54px;background:var(--panel-2);border:1px solid var(--line);border-radius:4px;color:var(--amber);font-family:'JetBrains Mono','Fira Code',ui-monospace,monospace;font-size:13px;font-weight:700;padding:3px 6px;outline:none;text-align:center;font-variant-numeric:tabular-nums;transition:border-color .15s}
-  /* all execute SL/Trigger prices → red, matching protect */
-  .exec-list .pos .right .price{color:var(--red) !important}
+  /* execute panel */
+  .exec-head{display:grid;grid-template-columns:18px 60px minmax(260px,1fr) 54px 70px 70px 82px;gap:8px;align-items:center;padding:8px 14px;border-bottom:1px solid var(--line)}
+  .exec-head .track-hdr{font-size:9.5px;letter-spacing:.18em;color:var(--text-faint);text-transform:uppercase;font-weight:500;white-space:nowrap}
+  .exec-head .track-hdr .pdl{color:var(--red-dim)}
+  .exec-head .track-hdr .sl{color:var(--red)}
+  .exec-head .track-hdr .cmp{color:var(--cyan-dim)}
+  .exec-head .track-hdr .buy{color:var(--green)}
+  .exec-head .exec-hdr{font-size:9.5px;letter-spacing:.18em;color:var(--text-faint);text-transform:uppercase;font-weight:500;text-align:center;white-space:nowrap}
+  .exec-head .qty-hdr{color:var(--amber-dim)}
+  .exec-head .buy-hdr{color:var(--green)}
+  .exec-head .sl-hdr{color:var(--red-dim)}
+  .exec-head .risk-hdr{color:var(--cyan-dim)}
+  .exec-list .pos{grid-template-columns:18px 60px minmax(260px,1fr) 54px 70px 70px 82px;gap:8px;align-items:center;padding:5px 10px 5px 8px;border:1px solid #1a2332;border-radius:4px;background:var(--panel-2);position:relative;min-height:40px}
+  .exec-list .pos.executed{border-color:rgba(34,197,94,.55);background:linear-gradient(90deg,rgba(34,197,94,.08),rgba(16,22,34,.98) 42%,rgba(16,22,34,.98));box-shadow:inset 0 0 0 1px rgba(34,197,94,.06)}
+  .exec-list .pos.executed::before{background:var(--green)}
+  .exec-list .pos.executed .ticker{color:var(--green)}
+  .exec-list .pos.executed .exec-buy,
+  .exec-list .pos.executed .exec-sl,
+  .exec-list .pos.executed .exec-risk{color:var(--text)}
+  .exec-left{display:flex;align-items:center;gap:8px;min-width:0}
+  .exec-left .ticker{font-size:12px;color:var(--text);font-weight:700;letter-spacing:.02em;line-height:1;white-space:nowrap}
+  .exec-mid{display:flex;flex-direction:column;gap:1px;min-width:0}
+  .exec-bar{position:relative;height:4px;border-radius:999px;background:#223041;overflow:hidden}
+  .exec-bar::before{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(255,255,255,.03),rgba(125,211,252,.12) 48%,rgba(34,197,94,.18));opacity:.8}
+  .exec-marker{position:absolute;top:50%;width:8px;height:8px;border-radius:50%;transform:translate(-50%,-50%);box-shadow:0 0 0 2px #0d1118}
+  .exec-marker.pdl{left:var(--pdl);background:var(--red-dim)}
+  .exec-marker.sl{left:var(--sl);background:#ff6b6b}
+  .exec-marker.cmp{left:var(--cmp);background:var(--cyan-dim)}
+  .exec-marker.buy{left:var(--buy);background:var(--green-dim)}
+  .exec-scale{position:relative;height:10px}
+  .exec-scale span{position:absolute;top:0;transform:translateX(-50%);font-size:8px;line-height:1;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .exec-scale .pdl{left:var(--pdl);color:var(--text-faint)}
+  .exec-scale .sl{left:var(--sl);color:var(--red)}
+  .exec-scale .cmp{left:var(--cmp);color:var(--cyan)}
+  .exec-scale .buy{left:var(--buy);color:var(--green)}
+  .exec-qty{display:flex;align-items:center;justify-content:center;height:21px;border:1px solid rgba(245,158,11,.45);border-radius:4px;color:var(--amber);font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums}
+  .exec-buy,.exec-sl,.exec-risk{display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1;white-space:nowrap}
+  .exec-buy{color:var(--green)}
+  .exec-sl{color:var(--red)}
+  .exec-risk{color:var(--cyan)}
+  .exec-list .qty-col,.exec-list .right{display:none}
 
   /* qty + sl columns in protect */
   .prot-list .pos{grid-template-columns:18px 126px minmax(298px,1fr) 46px 52px 84px;padding:3px 8px 3px 7px;min-height:36px}
@@ -275,6 +433,9 @@
   .prot-list .pos.safe{ --bar-color: var(--green-dim); }
   .prot-list .pos.watch{ --bar-color: var(--amber-dim); }
   .prot-list .pos.hold{ --bar-color: var(--purple-dim); }
+  .prot-list .pos.executed{border-color:rgba(34,197,94,.55);background:linear-gradient(90deg,rgba(34,197,94,.08),rgba(16,22,34,.98) 42%,rgba(16,22,34,.98));box-shadow:inset 0 0 0 1px rgba(34,197,94,.06)}
+  .prot-list .pos.executed::before{background:var(--green)}
+  .prot-list .pos.executed .ticker{color:var(--green)}
   .prot-list .pos .pos-left{justify-self:stretch}
   .prot-list .pos .pos-mid{justify-self:stretch}
   .prot-list .pos:nth-child(1){--fill:79%}
@@ -290,8 +451,10 @@
   .pos .qty-col input.q-input:hover{border-color:var(--line-3)}
   .pos .qty-col input.q-input:focus{border-color:var(--cyan-dim);background:rgba(45,212,191,.05)}
   .exec-col-hdr{font-size:9.5px;letter-spacing:.18em;color:var(--text-faint);text-transform:uppercase;font-weight:500;text-align:center}
+  .pe-head .qty-hdr{margin-left:20px}
+  .pe-head .sl-hdr{margin-left:16px}
 
-  /* ============ CLOSING — REDESIGNED, COMPACT ============ */
+  /* ============ CLOSING â€” REDESIGNED, COMPACT ============ */
   .closing{flex:0 0 auto}
   .closing .streak{display:flex;align-items:center;gap:7px;padding:4px 11px;border:1px solid var(--cyan-dim);border-radius:14px;background:rgba(45,212,191,.06)}
   .closing .streak .num{color:var(--cyan);font-size:14px;letter-spacing:.03em;font-weight:600}
@@ -356,13 +519,13 @@
       </div>
     </div>
     <div class="nav">
-      <a class="on">Briefing</a>
-      <a>Positions</a>
-      <a>Goal Tracker</a>
-      <a>Simulation</a>
-      <a>Streaks</a>
-      <a>Portfolio</a>
-      <a>Settings</a>
+      <a class="on" href="/">Briefing</a>
+      <a href="trade_plan_1.html?view=day">Positions</a>
+      <a href="trade_plan_1.html?view=exposure">Goal Tracker</a>
+      <a href="trade_plan_1.html?view=simulation">Simulation</a>
+      <a href="trade_plan_1.html?view=streaks">Streaks</a>
+      <a href="trade_plan_1.html?view=portfolio">Portfolio</a>
+      <a href="trade_plan_1.html?view=settings">Settings</a>
     </div>
     <div class="topstats">
       <div class="stat risk">
@@ -384,7 +547,13 @@
 
     <!-- ============ SIDEBAR ============ -->
     <div class="sidebar">
-      <div class="side-head">April · Recent Sessions</div>
+      <div class="side-head">
+        <span class="label" id="sidebar-month-label">April · Recent Sessions</span>
+        <div class="month-nav" aria-label="Month navigation">
+          <button id="sidebar-month-prev" type="button" aria-label="Previous month" title="Previous month">&lsaquo;</button>
+          <button id="sidebar-month-next" type="button" aria-label="Next month" title="Next month">&rsaquo;</button>
+        </div>
+      </div>
       <div class="side-day">
         <div class="d">30</div>
         <div class="meta">Thursday · 2026</div>
@@ -413,33 +582,51 @@
         <div class="day win"><span class="num">19</span><span class="typ">+1.5%</span><span class="pl">Rs 3,000</span></div>
         <div class="day win"><span class="num">21</span><span class="typ">+0.8%</span><span class="pl">Rs 12,000</span></div>
         <div class="day win"><span class="num">22</span><span class="typ">+2.1%</span><span class="pl">Rs 6,000</span></div>
-        <div class="day loss"><span class="num">23</span><span class="typ">−4.1%</span><span class="pl">Rs 10,000</span></div>
+        <div class="day loss"><span class="num">23</span><span class="typ">âˆ’4.1%</span><span class="pl">Rs 10,000</span></div>
         <div class="day win"><span class="num">24</span><span class="typ">+1.5%</span><span class="pl">Rs 13,000</span></div>
-        <div class="day loss"><span class="num">25</span><span class="typ">−1.5%</span><span class="pl">Rs 3,000</span></div>
+        <div class="day loss"><span class="num">25</span><span class="typ">âˆ’1.5%</span><span class="pl">Rs 3,000</span></div>
         <div class="day win"><span class="num">28</span><span class="typ">+1.5%</span><span class="pl">Rs 7,700</span></div>
         <div class="day win"><span class="num">29</span><span class="typ">+1.5%</span><span class="pl">Rs 12,700</span></div>
-        <div class="day today"><span class="num">30</span><span class="typ">Live</span><span class="pl">Rs 11,500</span></div>
+        <div class="day today"><span class="num">30</span><span class="typ"></span><span class="pl">11500</span></div>
       </div>
 
       <!-- ===== MONTH SUMMARY ===== -->
-      <div class="month-summary">
-        <div class="ms-head">
-          <span class="ms-title">Month · April</span>
-          <span class="ms-month">21 sessions</span>
+      <div class="sidebar-stack">
+        <div class="month-summary">
+          <div class="ms-head">
+            <span class="ms-title">HIGHS</span>
+          </div>
+          <div class="ms-grid">
+            <div class="ms-cell hs-exp">
+              <div class="hs-ico">↗</div>
+              <div class="l">Exposure</div>
+              <div class="v am" id="month-highest-exposure">-</div>
+            </div>
+            <div class="ms-cell hs-pos">
+              <div class="hs-ico">⌖</div>
+              <div class="l">Position</div>
+              <div class="v gn" id="month-biggest-position">-</div>
+            </div>
+            <div class="ms-cell hs-win">
+              <div class="hs-ico">✦</div>
+              <div class="l">Winner</div>
+              <div class="v cy" id="month-biggest-winner">-</div>
+            </div>
+            <div class="ms-cell hs-open">
+              <div class="hs-ico">◔</div>
+              <div class="l">Open Pos</div>
+              <div class="v gn" id="month-highest-open-positions">-</div>
+            </div>
+          </div>
         </div>
-        <div class="ms-pnl">
-          <span class="lbl">Total P&amp;L</span>
-          <span class="val">+ Rs 95,400</span>
-        </div>
-        <div class="ms-grid">
-          <div class="ms-cell"><div class="l">Trading Days</div><div class="v">15</div></div>
-          <div class="ms-cell"><div class="l">Trades Taken</div><div class="v">14</div></div>
-          <div class="ms-cell"><div class="l">Win Rate</div><div class="v gn">79%</div></div>
-          <div class="ms-cell"><div class="l">Best Day</div><div class="v gn">Rs 13,000</div></div>
-          <div class="ms-cell"><div class="l">Max Exposure</div><div class="v am">18.2%</div></div>
-          <div class="ms-cell"><div class="l">Avg Risk</div><div class="v">Rs 3,600</div></div>
-          <div class="ms-cell"><div class="l">Win Streak</div><div class="v cy">11 days</div></div>
-          <div class="ms-cell"><div class="l">Plan Hit Rate</div><div class="v gn">86%</div></div>
+        <div class="earnings-box">
+          <div class="earn-head">
+            <span class="earn-title">Upcoming</span>
+            <span class="earn-note">Next 3 days</span>
+          </div>
+          <div class="earn-list" id="month-earnings-list">
+            <div class="earn-empty">No matching earnings due.</div>
+          </div>
         </div>
       </div>
     </div>
@@ -447,7 +634,7 @@
     <!-- ============ MAIN ============ -->
     <div class="main">
 
-      <!-- sub-header — date + Last 5 streak + stance pills + stats -->
+      <!-- sub-header â€” date + Last 5 streak + stance pills + stats -->
       <div class="subbar">
         <span class="date">30 April<span class="small">Thu · 2026</span></span>
         <span class="seglbl">Last 5</span>
@@ -461,10 +648,10 @@
           <div class="stance-pill bear">Bearish</div>
         </div>
         <span class="grow"></span>
-        <div class="miniStat"><span class="lbl">Open</span><span class="v">4</span></div>
-        <div class="miniStat"><span class="lbl">Planned</span><span class="v">2</span></div>
-        <div class="miniStat" style="gap:9px">
-          <span class="lbl">Exposure</span>
+        <div class="miniStat openStat"><span class="lbl">Open</span><span class="v">4</span></div>
+        <div class="miniStat plannedStat"><span class="lbl">Planned</span><span class="v">2</span></div>
+        <div class="miniStat exposureStat" style="gap:9px">
+          <span class="lbl">Exposure %</span>
           <span class="expBar"><i></i></span>
           <span class="v">14.4%</span>
         </div>
@@ -494,7 +681,8 @@
           <!-- COL 1: GAME PLAN + TIMING BELOW -->
           <div class="gameplan">
             <div class="col-label"><span class="dot" style="background:var(--pink)"></span> Game plan <span class="meta">the story I'm trading today</span></div>
-            <textarea class="field" rows="4" style="min-height:unset;font-size:14px;line-height:1.6;padding:10px 12px" placeholder="Two-way tape? Trending? PSU still leading? Where will I size up, where will I sit out? When do I act — open, 09:30, late?">Two-way tape. Wait first 15 min — no opening-bell trades. PSU & Defence still leading; size up if SBIN clears PDH cleanly. Mid-caps frothy, skip them. Cut day after 2 losers in a row.</textarea>
+            <div class="gameplan-banner" aria-live="polite"></div>
+            <textarea class="field" rows="4" style="min-height:unset;font-size:14px;line-height:1.6;padding:10px 12px" placeholder="Two-way tape? Trending? PSU still leading? Where will I size up, where will I sit out? When do I act â€” open, 09:30, late?">Two-way tape. Wait first 15 min â€” no opening-bell trades. PSU & Defence still leading; size up if SBIN clears PDH cleanly. Mid-caps frothy, skip them. Cut day after 2 losers in a row.</textarea>
             <div class="timing-grid" data-group="timing" style="margin-top:7px">
               <div class="timing-cell"><div class="t-time mono">09:15</div><div class="t-label">Strike open</div></div>
               <div class="timing-cell on"><div class="t-time mono">09:30</div><div class="t-label">Wait 15m</div></div>
@@ -506,63 +694,52 @@
           <!-- COL 2: SECTORS (vertical pills) -->
           <div>
             <div class="col-label"><span class="dot" style="background:var(--green-dim)"></span> Sectors with the wind</div>
-            <div class="chips" style="flex-direction:column;flex-wrap:nowrap">
-              <span class="chip hot">PSU Banks <span class="strength"><i></i><i></i><i></i></span></span>
-              <span class="chip hot">Defence <span class="strength"><i></i><i></i><i></i></span></span>
-              <span class="chip warm">Power <span class="strength"><i></i><i></i><i></i></span></span>
-              <span class="chip warm">Cap Goods <span class="strength"><i></i><i></i><i></i></span></span>
-              <span class="chip cool">IT <span class="strength"><i></i><i></i><i></i></span></span>
-            </div>
+            <div class="chips sectors-chips" style="flex-direction:column;flex-wrap:nowrap"></div>
           </div>
 
           <!-- COL 3: STOCKS STANDING OUT -->
           <div>
-            <div class="col-label"><span class="dot" style="background:var(--cyan)"></span> Stocks standing out <span class="meta">tap to edit</span></div>
+            <div class="col-label"><span class="dot" style="background:var(--cyan)"></span> Stocks standing out <button class="watch-add-btn" type="button">+ add row</button></div>
             <div class="watch-list">
 
               <div class="watch-row">
-                <input class="field sym-input" value="SBIN" />
+                <input class="field sym-input" list="bhav-symbol-suggestions" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" value="SBIN" />
                 <div class="why-wrap">
                   <input class="field" value="PDH break · 1.5R clean target" />
-                  <span class="conv" title="Conviction"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i></span>
+                  <button class="row-del" type="button" title="Delete row">🗑</button>
                 </div>
-                <input class="field lvl-input mono" value="742.50" />
               </div>
 
               <div class="watch-row">
-                <input class="field sym-input" value="MCX" />
+                <input class="field sym-input" list="bhav-symbol-suggestions" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" value="MCX" />
                 <div class="why-wrap">
                   <input class="field focused" value="Fresh leg up · risk Rs 1,500" />
-                  <span class="conv"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i></span>
+                  <button class="row-del" type="button" title="Delete row">🗑</button>
                 </div>
-                <input class="field lvl-input mono" value="2,829" />
               </div>
 
               <div class="watch-row add">
-                <input class="field sym-input" placeholder="TICKER" />
+                <input class="field sym-input" list="bhav-symbol-suggestions" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" placeholder="TICKER" />
                 <div class="why-wrap">
-                  <input class="field" placeholder="why this stands out…" />
-                  <span class="conv"><i></i><i></i><i></i><i></i><i></i></span>
+                  <input class="field" placeholder="why this stands outâ€¦" />
+                  <button class="row-del" type="button" title="Delete row">🗑</button>
                 </div>
-                <input class="field lvl-input mono" placeholder="level" />
               </div>
 
               <div class="watch-row add">
-                <input class="field sym-input" placeholder="TICKER" />
+                <input class="field sym-input" list="bhav-symbol-suggestions" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" placeholder="TICKER" />
                 <div class="why-wrap">
-                  <input class="field" placeholder="why this stands out…" />
-                  <span class="conv"><i></i><i></i><i></i><i></i><i></i></span>
+                  <input class="field" placeholder="why this stands outâ€¦" />
+                  <button class="row-del" type="button" title="Delete row">🗑</button>
                 </div>
-                <input class="field lvl-input mono" placeholder="level" />
               </div>
 
               <div class="watch-row add">
-                <input class="field sym-input" placeholder="TICKER" />
+                <input class="field sym-input" list="bhav-symbol-suggestions" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" placeholder="TICKER" />
                 <div class="why-wrap">
-                  <input class="field" placeholder="why this stands out…" />
-                  <span class="conv"><i></i><i></i><i></i><i></i><i></i></span>
+                  <input class="field" placeholder="why this stands outâ€¦" />
+                  <button class="row-del" type="button" title="Delete row">🗑</button>
                 </div>
-                <input class="field lvl-input mono" placeholder="level" />
               </div>
 
             </div>
@@ -579,15 +756,16 @@
           <div class="pe-head">
             <span class="sec-num mono">2</span>
             <span class="sec-title">Protect</span>
+            <button class="head-btn protect-all-btn" type="button" aria-label="Select all" title="Select all" style="margin-left:6px"><span class="ico">☐</span></button>
             <span style="flex:1"></span>
             <span class="exec-col-hdr qty-hdr" style="width:70px">Qty</span>
             <span class="exec-col-hdr sl-hdr" style="width:90px">SL</span>
           </div>
           <div class="pe-list prot-list">
             <div class="pos safe">
-              <span class="chk on">✓</span>
+              <span class="chk on">âœ“</span>
               <div>
-                <div class="l1">VEDL <span class="ltp-inline up">559.76 ↑</span> <span class="pill safe">Safe</span></div>
+                <div class="l1">VEDL <span class="ltp-inline up">559.76 â†‘</span> <span class="pill safe">Safe</span></div>
                 <div class="l2">cushion 2.1% &nbsp;·&nbsp; 6d held</div>
               </div>
               <div class="prot-qty"><span class="pq-v">108</span><span class="pq-l">sh</span></div>
@@ -598,7 +776,7 @@
             <div class="pos watch">
               <span class="chk"></span>
               <div>
-                <div class="l1">ARSSBL <span class="ltp-inline up">588.06 ↑</span> <span class="pill watch">Watch</span></div>
+                <div class="l1">ARSSBL <span class="ltp-inline up">588.06 â†‘</span> <span class="pill watch">Watch</span></div>
                 <div class="l2">trailing tight &nbsp;·&nbsp; cushion 2.0%</div>
               </div>
               <div class="prot-qty"><span class="pq-v">90</span><span class="pq-l">sh</span></div>
@@ -609,7 +787,7 @@
             <div class="pos hold">
               <span class="chk"></span>
               <div>
-                <div class="l1">GROWW <span class="ltp-inline up">263.15 ↑</span> <span class="pill hold">Hold</span></div>
+                <div class="l1">GROWW <span class="ltp-inline up">263.15 â†‘</span> <span class="pill hold">Hold</span></div>
                 <div class="l2">range-bound &nbsp;·&nbsp; breakout retest</div>
               </div>
               <div class="prot-qty"><span class="pq-v">80</span><span class="pq-l">sh</span></div>
@@ -618,9 +796,9 @@
               </div>
             </div>
             <div class="pos safe">
-              <span class="chk on">✓</span>
+              <span class="chk on">âœ“</span>
               <div>
-                <div class="l1">IREDA <span class="ltp-inline up">198.30 ↑</span> <span class="pill safe">Safe</span></div>
+                <div class="l1">IREDA <span class="ltp-inline up">198.30 â†‘</span> <span class="pill safe">Safe</span></div>
                 <div class="l2">trail to 192 if 200 breaks</div>
               </div>
               <div class="prot-qty"><span class="pq-v">150</span><span class="pq-l">sh</span></div>
@@ -631,7 +809,7 @@
             <div class="pos watch">
               <span class="chk"></span>
               <div>
-                <div class="l1">MCX <span class="ltp-inline up">2,968.30 ↑</span> <span class="pill watch">Watch</span></div>
+                <div class="l1">MCX <span class="ltp-inline up">2,968.30 â†‘</span> <span class="pill watch">Watch</span></div>
                 <div class="l2">trim pending &nbsp;·&nbsp; cushion 4.7%</div>
               </div>
               <div class="prot-qty"><span class="pq-v">40</span><span class="pq-l">sh</span></div>
@@ -642,7 +820,7 @@
             <div class="pos hold">
               <span class="chk"></span>
               <div>
-                <div class="l1">CGPOWER <span class="ltp-inline up">825.60 ↑</span> <span class="pill hold">Hold</span></div>
+                <div class="l1">CGPOWER <span class="ltp-inline up">825.60 â†‘</span> <span class="pill hold">Hold</span></div>
                 <div class="l2">pullback after gap &nbsp;·&nbsp; cushion 0.9%</div>
               </div>
               <div class="prot-qty"><span class="pq-v">140</span><span class="pq-l">sh</span></div>
@@ -651,9 +829,9 @@
               </div>
             </div>
             <div class="pos safe">
-              <span class="chk on">✓</span>
+              <span class="chk on">âœ“</span>
               <div>
-                <div class="l1">CPPLUS <span class="ltp-inline up">2,338.40 ↑</span> <span class="pill safe">Safe</span></div>
+                <div class="l1">CPPLUS <span class="ltp-inline up">2,338.40 â†‘</span> <span class="pill safe">Safe</span></div>
                 <div class="l2">fresh carry &nbsp;·&nbsp; cushion 2.0%</div>
               </div>
               <div class="prot-qty"><span class="pq-v">96</span><span class="pq-l">sh</span></div>
@@ -664,7 +842,7 @@
             <div class="pos hold">
               <span class="chk"></span>
               <div>
-                <div class="l1">ITC <span class="ltp-inline up">469.10 ↑</span> <span class="pill hold">Hold</span></div>
+                <div class="l1">ITC <span class="ltp-inline up">469.10 â†‘</span> <span class="pill hold">Hold</span></div>
                 <div class="l2">consolidation &nbsp;·&nbsp; cushion 1.4%</div>
               </div>
               <div class="prot-qty"><span class="pq-v">200</span><span class="pq-l">sh</span></div>
@@ -678,18 +856,20 @@
 
         <!-- EXECUTE -->
         <div class="block">
-          <div class="pe-head">
+          <div class="pe-head exec-head">
             <span class="sec-num mono">3</span>
             <span class="sec-title">Execute</span>
-            <span style="flex:1"></span>
-            <span class="exec-col-hdr qty-hdr" style="width:70px">Qty</span>
-            <span class="exec-col-hdr sl-hdr" style="width:90px">SL / Trigger</span>
+            <div class="track-hdr"><span class="pdl">PDL</span> <span class="sl">SL</span> <span class="cmp">CMP</span> <span class="buy">BUY</span></div>
+            <span class="exec-hdr qty-hdr">Qty</span>
+            <span class="exec-hdr buy-hdr">Buy</span>
+            <span class="exec-hdr sl-hdr">SL</span>
+            <span class="exec-hdr risk-hdr">Risk</span>
           </div>
           <div class="pe-list exec-list">
             <div class="pos plan">
               <span class="chk"></span>
               <div>
-                <div class="l1">SBIN <span class="ltp-inline dn">738.15 ↓</span> <span class="pill plan">Plan</span></div>
+                <div class="l1">SBIN <span class="ltp-inline dn">738.15 â†“</span> <span class="pill plan">Plan</span></div>
                 <div class="l2">Risk Rs 2,400 &nbsp;·&nbsp; 1.5R target 750</div>
               </div>
               <div class="qty-col"><input class="q-input" value="120" /></div>
@@ -701,7 +881,7 @@
             <div class="pos cond">
               <span class="chk"></span>
               <div>
-                <div class="l1">HDFCBANK <span class="ltp-inline dn">1,594.20 ↓</span> <span class="pill cond">Cond</span></div>
+                <div class="l1">HDFCBANK <span class="ltp-inline dn">1,594.20 â†“</span> <span class="pill cond">Cond</span></div>
                 <div class="l2">only if Bank Nifty breadth &gt; 60%</div>
               </div>
               <div class="qty-col"><input class="q-input" value="50" /></div>
@@ -713,7 +893,7 @@
             <div class="pos plan">
               <span class="chk"></span>
               <div>
-                <div class="l1">MCX <span class="ltp-inline up">2,968.30 ↑</span> <span class="pill plan">Plan</span></div>
+                <div class="l1">MCX <span class="ltp-inline up">2,968.30 â†‘</span> <span class="pill plan">Plan</span></div>
                 <div class="l2">risk Rs 1,500 &nbsp;·&nbsp; 1.6R target 3,170</div>
               </div>
               <div class="qty-col"><input class="q-input" value="40" /></div>
@@ -725,7 +905,7 @@
             <div class="pos cond">
               <span class="chk"></span>
               <div>
-                <div class="l1">CGPOWER <span class="ltp-inline up">825.60 ↑</span> <span class="pill cond">Cond</span></div>
+                <div class="l1">CGPOWER <span class="ltp-inline up">825.60 â†‘</span> <span class="pill cond">Cond</span></div>
                 <div class="l2">power leader &nbsp;·&nbsp; risk Rs 4,000</div>
               </div>
               <div class="qty-col"><input class="q-input" value="140" /></div>
@@ -737,7 +917,7 @@
             <div class="pos plan">
               <span class="chk"></span>
               <div>
-                <div class="l1">CPPLUS <span class="ltp-inline up">2,338.40 ↑</span> <span class="pill plan">Plan</span></div>
+                <div class="l1">CPPLUS <span class="ltp-inline up">2,338.40 â†‘</span> <span class="pill plan">Plan</span></div>
                 <div class="l2">fresh carry &nbsp;·&nbsp; risk Rs 3,000</div>
               </div>
               <div class="qty-col"><input class="q-input" value="96" /></div>
@@ -749,7 +929,7 @@
             <div class="pos plan">
               <span class="chk"></span>
               <div>
-                <div class="l1">BEL <span class="ltp-inline dn">320.85 ↓</span> <span class="pill plan">Plan</span></div>
+                <div class="l1">BEL <span class="ltp-inline dn">320.85 â†“</span> <span class="pill plan">Plan</span></div>
                 <div class="l2">defence leader &nbsp;·&nbsp; risk Rs 2,000</div>
               </div>
               <div class="qty-col"><input class="q-input" value="80" /></div>
@@ -761,7 +941,7 @@
             <div class="pos cond">
               <span class="chk"></span>
               <div>
-                <div class="l1">PFC <span class="ltp-inline dn">508.20 ↓</span> <span class="pill cond">Cond</span></div>
+                <div class="l1">PFC <span class="ltp-inline dn">508.20 â†“</span> <span class="pill cond">Cond</span></div>
                 <div class="l2">PSU breadth &gt; 70% &nbsp;·&nbsp; risk Rs 1,800</div>
               </div>
               <div class="qty-col"><input class="q-input" value="60" /></div>
@@ -773,7 +953,7 @@
             <div class="pos plan">
               <span class="chk"></span>
               <div>
-                <div class="l1">RVNL <span class="ltp-inline dn">481.60 ↓</span> <span class="pill plan">Plan</span></div>
+                <div class="l1">RVNL <span class="ltp-inline dn">481.60 â†“</span> <span class="pill plan">Plan</span></div>
                 <div class="l2">railway PSU &nbsp;·&nbsp; risk Rs 1,200</div>
               </div>
               <div class="qty-col"><input class="q-input" value="50" /></div>
@@ -800,24 +980,24 @@
           <!-- LEFT: 4 win cards (editable) -->
           <div class="wins-grid">
             <div class="win-card discipline filled">
-              <div class="top-row"><span class="badge">Discipline</span><span class="check">✓</span></div>
-              <input class="title-input" value="Held my stop on IREDA" placeholder="what I did well…" />
-              <textarea class="desc-input" placeholder="describe the moment…">Didn't widen when it tested 190. Risk stayed Rs 800, exactly as planned.</textarea>
+              <div class="top-row"><span class="badge">Discipline</span><span class="check">&#10003;</span></div>
+              <input class="title-input" value="Held my stop on IREDA" placeholder="what I did well..." />
+              <textarea class="desc-input" placeholder="describe the moment...">Didn't widen when it tested 190. Risk stayed Rs 800, exactly as planned.</textarea>
             </div>
             <div class="win-card process filled">
-              <div class="top-row"><span class="badge">Process</span><span class="check">✓</span></div>
-              <input class="title-input" value="Stuck to the 09:30 wait" placeholder="what I did well…" />
-              <textarea class="desc-input" placeholder="describe the moment…">Skipped the noisy first 15 min. The PSU setup was cleaner at 09:34.</textarea>
+              <div class="top-row"><span class="badge">Process</span><span class="check">&#10003;</span></div>
+              <input class="title-input" value="Stuck to the 09:30 wait" placeholder="what I did well..." />
+              <textarea class="desc-input" placeholder="describe the moment...">Skipped the noisy first 15 min. The PSU setup was cleaner at 09:34.</textarea>
             </div>
             <div class="win-card patience empty">
-              <div class="top-row"><span class="badge">Patience</span><span class="check">○</span></div>
-              <input class="title-input" placeholder="where I waited well…" />
+              <div class="top-row"><span class="badge">Patience</span><span class="check">&#9675;</span></div>
+              <input class="title-input" placeholder="where I waited well..." />
               <textarea class="desc-input" placeholder="tap to capture a moment of patience"></textarea>
             </div>
             <div class="win-card execution filled">
-              <div class="top-row"><span class="badge">Execution</span><span class="check">✓</span></div>
-              <input class="title-input" value="Sized SBIN at full plan" placeholder="what I did well…" />
-              <textarea class="desc-input" placeholder="describe the moment…">120 sh as planned. No half-sizing out of fear. Trusted the prep.</textarea>
+              <div class="top-row"><span class="badge">Execution</span><span class="check">&#10003;</span></div>
+              <input class="title-input" value="Sized SBIN at full plan" placeholder="what I did well..." />
+              <textarea class="desc-input" placeholder="describe the moment...">120 sh as planned. No half-sizing out of fear. Trusted the prep.</textarea>
             </div>
           </div>
 
@@ -825,16 +1005,16 @@
           <div class="closing-right">
             <div class="best">
               <div class="head">
-                <span class="star">★</span>
+                <span class="star">&#9733;</span>
                 <span class="lbl">Best moment</span>
                 <span class="ticker-pill">SBIN · +1.6R</span>
               </div>
-              <textarea class="text-input" placeholder="the one trade I'll remember…">PDH break, didn't chase — waited the retest at 740.20, full size, trailed past 1R. "Exactly the trade I drew up last night."</textarea>
+              <textarea class="text-input" placeholder="the one trade I'll remember...">PDH break, didn't chase - waited the retest at 740.20, full size, trailed past 1R. "Exactly the trade I drew up last night."</textarea>
             </div>
             <div class="affirm">
               <div class="lbl-row">
                 <span class="lbl">Today's affirmation</span>
-                <span class="regen">↻ regenerate</span>
+                <span class="regen">&#8635; regenerate</span>
               </div>
               <div class="text">I am the kind of trader who <span class="em">trusts the prep</span>, <span class="em">honors the stop</span>, and <span class="em">lets the process do the work</span>.</div>
             </div>
@@ -847,6 +1027,7 @@
   </div>
 </div>
 
+<datalist id="bhav-symbol-suggestions"></datalist>
 <script>
   // ----- Aggression dial: clickable marks + click on track -----
   const dialMarks = document.querySelectorAll('.dial-marks span');
@@ -861,7 +1042,7 @@
       const pct = val * 20;
       dialFill.style.width   = pct + '%';
       dialHandle.style.left  = pct + '%';
-      dialVal.textContent    = val + ' / 5 · ' + s.textContent.trim();
+      if (dialVal) dialVal.textContent = val + ' / 5 · ' + s.textContent.trim();
     });
   });
   document.querySelector('.dial-track').addEventListener('click', (e) => {
@@ -884,18 +1065,6 @@
     c.addEventListener('click', () => {
       c.parentElement.querySelectorAll('.timing-cell').forEach(x => x.classList.remove('on'));
       c.classList.add('on');
-    });
-  });
-
-  // ----- Conviction dots in watchlist -----
-  document.querySelectorAll('.watch-row .conv').forEach(group => {
-    group.querySelectorAll('i').forEach((dot, idx) => {
-      dot.addEventListener('click', (e) => {
-        e.stopPropagation();
-        group.querySelectorAll('i').forEach((d, j) => {
-          if (j <= idx) d.classList.add('on'); else d.classList.remove('on');
-        });
-      });
     });
   });
 
@@ -938,6 +1107,45 @@
     `;
   });
 
+  // ----- Rebuild execute rows to match the target screenshot -----
+  const execList = document.querySelector('.exec-list');
+  const execMeta = [
+    { ticker:'SBIN',     status:'plan', pill:'PLAN', pdl:'728',  slScale:'736',  cmpScale:'738',  buyScale:'742',  qty:'120', buy:'742.50',  sl:'736.00',  risk:'Rs 2400', pdlPos:'16%', slPos:'34%', cmpPos:'52%', buyPos:'74%' },
+    { ticker:'MCX',      status:'plan', pill:'PLAN', pdl:'2791', slScale:'2801', cmpScale:'2829', buyScale:'2968', qty:'40',  buy:'2,829.00', sl:'2,791.50', risk:'Rs 1500', pdlPos:'16%', slPos:'34%', cmpPos:'53%', buyPos:'80%' },
+    { ticker:'CGPOWER',  status:'cond', pill:'COND', pdl:'804',  slScale:'810',  cmpScale:'817',  buyScale:'825',  qty:'140', buy:'817.90',  sl:'804.20',  risk:'Rs 4000', pdlPos:'16%', slPos:'34%', cmpPos:'55%', buyPos:'79%' },
+    { ticker:'BEL',      status:'plan', pill:'PLAN', pdl:'318',  slScale:'320',  cmpScale:'324',  buyScale:'324',  qty:'80',  buy:'324.50',  sl:'318.60',  risk:'Rs 2000', pdlPos:'16%', slPos:'34%', cmpPos:'48%', buyPos:'68%' },
+    { ticker:'HDFCBANK', status:'cond', pill:'COND', pdl:'1581', slScale:'1588', cmpScale:'1594', buyScale:'1602', qty:'50',  buy:'1,602.10', sl:'1,581.00', risk:'Rs 1600', pdlPos:'16%', slPos:'34%', cmpPos:'56%', buyPos:'80%' },
+    { ticker:'PFC',      status:'cond', pill:'COND', pdl:'503',  slScale:'506',  cmpScale:'508',  buyScale:'512',  qty:'60',  buy:'512.40',  sl:'503.20',  risk:'Rs 1800', pdlPos:'16%', slPos:'34%', cmpPos:'51%', buyPos:'72%' },
+    { ticker:'RVNL',     status:'plan', pill:'PLAN', pdl:'479',  slScale:'481',  cmpScale:'482',  buyScale:'488',  qty:'50',  buy:'488.00',  sl:'479.10',  risk:'Rs 1200', pdlPos:'16%', slPos:'34%', cmpPos:'49%', buyPos:'68%' },
+  ];
+
+  execList.innerHTML = execMeta.map(meta => `
+    <div class="pos ${meta.status}" style="--pdl:${meta.pdlPos};--sl:${meta.slPos};--cmp:${meta.cmpPos};--buy:${meta.buyPos}">
+      <span class="chk"></span>
+      <div class="exec-left">
+        <span class="ticker">${meta.ticker}</span>
+      </div>
+      <div class="exec-mid">
+        <div class="exec-bar">
+          <span class="exec-marker pdl"></span>
+          <span class="exec-marker sl"></span>
+          <span class="exec-marker cmp"></span>
+          <span class="exec-marker buy"></span>
+        </div>
+        <div class="exec-scale">
+          <span class="pdl">${meta.pdl}</span>
+          <span class="sl">${meta.slScale}</span>
+          <span class="cmp">${meta.cmpScale}</span>
+          <span class="buy">${meta.buyScale}</span>
+        </div>
+      </div>
+      <div class="exec-qty">${meta.qty}</div>
+      <div class="exec-buy">${meta.buy}</div>
+      <div class="exec-sl">${meta.sl}</div>
+      <div class="exec-risk">${meta.risk}</div>
+    </div>
+  `).join('');
+
   // ----- Position checkboxes -----
   document.querySelectorAll('.pos .chk').forEach(c => {
     c.addEventListener('click', () => c.classList.toggle('on'));
@@ -950,14 +1158,1149 @@
     const sync  = () => {
       if (desc.value.trim().length > 0) {
         card.classList.add('filled'); card.classList.remove('empty');
-        check.textContent = '✓';
+        check.textContent = String.fromCharCode(10003);
       } else {
         card.classList.remove('filled'); card.classList.add('empty');
-        check.textContent = '○';
+        check.textContent = String.fromCharCode(9675);
       }
     };
     desc.addEventListener('input', sync);
   });
 </script>
+<script>
+(() => {
+  const api = async (path, init = {}) => {
+    const opts = { ...init };
+    if (!opts.method) opts.method = 'GET';
+    if (opts.body && typeof opts.body === 'object' && !(opts.body instanceof FormData) && typeof opts.body !== 'string') {
+      opts.body = JSON.stringify(opts.body);
+      opts.headers = { 'Content-Type': 'application/json; charset=utf-8', ...(opts.headers || {}) };
+    }
+    if (opts.method === 'GET' && !('cache' in opts)) {
+      opts.cache = 'no-store';
+    }
+    const res = await fetch(path, opts);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+    return data;
+  };
+
+  const nf0 = new Intl.NumberFormat('en-US', { useGrouping: false, maximumFractionDigits: 0 });
+  const nf2 = new Intl.NumberFormat('en-US', { useGrouping: false, minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const qs = new URLSearchParams(location.search);
+  let dashboard = null;
+  let currentDay = null;
+  let selectedDate = qs.get('date') || '';
+  let sidebarMonth = '';
+
+  const n = (v) => Number(v || 0);
+  const normalizeSymbol = (value) => String(value == null ? '' : value).toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const money = (v) => `Rs ${nf0.format(Math.abs(n(v)))}`;
+  const price = (v) => nf2.format(n(v));
+  const qty = (v) => nf0.format(n(v));
+  const pct = (v) => `${n(v) >= 0 ? '+' : ''}${Number(v || 0).toFixed(1)}%`;
+  const esc = (v) => String(v == null ? '' : v)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
+  function briefingDefaults(sorted) {
+    const rows = sorted.slice(0, 5).map(pos => ({
+      symbol: normalizeSymbol(pos.symbol || ''),
+      why: String(pos.merits || pos.trailNote || '').trim()
+    }));
+    while (rows.length < 5) {
+      rows.push({ symbol: '', why: '' });
+    }
+    const cards = [
+      { title: `Held my stop on ${sorted[0]?.symbol || 'IREDA'}`, desc: String(sorted[0]?.trailNote || sorted[0]?.merits || 'Stayed with the plan.') },
+      { title: `Stuck to the ${sorted[1]?.symbol || '09:30'} wait`, desc: String(sorted[1]?.trailNote || sorted[1]?.merits || 'Kept the first 15 minutes neutral.') },
+      { title: 'Waited for the setup', desc: String(sorted[2]?.trailNote || sorted[2]?.merits || '') },
+      { title: `Sized ${sorted[0]?.symbol || 'SBIN'} the right way`, desc: String(sorted[0]?.trailNote || sorted[0]?.merits || 'Trusted the prep and respected risk.') }
+    ];
+    return {
+      gamePlan: sorted.length ? `${sorted[0].symbol || 'TICKER'} leading. ${sorted[0].merits || 'Stay with the cleanest setup.'} ${planTail(sorted)}` : 'Wait for clean setups. Keep the first 15 min neutral.',
+      aggression: 3,
+      stance: 'neutral',
+      timing: '09:30',
+      watchlist: rows,
+      protectChecks: {},
+      executeChecks: {},
+      closing: {
+        cards,
+        bestMoment: String(sorted[0]?.trailNote || sorted[0]?.merits || '')
+      }
+    };
+  }
+
+  function normalizeBriefing(raw) {
+    const source = raw && typeof raw === 'object' ? raw : {};
+    const watchlist = Array.isArray(source.watchlist)
+      ? source.watchlist.slice(0, 12).map(item => ({
+          symbol: normalizeSymbol(item?.symbol || ''),
+          why: String(item?.why ?? item?.note ?? item?.text ?? '').trim()
+        }))
+      : [];
+    while (watchlist.length < 5) {
+      watchlist.push({ symbol: '', why: '' });
+    }
+    const cards = Array.isArray(source.closing?.cards)
+      ? source.closing.cards.slice(0, 4).map(card => ({
+          title: String(card?.title ?? '').trim(),
+          desc: String(card?.desc ?? '').trim()
+        }))
+      : [];
+    while (cards.length < 4) {
+      cards.push({ title: '', desc: '' });
+    }
+    const protectChecks = source.protectChecks && typeof source.protectChecks === 'object'
+      ? Object.entries(source.protectChecks).reduce((acc, [key, value]) => {
+          const cleanKey = normalizeSymbol(key);
+          if (cleanKey) acc[cleanKey] = !!value;
+          return acc;
+        }, {})
+      : {};
+    const executeChecks = source.executeChecks && typeof source.executeChecks === 'object'
+      ? Object.entries(source.executeChecks).reduce((acc, [key, value]) => {
+          const cleanKey = normalizeSymbol(key);
+          if (cleanKey) acc[cleanKey] = !!value;
+          return acc;
+        }, {})
+      : {};
+    return {
+      gamePlan: String(source.gamePlan ?? source.game_plan ?? '').trim(),
+      aggression: Math.max(1, Math.min(5, Number(source.aggression || 3) || 3)),
+      stance: String(source.stance || 'neutral').toLowerCase(),
+      timing: String(source.timing || '09:30'),
+      watchlist,
+      protectChecks,
+      executeChecks,
+      closing: {
+        cards,
+        bestMoment: String(source.closing?.bestMoment ?? source.bestMoment ?? '').trim()
+      }
+    };
+  }
+
+  function currentAggressionValue() {
+    const active = Array.from(document.querySelectorAll('.dial-marks span')).findIndex(span => span.classList.contains('on'));
+    return active >= 0 ? active + 1 : 3;
+  }
+
+  function applyAggressionValue(value) {
+    const marks = Array.from(document.querySelectorAll('.dial-marks span'));
+    if (!marks.length) return;
+    const idx = Math.max(1, Math.min(marks.length, Number(value) || 3)) - 1;
+    marks.forEach(mark => mark.classList.remove('on'));
+    const mark = marks[idx];
+    if (mark) mark.classList.add('on');
+    const pct = (idx + 1) * 20;
+    const fill = document.querySelector('.dial-fill');
+    const handle = document.querySelector('.dial-handle');
+    const val = document.querySelector('.dial-val');
+    if (fill) fill.style.width = pct + '%';
+    if (handle) handle.style.left = pct + '%';
+    if (val) val.textContent = `${idx + 1} / 5 · ${mark?.textContent.trim() || ''}`;
+  }
+
+  function currentChoiceText(selector) {
+    const node = document.querySelector(selector);
+    return node ? String(node.textContent || '').trim() : '';
+  }
+
+  function currentTimingValue() {
+    const active = document.querySelector('[data-group="timing"] .timing-cell.on .t-time');
+    return active ? String(active.textContent || '').trim() : '09:30';
+  }
+
+  function gamePlanLockMinutes() {
+    return 8 * 60 + 50;
+  }
+
+  function localDateKey(date = new Date()) {
+    return [
+      String(date.getFullYear()).padStart(4, '0'),
+      String(date.getMonth() + 1).padStart(2, '0'),
+      String(date.getDate()).padStart(2, '0')
+    ].join('-');
+  }
+
+  function isGamePlanLocked(now = new Date()) {
+    if (!selectedDate || String(selectedDate).slice(0, 10) !== localDateKey(now)) return false;
+    return (now.getHours() * 60 + now.getMinutes()) >= gamePlanLockMinutes();
+  }
+
+  function updateGamePlanLock() {
+    const gameplan = document.querySelector('.gameplan');
+    const textarea = document.querySelector('.gameplan textarea.field');
+    const banner = document.querySelector('.gameplan .gameplan-banner');
+    const locked = isGamePlanLocked();
+    if (gameplan) gameplan.classList.toggle('locked', locked);
+    if (banner) {
+      if (locked) {
+        const text = textarea?.value?.trim() || 'Follow the plan and trade only what is written here.';
+        banner.innerHTML = esc(text);
+      } else {
+        banner.innerHTML = '';
+      }
+    }
+    if (textarea) {
+      textarea.readOnly = locked;
+      textarea.setAttribute('aria-readonly', locked ? 'true' : 'false');
+      textarea.classList.toggle('locked', locked);
+    }
+    return locked;
+  }
+
+  function applyBriefingSelections(briefing) {
+    const stanceValue = String(briefing?.stance || '').toLowerCase();
+    const stanceMap = [
+      { match: ['bull', 'bullish'], selector: '.stance-pill.bull' },
+      { match: ['neut', 'neutral', 'neutral · two-way', 'neutral - two-way', 'neutral-two-way'], selector: '.stance-pill.neut' },
+      { match: ['bear', 'bearish'], selector: '.stance-pill.bear' }
+    ];
+    const stancePills = document.querySelectorAll('[data-group="stance"] .stance-pill');
+    if (stancePills.length) {
+      stancePills.forEach(pill => pill.classList.remove('on'));
+      const selected = stanceMap.find(item => item.match.some(token => stanceValue === token || stanceValue.includes(token)));
+      const stanceNode = selected ? document.querySelector(selected.selector) : null;
+      (stanceNode || document.querySelector('.stance-pill.neut'))?.classList.add('on');
+    }
+
+    const timingValue = String(briefing?.timing || '').trim();
+    const timingCells = document.querySelectorAll('[data-group="timing"] .timing-cell');
+    if (timingCells.length) {
+      timingCells.forEach(cell => cell.classList.remove('on'));
+      let picked = null;
+      timingCells.forEach(cell => {
+        const time = cell.querySelector('.t-time')?.textContent?.trim();
+        const label = cell.querySelector('.t-label')?.textContent?.trim();
+        if (!picked && (time === timingValue || label === timingValue)) picked = cell;
+      });
+      (picked || timingCells[1] || timingCells[0])?.classList.add('on');
+    }
+
+    applyAggressionValue(briefing?.aggression || 3);
+  }
+
+  let briefingSaveTimer = null;
+  let briefingSaveSeq = 0;
+  let gamePlanLockTimer = null;
+
+  function collectBriefingPayload() {
+    const sorted = topRows(currentDay?.positions || [], 5);
+    const defaults = briefingDefaults(sorted);
+    const gamePlan = document.querySelector('.gameplan textarea.field')?.value ?? defaults.gamePlan;
+    const stance = currentChoiceText('[data-group="stance"] .stance-pill.on') || defaults.stance;
+    const timing = currentTimingValue() || defaults.timing;
+    const watchlist = Array.from(document.querySelectorAll('.watch-list .watch-row')).map((row) => {
+      const symbolInput = row.querySelector('.sym-input');
+      const whyInput = row.querySelector('.why-wrap .field');
+      return {
+        symbol: normalizeSymbol(symbolInput?.value || ''),
+        why: String(whyInput?.value ?? '').trim()
+      };
+    });
+    while (watchlist.length < 5) {
+      watchlist.push({ symbol: '', why: '' });
+    }
+    const cards = Array.from(document.querySelectorAll('.wins-grid .win-card')).slice(0, 4).map(card => ({
+      title: String(card.querySelector('.title-input')?.value ?? '').trim(),
+      desc: String(card.querySelector('.desc-input')?.value ?? '').trim()
+    }));
+    while (cards.length < 4) {
+      cards.push({ title: '', desc: '' });
+    }
+    const protectChecks = {};
+    document.querySelectorAll('.prot-list .pos').forEach(row => {
+      const key = normalizeSymbol(row.dataset.protectKey || row.dataset.execKey || row.dataset.execSymbol || '');
+      if (!key) return;
+      protectChecks[key] = row.classList.contains('executed') || row.querySelector('.chk')?.classList.contains('on');
+    });
+    const executeChecks = {};
+    document.querySelectorAll('.exec-list .pos').forEach(row => {
+      const key = normalizeSymbol(row.dataset.execKey || row.dataset.execSymbol || '');
+      if (!key) return;
+      executeChecks[key] = row.classList.contains('executed') || row.querySelector('.chk')?.classList.contains('on');
+    });
+    return {
+      gamePlan: String(gamePlan ?? '').trim(),
+      aggression: currentAggressionValue(),
+      stance,
+      timing,
+      watchlist,
+      protectChecks,
+      executeChecks,
+      closing: {
+        cards,
+        bestMoment: String(document.querySelector('.best .text-input')?.value ?? '').trim()
+      }
+    };
+  }
+
+  async function flushBriefingSave(options = {}) {
+    if (!selectedDate) return null;
+    const seq = ++briefingSaveSeq;
+    const payload = collectBriefingPayload();
+    const body = { date: selectedDate, briefing: payload };
+    const result = await api(`/api/day-view?date=${encodeURIComponent(selectedDate)}`, {
+      method: 'POST',
+      body,
+      keepalive: !!options.keepalive
+    });
+    if (seq === briefingSaveSeq && currentDay && typeof currentDay === 'object') {
+      currentDay.briefing = payload;
+    }
+    return result;
+  }
+
+  function scheduleBriefingSave() {
+    if (briefingSaveTimer) clearTimeout(briefingSaveTimer);
+    briefingSaveTimer = setTimeout(() => {
+      briefingSaveTimer = null;
+      flushBriefingSave().catch(err => console.warn('Briefing save failed', err));
+    }, 450);
+  }
+
+  function bindBriefingAutosave() {
+    if (document.body.dataset.briefingAutosaveBound) return;
+    document.body.dataset.briefingAutosaveBound = '1';
+    document.addEventListener('input', (e) => {
+      const target = e.target;
+      if (!target || !target.matches('.gameplan textarea.field, .watch-list .field, .wins-grid .title-input, .wins-grid .desc-input, .best .text-input')) return;
+      scheduleBriefingSave();
+    });
+    document.addEventListener('change', (e) => {
+      const target = e.target;
+      if (!target || !target.matches('.gameplan textarea.field, .watch-list .field, .wins-grid .title-input, .wins-grid .desc-input, .best .text-input')) return;
+      scheduleBriefingSave();
+    });
+    document.addEventListener('click', (e) => {
+      const target = e.target;
+      if (!target) return;
+      if (target.closest('.dial-marks span, .dial-track, [data-group="stance"] .stance-pill, [data-group="timing"] .timing-cell')) {
+        scheduleBriefingSave();
+      }
+    });
+    window.addEventListener('beforeunload', () => {
+      if (briefingSaveTimer) clearTimeout(briefingSaveTimer);
+      try {
+        flushBriefingSave({ keepalive: true });
+      } catch (_err) {
+        // best effort only
+      }
+    });
+  }
+
+  function dateParts(value) {
+    const dt = new Date(`${String(value || '').slice(0, 10)}T12:00:00`);
+    return {
+      date: dt,
+      y: dt.getFullYear(),
+      m: dt.getMonth(),
+      d: dt.getDate(),
+      dayName: days[dt.getDay()],
+      monthName: months[dt.getMonth()]
+    };
+  }
+
+  function formatDateLabel(value) {
+    const p = dateParts(value);
+    return `${String(p.d).padStart(2, '0')} ${p.monthName}<span class="small">${p.dayName} · ${p.y}</span>`;
+  }
+
+  function themeFrom(text) {
+    const v = String(text || '').toLowerCase();
+    if (/bank|sbin|hdfc|finance|nbfc/.test(v)) return 'PSU Banks';
+    if (/defence|bel|bharat|army/.test(v)) return 'Defence';
+    if (/power/.test(v)) return 'Power';
+    if (/cap\s*goods|capital goods|infra|engineering/.test(v)) return 'Cap Goods';
+    if (/it\b|tech|software|data centre/.test(v)) return 'IT';
+    if (/rail|rvnl|irfc|railway/.test(v)) return 'Rail';
+    if (/ev|battery|energy|auto/.test(v)) return 'EV';
+    if (/metal|steel|mining/.test(v)) return 'Metals';
+    return 'Core';
+  }
+
+  function sectorLabel(text) {
+    const raw = String(text || '').trim();
+    if (!raw) return '';
+    const normalized = raw.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+    const lookup = {
+      'AQUACULTURE': 'Aquaculture',
+      'DATACENTRE': 'Data Centre',
+      'DEFENSE': 'Defence',
+      'POWER EQUIPMENT': 'Power Equipment',
+      'STEEL PIPES': 'Steel Pipes',
+    };
+    const upper = normalized.toUpperCase();
+    if (lookup[upper]) return lookup[upper];
+    return normalized
+      .toLowerCase()
+      .replace(/\b\w/g, ch => ch.toUpperCase());
+  }
+
+  function sectorChipClass(index) {
+    return index < 3 ? 'gold' : 'rest';
+  }
+
+  function renderSectorChips(items) {
+    const rows = Array.isArray(items) ? items.slice() : [];
+    const sorted = rows.sort((a, b) => {
+      const as = n(a?.sector_score);
+      const bs = n(b?.sector_score);
+      if (bs !== as) return bs - as;
+      return sectorLabel(a?.sector || '').localeCompare(sectorLabel(b?.sector || ''));
+    });
+    return sorted.slice(0, 5).map((item, idx) => {
+      const raw = String(item?.sector || item || '').trim();
+      if (!raw) return '';
+      const label = sectorLabel(raw);
+      const barsCount = idx < 3 ? 3 : 2;
+      return `<span class="chip ${sectorChipClass(idx)}">${esc(label)} ${bars(barsCount)}</span>`;
+    }).filter(Boolean).join('');
+  }
+
+  function statusChip(status) {
+    const v = String(status || '').toLowerCase();
+    if (v === 'safe' || v === 'active') return { text: 'SAFE', cls: 'safe' };
+    if (v === 'watch') return { text: 'WATCH', cls: 'watch' };
+    if (v === 'hold' || v === 'partial') return { text: 'HOLD', cls: 'hold' };
+    if (v === 'plan') return { text: 'PLAN', cls: 'plan' };
+    if (v === 'cond') return { text: 'COND', cls: 'cond' };
+    return { text: v ? v.toUpperCase() : 'NOTE', cls: 'watch' };
+  }
+
+  function protectChip(pos) {
+    const buy = n(pos.planEntry || pos.actualEntry || pos.cmp);
+    const sl = effectiveProtectStop(pos);
+    const cmp = n(pos.cmp);
+    const pctChange = buy ? ((cmp - buy) / buy) * 100 : 0;
+    if (pctChange >= 20) return { text: 'INSANE', cls: 'insane' };
+    if (pctChange >= 10) return { text: 'BRAVO', cls: 'bravo' };
+    if (sl >= buy) return { text: 'SAFE', cls: 'safe' };
+    return { text: 'HOLD', cls: 'hold' };
+  }
+
+  function effectiveProtectStop(pos) {
+    const initial = n(pos.planSL || pos.daySL || pos._initialSL || 0);
+    const trail = n(pos._currentSL || pos.trailOverride || pos.trailSL || pos.currentSL || 0);
+    return trail > 0 ? trail : initial;
+  }
+
+  function topRows(list, maxCount) {
+    return list.slice().sort((a, b) => {
+      const aw = Math.abs(n(a._realPnl)) + Math.abs(n(a._openPnl)) + n(a.conviction) * 10;
+      const bw = Math.abs(n(b._realPnl)) + Math.abs(n(b._openPnl)) + n(b.conviction) * 10;
+      return bw - aw;
+    }).slice(0, maxCount);
+  }
+
+  function themeCounts(list) {
+    const map = new Map();
+    list.forEach(pos => {
+      const theme = themeFrom(`${pos.symbol || ''} ${pos.merits || ''}`);
+      map.set(theme, (map.get(theme) || 0) + 1);
+    });
+    return Array.from(map.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  }
+
+  function bars(count) {
+    const on = Math.max(1, Math.min(3, Number(count) || 1));
+    return '<span class="strength">' + [0, 1, 2].map(i => `<i class="${i < on ? 'on' : ''}"></i>`).join('') + '</span>';
+  }
+
+  const symbolLookup = { timer: null, seq: 0, term: '' };
+
+  function setSymbolSuggestions(items) {
+    const list = document.getElementById('bhav-symbol-suggestions');
+    if (!list) return;
+    list.innerHTML = (Array.isArray(items) ? items : []).map(item => {
+      const symbol = esc(item?.symbol || '');
+      return `<option value="${symbol}"></option>`;
+    }).join('');
+  }
+
+  async function loadSymbolSuggestions(term) {
+    const clean = normalizeSymbol(term);
+    symbolLookup.term = clean;
+    if (!clean) {
+      setSymbolSuggestions([]);
+      return;
+    }
+    const seq = ++symbolLookup.seq;
+    try {
+      const payload = await api(`/api/symbols?term=${encodeURIComponent(clean)}&limit=12`);
+      if (seq !== symbolLookup.seq || symbolLookup.term !== clean) return;
+      setSymbolSuggestions(Array.isArray(payload.items) ? payload.items : []);
+    } catch (_err) {
+      if (seq === symbolLookup.seq) setSymbolSuggestions([]);
+    }
+  }
+
+  function bindSymbolLookup() {
+    document.querySelectorAll('.watch-row .sym-input').forEach(input => {
+      input.setAttribute('list', 'bhav-symbol-suggestions');
+      input.setAttribute('autocomplete', 'off');
+      input.setAttribute('autocorrect', 'off');
+      input.setAttribute('autocapitalize', 'characters');
+      input.setAttribute('spellcheck', 'false');
+      if (input.dataset.lookupBound) return;
+      input.dataset.lookupBound = '1';
+      input.addEventListener('input', () => {
+        const clean = normalizeSymbol(input.value);
+        if (input.value !== clean) input.value = clean;
+        clearTimeout(symbolLookup.timer);
+        symbolLookup.timer = setTimeout(() => loadSymbolSuggestions(clean), 120);
+      });
+      input.addEventListener('focus', () => loadSymbolSuggestions(input.value));
+    });
+  }
+
+  function bindWatchRowDeleteButtons() {
+    document.querySelectorAll('.watch-row .row-del').forEach(button => {
+      if (button.dataset.bound) return;
+      button.dataset.bound = '1';
+      button.addEventListener('click', () => {
+        const row = button.closest('.watch-row');
+        if (!row) return;
+        row.remove();
+        setSymbolSuggestions([]);
+        scheduleBriefingSave();
+      });
+    });
+  }
+
+  function watchRowHTML(item = {}, idx = 0) {
+    const focused = idx === 1 ? ' focused-row' : '';
+    const isBlank = !String(item.symbol || '').trim() && !String(item.why || '').trim();
+    const addClass = item.add || isBlank ? ' add' : '';
+    return `
+      <div class="watch-row${focused}${addClass}">
+        <input class="field sym-input" list="bhav-symbol-suggestions" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" value="${esc(item.symbol || '')}" placeholder="${item.placeholder || 'TICKER'}" />
+        <div class="why-wrap">
+          <input class="field${idx === 1 ? ' focused' : ''}" value="${esc(item.why || '')}" placeholder="${item.commentPlaceholder || 'why this stands out...'}" />
+          <button class="row-del" type="button" title="Delete row">🗑</button>
+        </div>
+      </div>`;
+  }
+
+  function bindWatchAddButton() {
+    const button = document.querySelector('.watch-add-btn');
+    if (!button || button.dataset.bound) return;
+    button.dataset.bound = '1';
+    button.addEventListener('click', () => {
+      const watch = document.querySelector('.watch-list');
+      if (!watch) return;
+      watch.insertAdjacentHTML('beforeend', watchRowHTML({ add: true, placeholder: 'TICKER', commentPlaceholder: 'why this stands out...' }, watch.querySelectorAll('.watch-row').length));
+      bindSymbolLookup();
+      bindWatchRowDeleteButtons();
+      const newRow = watch.querySelector('.watch-row:last-child .sym-input');
+      newRow?.focus();
+      newRow?.select?.();
+      scheduleBriefingSave();
+    });
+  }
+
+  function monthKey(value) {
+    const p = dateParts(value);
+    return `${p.y}-${String(p.m + 1).padStart(2, '0')}`;
+  }
+
+  function shiftSidebarMonth(delta) {
+    const base = sidebarMonth || monthKey(selectedDate || dashboard?.latest_date || new Date().toISOString().slice(0, 10));
+    const dt = new Date(`${base}-01T12:00:00`);
+    dt.setMonth(dt.getMonth() + delta);
+    sidebarMonth = dt.toISOString().slice(0, 7);
+    renderSidebar();
+  }
+
+  function attachDateControl() {
+    const subbar = document.querySelector('.subbar');
+    const dateNode = document.querySelector('.subbar .date');
+    if (!subbar || !dateNode || document.getElementById('date-prev')) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'date-wrap';
+    wrap.innerHTML = `
+      <button class="date-btn" id="date-prev" type="button">&lsaquo;</button>
+      <span class="date" id="briefing-date" tabindex="0"></span>
+      <button class="date-btn" id="date-next" type="button">&rsaquo;</button>
+      <input class="date-input" id="briefing-date-input" type="date">
+    `;
+    dateNode.replaceWith(wrap);
+  }
+
+  function renderSubbar() {
+    attachDateControl();
+    const label = document.getElementById('briefing-date');
+    const input = document.getElementById('briefing-date-input');
+    if (label) label.innerHTML = formatDateLabel(selectedDate);
+    if (input) input.value = selectedDate;
+
+    const items = Array.isArray(dashboard?.last_core_positions) ? dashboard.last_core_positions : [];
+    const seq = document.querySelector('.seq');
+    if (seq) {
+      seq.innerHTML = items.map(item => {
+        const status = String(item.status || '').toUpperCase() === 'L' ? 'l' : 'w';
+        return `<i class="${status}">${status === 'w' ? 'W' : 'L'}</i>`;
+      }).join('');
+    }
+
+    const openStat = document.querySelector('.miniStat.openStat .v');
+    const plannedStat = document.querySelector('.miniStat.plannedStat .v');
+    const exposureStat = document.querySelector('.miniStat.exposureStat .v');
+    if (openStat) openStat.textContent = String(n(currentDay?.open_positions_count));
+    if (plannedStat) plannedStat.textContent = String(n(currentDay?.planning_count));
+    if (exposureStat) exposureStat.textContent = currentDay?.exposure_pct != null ? `${Number(currentDay.exposure_pct).toFixed(1)}%` : '-';
+
+    const prev = document.getElementById('date-prev');
+    const next = document.getElementById('date-next');
+    if (prev && !prev.dataset.bound) {
+      prev.dataset.bound = '1';
+      prev.addEventListener('click', async () => {
+        await flushBriefingSave({ keepalive: true }).catch(() => {});
+        shiftDay(-1);
+      });
+    }
+    if (next && !next.dataset.bound) {
+      next.dataset.bound = '1';
+      next.addEventListener('click', async () => {
+        await flushBriefingSave({ keepalive: true }).catch(() => {});
+        shiftDay(1);
+      });
+    }
+    if (label && !label.dataset.bound) {
+      label.dataset.bound = '1';
+      label.addEventListener('click', () => input && input.showPicker ? input.showPicker() : input?.click());
+      label.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          input && input.showPicker ? input.showPicker() : input?.click();
+        }
+      });
+    }
+    if (input && !input.dataset.bound) {
+      input.dataset.bound = '1';
+      input.addEventListener('change', async () => {
+        if (!input.value) return;
+        await flushBriefingSave({ keepalive: true }).catch(() => {});
+        await loadDay(input.value);
+        history.replaceState({}, '', `?date=${selectedDate}`);
+      });
+    }
+  }
+
+  function renderTopStats() {
+    const capital = n(currentDay?.settings?.available_capital || dashboard?.settings?.available_capital);
+    const exposure = n(currentDay?.exposure);
+    const openRisk = n(currentDay?.carried_risk_total);
+    const free = capital - exposure;
+    document.querySelectorAll('.topstats .stat').forEach(stat => {
+      const label = stat.querySelector('.lbl')?.textContent || '';
+      const val = stat.querySelector('.val');
+      if (!val) return;
+      if (/open risk/i.test(label)) val.textContent = money(openRisk);
+      else if (/capital/i.test(label)) val.textContent = money(capital);
+      else if (/free/i.test(label)) val.textContent = money(free);
+    });
+  }
+
+  function renderSidebar() {
+    const p = dateParts(selectedDate);
+    const month = sidebarMonth || monthKey(selectedDate);
+    const monthParts = dateParts(`${month}-01`);
+    const items = (dashboard?.items || []).filter(item => String(item.date || '').slice(0, 7) === month).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    const net = (item) => n(item.realized_pnl) + n(item.open_pnl);
+    const tradeDays = items.filter(item => n(item.open_positions_count) > 0 || n(item.planning_count) > 0 || n(item.closed_count) > 0).length;
+    const tradesTaken = items.reduce((sum, item) => sum + n(item.trade_count), 0);
+    const winDays = items.filter(item => net(item) > 0).length;
+    const lossDays = items.filter(item => net(item) < 0).length;
+    const winRate = items.length ? Math.round((winDays / items.length) * 100) : 0;
+    const highlights = dashboard?.highlights || {};
+    const highestExposure = highlights.highest_exposure || {};
+    const biggestPosition = highlights.biggest_position || {};
+    const biggestWinner = highlights.biggest_winner || {};
+
+    const sideHead = document.querySelector('.side-head');
+    const sideDay = document.querySelector('.side-day');
+    const sideLabel = document.getElementById('sidebar-month-label');
+    if (sideLabel) sideLabel.textContent = `${monthParts.monthName} · Recent Sessions`;
+    if (sideHead && !sideHead.dataset.bound) {
+      sideHead.dataset.bound = '1';
+      const prevMonth = document.getElementById('sidebar-month-prev');
+      const nextMonth = document.getElementById('sidebar-month-next');
+      prevMonth?.addEventListener('click', () => shiftSidebarMonth(-1));
+      nextMonth?.addEventListener('click', () => shiftSidebarMonth(1));
+    }
+    if (sideDay) {
+      const d = sideDay.querySelector('.d');
+      const meta = sideDay.querySelector('.meta');
+      if (d) d.textContent = String(p.d);
+      if (meta) meta.textContent = `${p.dayName} · ${p.y}`;
+    }
+    const quick = document.querySelectorAll('.quick-row .quick-cell');
+    if (quick[0]) quick[0].querySelector('.v').textContent = String(tradeDays);
+    if (quick[1]) quick[1].querySelector('.v').textContent = String(tradesTaken);
+    if (quick[2]) quick[2].querySelector('.v').textContent = String(items.filter(item => n(item.open_positions_count) > 0).length);
+
+    const cal = document.querySelector('.cal');
+    if (cal) {
+      cal.innerHTML = items.map(item => {
+        const pp = dateParts(item.date);
+        const exposure = n(item.exposure);
+        const exposurePct = item.exposure_pct != null ? `${Number(item.exposure_pct).toFixed(1)}%` : '';
+        const cls = n(item.planning_count) > 0 ? 'plan' : exposure > 0 ? 'win' : 'flat';
+        const typ = exposurePct;
+        const pl = nf0.format(Math.round(Math.abs(exposure)));
+        return `<button class="day ${cls}${String(item.date).slice(0, 10) === selectedDate ? ' today' : ''}" type="button" data-date="${esc(String(item.date).slice(0, 10))}"><span class="num">${pp.d}</span><span class="typ">${typ}</span><span class="pl">${pl}</span></button>`;
+      }).join('');
+    }
+    if (cal && !cal.dataset.bound) {
+      cal.dataset.bound = '1';
+      cal.addEventListener('click', async (e) => {
+        const btn = e.target.closest('.day[data-date]');
+        if (!btn) return;
+        const date = btn.getAttribute('data-date');
+        if (!date || date === selectedDate) return;
+        await flushBriefingSave({ keepalive: true }).catch(() => {});
+        await loadDay(date);
+        history.replaceState({}, '', `?date=${selectedDate}`);
+      });
+    }
+
+    const monthSummary = document.querySelector('.month-summary');
+    if (monthSummary) {
+      const msTitle = monthSummary.querySelector('.ms-title');
+      if (msTitle) msTitle.textContent = 'HIGHS';
+      const highestExposureCell = monthSummary.querySelector('#month-highest-exposure');
+      const biggestPositionCell = monthSummary.querySelector('#month-biggest-position');
+      const biggestWinnerCell = monthSummary.querySelector('#month-biggest-winner');
+      const highestOpenCell = monthSummary.querySelector('#month-highest-open-positions');
+      if (highestExposureCell) {
+        const amount = Number(highestExposure.amount || 0);
+        const pct = Number(highestExposure.pct || 0);
+        highestExposureCell.textContent = amount > 0 ? `${String(Math.round(amount))} (${Math.round(pct)}%)` : '-';
+      }
+      if (biggestPositionCell) {
+        biggestPositionCell.textContent = biggestPosition.value ? `${String(Math.round(n(biggestPosition.value)))}` : '-';
+      }
+      if (biggestWinnerCell) {
+        biggestWinnerCell.textContent = biggestWinner.pct != null ? `${n(biggestWinner.pct) >= 0 ? '+' : ''}${Number(biggestWinner.pct || 0).toFixed(1)}%` : '-';
+      }
+      if (highestOpenCell) {
+        const count = Number(highlights.highest_open_positions?.count || 0);
+        highestOpenCell.textContent = count > 0 ? String(count) : '-';
+      }
+    }
+
+    const upcomingPanel = document.querySelector('.earnings-box');
+    if (upcomingPanel) {
+      const earningsList = upcomingPanel.querySelector('#month-earnings-list');
+      if (earningsList) {
+        const earnings = Array.isArray(currentDay?.earnings_due) ? currentDay.earnings_due : [];
+        if (earnings.length) {
+          earningsList.innerHTML = earnings.map(row => {
+            const symbol = String(row.symbol || 'TICKER');
+            const ann = String(row.announcement_date || '');
+            return `<div class="earn-row"><div class="sym">${esc(symbol)}</div><div class="meta">${esc(ann)}</div></div>`;
+          }).join('');
+        } else {
+          earningsList.innerHTML = '<div class="earn-empty">No open or planned positions with earnings in the next 3 days.</div>';
+        }
+      }
+    }
+  }
+
+  function renderPlan() {
+    const positions = currentDay?.positions || [];
+    const sorted = topRows(positions, 5);
+    const textarea = document.querySelector('.gameplan textarea.field');
+    if (textarea) textarea.value = sorted.length ? `${sorted[0].symbol || 'TICKER'} leading. ${sorted[0].merits || 'Stay with the cleanest setup.'} ${planTail(sorted)}` : 'Wait for clean setups. Keep the first 15 min neutral.';
+
+    const chips = document.querySelector('.chips');
+    if (chips) {
+      const list = themeCounts(sorted).slice(0, 5);
+      chips.innerHTML = list.map(([theme, count]) => `<span class="chip ${theme === 'PSU Banks' || theme === 'Defence' ? 'hot' : theme === 'Power' || theme === 'Cap Goods' ? 'warm' : 'cool'}">${esc(theme)} ${bars(count)}</span>`).join('');
+    }
+
+    const watch = document.querySelector('.watch-list');
+    if (watch) {
+      const rows = sorted.slice(0, 5).map((pos, idx) => {
+        return `
+          <div class="watch-row${idx === 1 ? ' focused-row' : ''}">
+            <input class="field sym-input" list="bhav-symbol-suggestions" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" value="${esc(pos.symbol || '')}" />
+            <div class="why-wrap">
+              <input class="field${idx === 1 ? ' focused' : ''}" value="${esc(pos.merits || pos.trailNote || '')}" />
+            </div>
+          </div>`;
+      });
+      while (rows.length < 5) {
+        rows.push(`
+          <div class="watch-row add">
+            <input class="field sym-input" list="bhav-symbol-suggestions" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" placeholder="TICKER" />
+            <div class="why-wrap">
+              <input class="field" placeholder="why this stands out..." />
+            </div>
+          </div>`);
+      }
+      watch.innerHTML = rows.join('');
+    }
+  }
+
+  function protectRow(pos, checked = null) {
+    const status = protectChip(pos);
+    const cmp = n(pos.cmp);
+    const sl = effectiveProtectStop(pos);
+    const buy = n(pos.planEntry || pos.actualEntry || pos.cmp);
+        const qtyVal = pos._rem != null ? pos._rem : (pos.actualQty != null ? pos.actualQty : (pos._qty || pos._predQty || 0));
+    const pctChange = buy ? ((cmp - buy) / buy) * 100 : 0;
+    const fill = Math.max(18, Math.min(88, 55 + pctChange * 2));
+    const barColor = status.cls === 'safe' ? 'var(--green-dim)' : status.cls === 'bravo' ? 'var(--amber-dim)' : status.cls === 'insane' ? 'var(--cyan-dim)' : 'var(--purple-dim)';
+    const defaultChecked = status.cls === 'safe' || status.cls === 'bravo' || status.cls === 'insane';
+    const isChecked = checked == null ? defaultChecked : !!checked;
+    return `
+      <div class="pos ${status.cls}${isChecked ? ' executed' : ''}" data-protect-key="${esc(execKey(pos))}" style="--fill:${fill}%;--bar-color:${barColor}">
+        <span class="chk${isChecked ? ' on' : ''}" role="checkbox" aria-checked="${isChecked ? 'true' : 'false'}" tabindex="0" title="Mark protected">${isChecked ? '✓' : ''}</span>
+        <div class="pos-left">
+          <div class="pos-top"><span class="ticker">${esc(pos.symbol || 'SYMBOL')}</span><span class="pill ${status.cls}">${status.text}</span></div>
+        </div>
+        <div class="pos-mid">
+          <div class="risk-meta"><span class="sl">${fmt0(sl)}</span><span class="buy">${fmt0(buy)}</span><span class="cmp">${fmt0(cmp)}</span></div>
+          <div class="risk-bar"><span class="risk-fill"></span><span class="risk-dot"></span></div>
+        </div>
+        <div class="price-col${pctChange < 0 ? ' neg' : ''}">
+          <span class="price-pct">${pct(pctChange)}</span>
+        </div>
+        <div class="prot-qty"><span class="pq-v">${qty(qtyVal)}</span><span class="pq-l">sh</span></div>
+        <div class="prot-sl"><span class="price">${price(sl)}</span></div>
+      </div>`;
+  }
+
+  function execRow(pos, checked = false) {
+    const status = String(pos._status || 'plan').toLowerCase() === 'cond' ? 'cond' : 'plan';
+    const pdl = n(pos.planSL || pos.daySL || pos._currentSL) * 0.98;
+    const sl = n(pos.planSL || pos.daySL || pos._currentSL);
+    const cmp = n(pos.cmp);
+    const buy = n(pos.planEntry || pos.actualEntry || pos.cmp);
+        const qtyVal = pos._rem != null ? pos._rem : (pos.actualQty != null ? pos.actualQty : (pos._qty || pos._predQty || 0));
+    const riskAmt = n(pos.riskAmount || pos._planRisk);
+    const key = execKey(pos);
+    const rowClass = checked ? ' executed' : '';
+    return `
+      <div class="pos ${status}${rowClass}" data-exec-key="${esc(key)}" data-exec-symbol="${esc(pos.symbol || '')}" style="--pdl:16%;--sl:34%;--cmp:54%;--buy:80%">
+        <span class="chk${checked ? ' on' : ''}" role="checkbox" aria-checked="${checked ? 'true' : 'false'}" tabindex="0" title="Mark executed">${checked ? '✓' : ''}</span>
+        <div class="exec-left"><span class="ticker">${esc(pos.symbol || 'SYMBOL')}</span></div>
+        <div class="exec-mid">
+          <div class="exec-bar">
+            <span class="exec-marker pdl"></span>
+            <span class="exec-marker sl"></span>
+            <span class="exec-marker cmp"></span>
+            <span class="exec-marker buy"></span>
+          </div>
+          <div class="exec-scale">
+            <span class="pdl">${fmt0(pdl)}</span>
+            <span class="sl">${fmt0(sl)}</span>
+            <span class="cmp">${fmt0(cmp)}</span>
+            <span class="buy">${fmt0(buy)}</span>
+          </div>
+        </div>
+        <div class="exec-qty">${qty(qtyVal)}</div>
+        <div class="exec-buy">${price(buy)}</div>
+        <div class="exec-sl">${price(sl)}</div>
+        <div class="exec-risk">${money(riskAmt)}</div>
+      </div>`;
+  }
+
+  function fmt0(v) {
+    return nf0.format(Math.round(n(v)));
+  }
+
+  function execKey(pos) {
+    return normalizeSymbol(pos?.id || pos?.symbol || pos?.entryDate || '');
+  }
+
+  function planTail(list) {
+    if (!list.length) return '';
+    const themes = themeCounts(list).slice(0, 2).map(([t]) => t.toLowerCase()).join(' and ');
+    return themes ? `Keep ${themes} in focus.` : '';
+  }
+
+  function renderPanels() {
+    const positions = currentDay?.positions || [];
+    const sorted = topRows(positions, 7);
+    const protectRows = topRows(positions, 7);
+    const plannedOnly = topRows(
+      positions.filter(pos => n(pos.actualQty) <= 0 && n(pos.coreQty) <= 0),
+      7
+    );
+    const sectorSummary = currentDay?.sector_summary && typeof currentDay.sector_summary === 'object'
+      ? currentDay.sector_summary
+      : null;
+    const briefing = currentDay?.briefing && typeof currentDay.briefing === 'object'
+      ? normalizeBriefing(currentDay.briefing)
+      : briefingDefaults(sorted);
+    const protectChecks = briefing.protectChecks || {};
+    const execChecks = briefing.executeChecks || {};
+    const prot = document.querySelector('.prot-list');
+    const exec = document.querySelector('.exec-list');
+    if (prot) {
+      prot.innerHTML = protectRows.map(pos => {
+        const key = execKey(pos);
+        const checked = Object.prototype.hasOwnProperty.call(protectChecks, key) ? !!protectChecks[key] : null;
+        return protectRow(pos, checked);
+      }).join('');
+    }
+    if (exec) {
+      exec.innerHTML = plannedOnly.length
+        ? plannedOnly.map(pos => execRow(pos, !!execChecks[execKey(pos)])).join('')
+        : `<div class="briefing-empty">No planned positions without core qty.</div>`;
+    }
+
+    const chips = document.querySelector('.sectors-chips');
+    if (chips) {
+      chips.innerHTML = renderSectorChips(sectorSummary?.items || []);
+    }
+
+    const selectAll = document.querySelector('.protect-all-btn');
+    const syncProtectSelectAllLabel = () => {
+      if (!selectAll) return;
+      const rows = Array.from(document.querySelectorAll('.prot-list .pos'));
+      const allChecked = rows.length > 0 && rows.every(row => row.classList.contains('executed') || row.querySelector('.chk')?.classList.contains('on'));
+      const ico = selectAll.querySelector('.ico');
+      if (ico) ico.textContent = allChecked ? '☑' : '☐';
+      selectAll.setAttribute('aria-label', allChecked ? 'Deselect all' : 'Select all');
+      selectAll.title = allChecked ? 'Deselect all' : 'Select all';
+    };
+    syncProtectSelectAllLabel();
+
+    document.querySelectorAll('.prot-list .pos .chk').forEach(c => {
+      if (c.dataset.bound) return;
+      c.dataset.bound = '1';
+      const toggle = () => {
+        const row = c.closest('.pos');
+        if (!row) return;
+        const key = normalizeSymbol(row.dataset.protectKey || row.dataset.execKey || row.dataset.execSymbol || '');
+        if (!key) return;
+        const checked = !c.classList.contains('on');
+        c.classList.toggle('on', checked);
+        c.textContent = checked ? '✓' : '';
+        c.setAttribute('aria-checked', checked ? 'true' : 'false');
+        row.classList.toggle('executed', checked);
+        const base = currentDay?.briefing && typeof currentDay.briefing === 'object'
+          ? normalizeBriefing(currentDay.briefing)
+          : briefingDefaults([]);
+        base.protectChecks[key] = checked;
+        if (currentDay && typeof currentDay === 'object') currentDay.briefing = base;
+        syncProtectSelectAllLabel();
+        scheduleBriefingSave();
+      };
+      c.addEventListener('click', toggle);
+      c.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          toggle();
+        }
+      });
+    });
+
+    if (selectAll && !selectAll.dataset.bound) {
+      selectAll.dataset.bound = '1';
+      selectAll.addEventListener('click', () => {
+        const rows = Array.from(document.querySelectorAll('.prot-list .pos'));
+        if (!rows.length) return;
+        const base = currentDay?.briefing && typeof currentDay.briefing === 'object'
+          ? normalizeBriefing(currentDay.briefing)
+          : briefingDefaults([]);
+        const allChecked = rows.every(row => row.classList.contains('executed') || row.querySelector('.chk')?.classList.contains('on'));
+        rows.forEach(row => {
+          const c = row.querySelector('.chk');
+          const key = normalizeSymbol(row.dataset.protectKey || row.dataset.execKey || row.dataset.execSymbol || '');
+          if (!c || !key) return;
+          const checked = !allChecked;
+          c.classList.toggle('on', checked);
+          c.textContent = checked ? '✓' : '';
+          c.setAttribute('aria-checked', checked ? 'true' : 'false');
+          row.classList.toggle('executed', checked);
+          base.protectChecks[key] = checked;
+        });
+        if (currentDay && typeof currentDay === 'object') currentDay.briefing = base;
+        syncProtectSelectAllLabel();
+        scheduleBriefingSave();
+      });
+    }
+
+    document.querySelectorAll('.exec-list .pos .chk').forEach(c => {
+      if (c.dataset.bound) return;
+      c.dataset.bound = '1';
+      const toggle = () => {
+        const row = c.closest('.pos');
+        if (!row) return;
+        const key = normalizeSymbol(row.dataset.execKey || row.dataset.execSymbol || '');
+        if (!key) return;
+        const checked = !c.classList.contains('on');
+        c.classList.toggle('on', checked);
+        c.textContent = checked ? '✓' : '';
+        c.setAttribute('aria-checked', checked ? 'true' : 'false');
+        row.classList.toggle('executed', checked);
+        const base = currentDay?.briefing && typeof currentDay.briefing === 'object'
+          ? normalizeBriefing(currentDay.briefing)
+          : briefingDefaults([]);
+        base.executeChecks[key] = checked;
+        if (currentDay && typeof currentDay === 'object') currentDay.briefing = base;
+        scheduleBriefingSave();
+      };
+      c.addEventListener('click', toggle);
+      c.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          toggle();
+        }
+      });
+    });
+  }
+
+  function renderClosing() {
+    const positions = currentDay?.positions || [];
+    const sorted = topRows(positions, 4);
+    const hasSavedBriefing = currentDay?.briefing && typeof currentDay.briefing === 'object' && Object.keys(currentDay.briefing).length > 0;
+    const briefing = hasSavedBriefing ? normalizeBriefing(currentDay.briefing) : null;
+    const titles = ['Discipline', 'Process', 'Patience', 'Execution'];
+    document.querySelectorAll('.win-card').forEach((card, idx) => {
+      const title = card.querySelector('.title-input');
+      const desc = card.querySelector('.desc-input');
+      const check = card.querySelector('.check');
+      const saved = briefing?.closing?.cards?.[idx];
+      if (hasSavedBriefing) {
+        if (title) title.value = saved?.title || '';
+        if (desc) desc.value = saved?.desc || '';
+      } else {
+        const note = sorted[idx]?.trailNote || sorted[idx]?.merits || '';
+        if (title && note) title.value = `${titles[idx]} with ${sorted[idx]?.symbol || 'the plan'}`;
+        if (desc && note) desc.value = note;
+      }
+      if (check) check.textContent = desc && desc.value.trim() ? String.fromCharCode(10003) : String.fromCharCode(9675);
+    });
+    const best = sorted[0];
+    const bestPill = document.querySelector('.best .ticker-pill');
+    const bestText = document.querySelector('.best .text-input');
+    if (bestPill && best) bestPill.textContent = `${best.symbol || 'TICKER'} · ${best._openPnl >= 0 ? '+' : '-'}${nf0.format(Math.abs(n(best._openPnl)))}`;
+    if (bestText) bestText.value = hasSavedBriefing ? (briefing?.closing?.bestMoment || '') : (best?.trailNote || best?.merits || bestText.value);
+    const affirm = document.querySelector('.affirm .text');
+    if (affirm) affirm.innerHTML = 'I am the kind of trader who <span class="em">trusts the prep</span>, <span class="em">honors the stop</span>, and <span class="em">lets the process do the work</span>.';
+  }
+  function renderTopStats() {
+    const capital = n(currentDay?.settings?.available_capital || dashboard?.settings?.available_capital);
+    const exposure = n(currentDay?.exposure);
+    const free = capital - exposure;
+    document.querySelectorAll('.topstats .stat').forEach(stat => {
+      const label = stat.querySelector('.lbl')?.textContent || '';
+      const val = stat.querySelector('.val');
+      if (!val) return;
+      if (/open risk/i.test(label)) val.textContent = money(currentDay?.carried_risk_total);
+      else if (/capital/i.test(label)) val.textContent = money(capital);
+      else if (/free/i.test(label)) val.textContent = money(free);
+    });
+  }
+
+  function renderPlan() {
+    const positions = currentDay?.positions || [];
+    const sorted = topRows(positions, 5);
+    const hasSavedBriefing = currentDay?.briefing && typeof currentDay.briefing === 'object' && Object.keys(currentDay.briefing).length > 0;
+    const briefing = hasSavedBriefing ? normalizeBriefing(currentDay.briefing) : briefingDefaults(sorted);
+    const sectorSummary = currentDay?.sector_summary && typeof currentDay.sector_summary === 'object'
+      ? currentDay.sector_summary
+      : null;
+    const textarea = document.querySelector('.gameplan textarea.field');
+    if (textarea) textarea.value = briefing.gamePlan || planText(sorted);
+    const chips = document.querySelector('.sectors-chips') || document.querySelector('.chips');
+    if (chips) {
+      chips.innerHTML = renderSectorChips(sectorSummary?.items || []);
+    }
+    const watch = document.querySelector('.watch-list');
+    if (watch) {
+      const rows = briefing.watchlist.map((item, idx) => watchRowHTML(item, idx)).join('');
+      watch.innerHTML = rows;
+      bindSymbolLookup();
+      bindWatchRowDeleteButtons();
+      bindWatchAddButton();
+      applyBriefingSelections(briefing);
+      applyAggressionValue(briefing.aggression);
+    }
+    updateGamePlanLock();
+  }
+  function renderAll() {
+    renderTopStats();
+    renderSubbar();
+    renderSidebar();
+    renderPlan();
+    renderPanels();
+    renderClosing();
+  }
+
+  async function loadDay(date) {
+    selectedDate = String(date || '').slice(0, 10);
+    sidebarMonth = monthKey(selectedDate);
+    currentDay = await api(`/api/day-view?date=${encodeURIComponent(selectedDate)}`);
+    renderAll();
+    bindWatchRowDeleteButtons();
+  }
+
+  async function shiftDay(delta) {
+    const dt = new Date(`${selectedDate}T12:00:00`);
+    dt.setDate(dt.getDate() + delta);
+    await loadDay(dt.toISOString().slice(0, 10));
+    history.replaceState({}, '', `?date=${selectedDate}`);
+  }
+
+  function planText(list) {
+    if (!list.length) return 'Wait for clean setups. Keep the first 15 min neutral.';
+    const head = list[0]?.symbol || 'the best name';
+    const t = list.slice(0, 2).map(p => p.merits || '').filter(Boolean).join(' ');
+    return `${head} is the lead. ${t || 'Stay with the cleanest setup.'} Keep the first 15 min neutral, size up only on confirmation, and avoid weak noise.`;
+  }
+
+  async function init() {
+    document.body.style.visibility = 'hidden';
+    dashboard = await api('/api/dashboard');
+    if (!selectedDate) selectedDate = dashboard.latest_date || new Date().toISOString().slice(0, 10);
+    await loadDay(selectedDate);
+    renderAll();
+    bindBriefingAutosave();
+    updateGamePlanLock();
+    if (!gamePlanLockTimer) gamePlanLockTimer = setInterval(updateGamePlanLock, 30000);
+    document.body.style.visibility = 'visible';
+    const input = document.getElementById('briefing-date-input');
+    if (input && !input.dataset.bound) {
+      input.dataset.bound = '1';
+      input.addEventListener('change', async () => {
+        if (!input.value) return;
+        await loadDay(input.value);
+        history.replaceState({}, '', `?date=${selectedDate}`);
+      });
+    }
+    const label = document.getElementById('briefing-date');
+    if (label && !label.dataset.bound) {
+      label.dataset.bound = '1';
+      label.addEventListener('click', () => input && input.showPicker ? input.showPicker() : input?.click());
+      label.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          input && input.showPicker ? input.showPicker() : input?.click();
+        }
+      });
+    }
+  }
+
+  init().catch(err => {
+    console.error(err);
+    document.body.style.visibility = 'visible';
+  });
+})();
+</script>
 </body>
 </html>
+
+

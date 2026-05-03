@@ -1,0 +1,452 @@
+{
+    "date":  "2026-04-23",
+    "saved_at":  "2026-05-02T10:26:46",
+    "positions":  [
+                      {
+                          "id":  "p17768445300488kdi",
+                          "symbol":  "KRN",
+                          "merits":  "HOT SECTOR .MASSIVE .FALLING WEDGES ARE IN VOGUE . other datacentre related stuff is firing / IDEA IS TO GET SMALL OVERNIGHT QTY IF IT CLOSES STRONG HERE .THEN ADD ON BREAK OF DAY\u0027S HIGH . buy 5 min orb . then add on break of PDH",
+                          "conviction":  3,
+                          "cmp":  1284.1,
+                          "planEntry":  1226.1,
+                          "planSL":  1182.9,
+                          "tacticalEntry":  1205.2,
+                          "tacticalSL":  null,
+                          "tacticalRiskPct":  30,
+                          "coreQty":  50,
+                          "coreEntry":  1208.2,
+                          "riskAmount":  4000,
+                          "actualEntry":  null,
+                          "daySL":  null,
+                          "actualQty":  null,
+                          "tacticalQty":  20,
+                          "entryDate":  "2026-04-23",
+                          "posHigh":  null,
+                          "trailOverride":  null,
+                          "trailNote":  "",
+                          "thoughtTag":  "ENTRY",
+                          "thoughtLog":  [
+                                             {
+                                                 "ts":  "2026-04-23T03:53:48.009Z",
+                                                 "tag":  "NOTE",
+                                                 "text":  "wait for trigger orb and day\u0027s break"
+                                             },
+                                             {
+                                                 "ts":  "2026-04-23T05:03:50.638Z",
+                                                 "tag":  "NOTE",
+                                                 "text":  "tanking after morning surge.we hold the SL.taking some $$ helps"
+                                             },
+                                             {
+                                                 "ts":  "2026-04-23T08:38:02.065Z",
+                                                 "tag":  "NOTE",
+                                                 "text":  "nice i managed to hold ."
+                                             },
+                                             {
+                                                 "ts":  "2026-04-23T08:38:13.916Z",
+                                                 "tag":  "NOTE",
+                                                 "text":  "ran away , no fill"
+                                             },
+                                             {
+                                                 "ts":  "2026-04-23T08:38:24.637Z",
+                                                 "tag":  "ENTRY",
+                                                 "text":  "ran away no fill"
+                                             }
+                                         ],
+                          "movedBE":  false,
+                          "trims":  [
+                                        {
+                                            "pct":  3,
+                                            "type":  "fixed",
+                                            "ap":  1246,
+                                            "sq":  25,
+                                            "dt":  "2026-04-23",
+                                            "done":  true,
+                                            "_sug":  1243.56,
+                                            "_pnl":  967
+                                        },
+                                        {
+                                            "pct":  10,
+                                            "type":  "trail",
+                                            "ap":  null,
+                                            "sq":  null,
+                                            "dt":  "",
+                                            "done":  false,
+                                            "_sug":  1291.85,
+                                            "_pnl":  null
+                                        },
+                                        {
+                                            "pct":  15,
+                                            "type":  "fixed",
+                                            "ap":  null,
+                                            "sq":  null,
+                                            "dt":  "",
+                                            "done":  false,
+                                            "_sug":  1388.44,
+                                            "_pnl":  null
+                                        },
+                                        {
+                                            "pct":  25,
+                                            "type":  "fixed",
+                                            "ap":  null,
+                                            "sq":  null,
+                                            "dt":  "",
+                                            "done":  false,
+                                            "_sug":  1509.17,
+                                            "_pnl":  null
+                                        }
+                                    ],
+                          "mgmt":  {
+                                       "checklist":  [
+                                                         [
+                                                             false,
+                                                             false,
+                                                             false
+                                                         ],
+                                                         [
+                                                             false,
+                                                             false,
+                                                             false
+                                                         ],
+                                                         [
+                                                             false,
+                                                             false,
+                                                             false
+                                                         ]
+                                                     ],
+                                       "note":  "",
+                                       "fe":  false,
+                                       "fsl":  false,
+                                       "ft":  false,
+                                       "fbe":  false
+                                   },
+                          "collapsed":  false,
+                          "_coreRps":  43.19999999999982,
+                          "_blendRps":  43.2,
+                          "_rps":  43.2,
+                          "_qty":  112,
+                          "_predQty":  92,
+                          "_predRisk":  3974.4,
+                          "_planRisk":  3974.4,
+                          "_suggestedQty":  21,
+                          "_rem":  45,
+                          "_realPnl":  967,
+                          "_openPnl":  3454,
+                          "_currentSL":  1182.9,
+                          "_days":  9,
+                          "_beSug":  true,
+                          "_status":  "partial",
+                          "_tacticalRps":  null,
+                          "_actualRps":  null,
+                          "_availableRisk":  4000,
+                          "_suggestedTacticalQty":  28,
+                          "_tacticalQty":  20,
+                          "_tacticalRisk":  0,
+                          "_actualRisk":  0,
+                          "_avgEntry":  1222.37,
+                          "_avgSL":  1182.9,
+                          "_avgQty":  112,
+                          "_execAvgEntry":  1207.34,
+                          "_execAvgQty":  70,
+                          "_avgTacticalEntry":  1207.34,
+                          "_avgPlanEntry":  1222.37,
+                          "_blendPct":  3.53,
+                          "coreSL":  1182.9
+                      },
+                      {
+                          "id":  "p177668820105994bp",
+                          "symbol":  "ARSSBL",
+                          "merits":  "CAPITAL MARKET STOCKS ARE DOING WELL . HAD GOOD EARNINGS. 5 min orb. increase size if breakout if after a gap down or later in the day",
+                          "conviction":  3,
+                          "cmp":  585,
+                          "planEntry":  590.1,
+                          "planSL":  575.9,
+                          "tacticalEntry":  576.3,
+                          "tacticalSL":  569.9,
+                          "tacticalRiskPct":  30,
+                          "coreQty":  172,
+                          "coreEntry":  589.74,
+                          "riskAmount":  3000,
+                          "actualEntry":  null,
+                          "daySL":  null,
+                          "actualQty":  null,
+                          "tacticalQty":  15,
+                          "entryDate":  "2026-04-21",
+                          "posHigh":  null,
+                          "trailOverride":  584.9,
+                          "trailNote":  "Trail SL updated to Rs 584.9",
+                          "thoughtTag":  "EXIT",
+                          "thoughtLog":  [
+                                             {
+                                                 "ts":  "2026-04-22T05:44:02.955Z",
+                                                 "tag":  "NOTE",
+                                                 "text":  "we continue to hold ,sl diviied up between 583 and t76"
+                                             },
+                                             {
+                                                 "ts":  "2026-04-23T09:46:00.600Z",
+                                                 "tag":  "EXIT",
+                                                 "text":  "sold remaining at 584.05 . kudos"
+                                             }
+                                         ],
+                          "movedBE":  false,
+                          "trims":  [
+                                        {
+                                            "pct":  3,
+                                            "type":  "fixed",
+                                            "ap":  597.7,
+                                            "sq":  87,
+                                            "dt":  "2026-04-21",
+                                            "done":  true,
+                                            "_sug":  606.32,
+                                            "_pnl":  786
+                                        },
+                                        {
+                                            "pct":  10,
+                                            "type":  "trail",
+                                            "ap":  584.05,
+                                            "sq":  100,
+                                            "dt":  "2026-04-23",
+                                            "done":  true,
+                                            "_sug":  629.87,
+                                            "_pnl":  -461
+                                        },
+                                        {
+                                            "pct":  15,
+                                            "type":  "fixed",
+                                            "ap":  null,
+                                            "sq":  null,
+                                            "dt":  "",
+                                            "done":  false,
+                                            "_sug":  676.96,
+                                            "_pnl":  null
+                                        },
+                                        {
+                                            "pct":  25,
+                                            "type":  "fixed",
+                                            "ap":  null,
+                                            "sq":  null,
+                                            "dt":  "",
+                                            "done":  false,
+                                            "_sug":  735.82,
+                                            "_pnl":  null
+                                        }
+                                    ],
+                          "mgmt":  {
+                                       "checklist":  [
+                                                         [
+                                                             false,
+                                                             false,
+                                                             false
+                                                         ],
+                                                         [
+                                                             false,
+                                                             false,
+                                                             false
+                                                         ],
+                                                         [
+                                                             true,
+                                                             false,
+                                                             false
+                                                         ]
+                                                     ],
+                                       "note":  "big up open bar .very sticky breakout.. rolling over . reduce risk here .sold some qty . holding patiently , will see the plan through . relative volume is nice stick with it",
+                                       "fe":  true,
+                                       "fsl":  false,
+                                       "ft":  false,
+                                       "fbe":  false
+                                   },
+                          "collapsed":  false,
+                          "_predRisk":  2896.8,
+                          "_predQty":  204,
+                          "_qty":  219,
+                          "_rps":  13.67,
+                          "_rr":  "6.9",
+                          "_rem":  0,
+                          "_realPnl":  325,
+                          "_openPnl":  null,
+                          "_currentSL":  584.9,
+                          "_days":  11,
+                          "_beSug":  true,
+                          "_status":  "closed",
+                          "_suggestedQty":  56,
+                          "_coreRps":  14.200000000000045,
+                          "_blendRps":  13.67,
+                          "_planRisk":  2992.8,
+                          "_tacticalRps":  6.399999999999977,
+                          "_actualRps":  null,
+                          "_availableRisk":  2904.0000000000005,
+                          "_suggestedTacticalQty":  61,
+                          "_tacticalQty":  15,
+                          "_tacticalRisk":  96,
+                          "_actualRisk":  0,
+                          "_avgEntry":  589.15,
+                          "_avgSL":  575.49,
+                          "_avgQty":  219,
+                          "_execAvgEntry":  588.66,
+                          "_execAvgQty":  187,
+                          "_avgTacticalEntry":  588.66,
+                          "_avgPlanEntry":  589.15,
+                          "_blendPct":  2.32,
+                          "coreSL":  584.9
+                      },
+                      {
+                          "id":  "p1776776111073hm92",
+                          "symbol":  "BSE",
+                          "merits":  "LIQUID TML .BIG WHALE .PRINTED LOWVOL21 AND LOWVOLATILITY DAY . BUY BREAK OF DAY\u0027S HIGH 3528.1 .BASE IS SMALL PLAY IT TIGHT . its slow lethargic thoug so going with less. break of 3531 after a weak open or midday break would be nice",
+                          "conviction":  2,
+                          "cmp":  3463,
+                          "planEntry":  3531,
+                          "planSL":  3494.9,
+                          "tacticalEntry":  3521,
+                          "tacticalSL":  3494.9,
+                          "tacticalRiskPct":  30,
+                          "coreQty":  null,
+                          "coreEntry":  null,
+                          "coreSL":  null,
+                          "riskAmount":  3000,
+                          "actualEntry":  3521,
+                          "daySL":  null,
+                          "actualQty":  null,
+                          "tacticalQty":  17,
+                          "entryDate":  "2026-04-22",
+                          "posHigh":  null,
+                          "trailOverride":  null,
+                          "trailNote":  "",
+                          "thoughtTag":  "EXIT",
+                          "thoughtLog":  [
+                                             {
+                                                 "ts":  "2026-04-21T13:39:32.130Z",
+                                                 "tag":  "NOTE",
+                                                 "text":  "log button looks different"
+                                             },
+                                             {
+                                                 "ts":  "2026-04-22T05:43:22.246Z",
+                                                 "tag":  "NOTE",
+                                                 "text":  "slow lethargic crawl .you will get in MCX trap .jittery actions.watch ou t.wait for that 3531 to break"
+                                             },
+                                             {
+                                                 "ts":  "2026-04-22T05:49:29.823Z",
+                                                 "tag":  "ENTRY",
+                                                 "text":  "no jitter wait for rang break"
+                                             },
+                                             {
+                                                 "ts":  "2026-04-22T06:00:00.306Z",
+                                                 "tag":  "ENTRY",
+                                                 "text":  "this will demand patience as it crawls up even after it breaks out"
+                                             },
+                                             {
+                                                 "ts":  "2026-04-22T06:13:05.464Z",
+                                                 "tag":  "ENTRY",
+                                                 "text":  "jittery on bse. wait till it breaks 3531"
+                                             },
+                                             {
+                                                 "ts":  "2026-04-22T06:24:33.054Z",
+                                                 "tag":  "CAUTION",
+                                                 "text":  "bse jitter trap avoid"
+                                             },
+                                             {
+                                                 "ts":  "2026-04-23T04:04:55.759Z",
+                                                 "tag":  "EXIT",
+                                                 "text":  "followed sl"
+                                             }
+                                         ],
+                          "movedBE":  false,
+                          "trims":  [
+                                        {
+                                            "pct":  3,
+                                            "type":  "fixed",
+                                            "ap":  3498,
+                                            "sq":  17,
+                                            "dt":  "2026-04-22",
+                                            "done":  true,
+                                            "_sug":  3626.63,
+                                            "_pnl":  -391
+                                        },
+                                        {
+                                            "pct":  10,
+                                            "type":  "trail",
+                                            "ap":  null,
+                                            "sq":  null,
+                                            "dt":  "",
+                                            "done":  false,
+                                            "_sug":  3767.47,
+                                            "_pnl":  null
+                                        },
+                                        {
+                                            "pct":  15,
+                                            "type":  "fixed",
+                                            "ap":  null,
+                                            "sq":  null,
+                                            "dt":  "",
+                                            "done":  false,
+                                            "_sug":  4049.15,
+                                            "_pnl":  null
+                                        },
+                                        {
+                                            "pct":  25,
+                                            "type":  "fixed",
+                                            "ap":  null,
+                                            "sq":  null,
+                                            "dt":  "",
+                                            "done":  false,
+                                            "_sug":  4401.25,
+                                            "_pnl":  null
+                                        }
+                                    ],
+                          "mgmt":  {
+                                       "checklist":  [
+                                                         [
+                                                             false,
+                                                             false,
+                                                             false
+                                                         ],
+                                                         [
+                                                             false,
+                                                             false,
+                                                             false
+                                                         ],
+                                                         [
+                                                             true,
+                                                             false,
+                                                             false
+                                                         ]
+                                                     ],
+                                       "note":  "",
+                                       "fe":  false,
+                                       "fsl":  false,
+                                       "ft":  false,
+                                       "fbe":  false
+                                   },
+                          "collapsed":  false,
+                          "_coreRps":  36.09999999999991,
+                          "_blendRps":  34.15,
+                          "_rps":  34.15,
+                          "_qty":  87,
+                          "_predQty":  70,
+                          "_predRisk":  2527,
+                          "_planRisk":  2970.7,
+                          "_suggestedQty":  5,
+                          "_rem":  0,
+                          "_realPnl":  -391,
+                          "_openPnl":  null,
+                          "_currentSL":  3494.9,
+                          "_days":  10,
+                          "_beSug":  true,
+                          "_status":  "closed",
+                          "_tacticalRps":  26.09999999999991,
+                          "_actualRps":  null,
+                          "_availableRisk":  2556.3000000000015,
+                          "_suggestedTacticalQty":  21,
+                          "_tacticalQty":  17,
+                          "_tacticalRisk":  443.7,
+                          "_actualRisk":  0,
+                          "_avgEntry":  3529.05,
+                          "_avgSL":  3494.9,
+                          "_avgQty":  87,
+                          "_execAvgEntry":  3521,
+                          "_execAvgQty":  17,
+                          "_avgTacticalEntry":  3521,
+                          "_avgPlanEntry":  3529.05,
+                          "_blendPct":  0.97
+                      }
+                  ]
+}

@@ -76,7 +76,7 @@ function qtyText(v) {
   if (!Number.isFinite(n)) return "-";
   return n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
 }
-function money(v) { return v == null ? "-" : "Rs " + fi(v); }
+function money(v) { return v == null ? "-" : "Rs\u00A0" + fi(v); }
 function compactMoney(v) {
   if (v == null) return "-";
   const n = Number(v);
@@ -85,11 +85,11 @@ function compactMoney(v) {
   if (abs >= 100000) {
     const lakh = n / 100000;
     const places = Math.abs(Math.round(lakh) - lakh) < 0.05 ? 0 : 1;
-    return `Rs ${lakh.toFixed(places)}L`;
+    return `Rs\u00A0${lakh.toFixed(places)}L`;
   }
   return money(n);
 }
-function price2(v) { return v == null ? "-" : "Rs " + Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function price2(v) { return v == null ? "-" : "Rs\u00A0" + Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function pricePlain(v) { return v == null ? "-" : Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function priceSL(v) {
   if (v == null || v === "") return "-";
@@ -939,15 +939,15 @@ function getSecondaryBadge(p) {
 function getHeaderMeta(p, bucketKey) {
   const entry = getEffectiveEntry(p);
   const sl = p._currentSL != null ? p._currentSL : p.planSL;
-  const slHtml = sl != null ? `<strong>SL Rs ${priceSL(sl)}</strong>` : `<strong>SL</strong>`;
+  const slHtml = sl != null ? `<strong>SL ${priceSL(sl)}</strong>` : `<strong>SL</strong>`;
   if (isPositioned(p)) {
     const openQty = p._rem != null ? p._rem : (getTotalQty(p) != null ? getTotalQty(p) : 0);
-    const entryTxt = entry ? `Entry Rs ${priceSL(entry)}` : "";
+    const entryTxt = entry ? `Entry ${priceSL(entry)}` : "";
     if (bucketKey === "overnight") return `${entryTxt} | ${slHtml} | Open qty ${openQty}`;
     if (p._status === "closed") return `${entryTxt} | ${slHtml} | Flat by close`;
     return `${entryTxt} | ${slHtml} | Open qty ${openQty}`;
   }
-  const priceTxt = p.planEntry ? `Buy near Rs ${priceSL(p.planEntry)}` : "Buy price pending";
+  const priceTxt = p.planEntry ? `Buy near ${priceSL(p.planEntry)}` : "Buy price pending";
   const qtyTxt = p._qty > 0 ? `Qty ${p._qty}` : "Qty pending";
   return `${priceTxt} | ${qtyTxt}`;
 }
@@ -1338,7 +1338,7 @@ function paint(id, p) {
   const listPnl = e("list-pnl-" + id);
   if (listPnl) {
     const total = (p._realPnl || 0) + (p._openPnl || 0);
-    listPnl.textContent = total !== 0 ? sgn(total) + "Rs " + fi(total) : "-";
+    listPnl.textContent = total !== 0 ? sgn(total) + fi(total) : "-";
     listPnl.className = "plist-pnl " + (total >= 0 ? "pos" : "neg");
   }
   const lp = e("list-pbadge-" + id);
@@ -1391,7 +1391,11 @@ function paint(id, p) {
   set("epx-" + id, execAvgEntry != null ? price2(execAvgEntry) : "-");
   const execRisk = getExecutionRisk(p);
   const execEntry = getEffectiveEntry(p);
-  set("psize-" + id, execEntry != null && carriedQty != null ? fi(carriedQty * execEntry) : "-");
+  const positionSize = execEntry != null && carriedQty != null ? carriedQty * execEntry : null;
+  set("psize-head-" + id, positionSize != null ? fi(positionSize) : "-");
+  const avgSlDelta = execAvgEntry != null && p._avgSL != null ? Math.abs(Number(execAvgEntry) - Number(p._avgSL)) : null;
+  const avgSlPct = avgSlDelta != null && execAvgEntry > 0 ? (avgSlDelta / Number(execAvgEntry)) * 100 : null;
+  set("psize-" + id, avgSlDelta != null ? `${pricePlain(avgSlDelta)}${avgSlPct != null ? ` (${avgSlPct.toFixed(1)}%)` : ""}` : "-");
   set("erisk-" + id, execRisk != null ? price2(execRisk) : "-");
   set("rem-" + id, p._rem != null ? p._rem : (carriedQty != null ? carriedQty : "-"));
   setFieldValue("plan-intra-qty-" + id, p.actualQty != null ? p.actualQty : "");
@@ -1410,14 +1414,14 @@ function paint(id, p) {
   p.trims.forEach((t, i) => {
     const sugEl = e("ts" + i + "-" + id);
     if (sugEl) {
-      sugEl.textContent = t._sug ? "Rs " + t._sug : (i === 1 ? "Enter pos high" : "-");
+      sugEl.textContent = t._sug ? String(t._sug) : (i === 1 ? "Enter pos high" : "-");
       sugEl.style.color = t._sug ? "var(--amb)" : "var(--t3)";
       sugEl.className = t._sug ? "t-target" : "t-na";
     }
     const pnlEl = e("tp" + i + "-" + id);
     if (pnlEl) {
       if (t._pnl != null) {
-        pnlEl.textContent = (t._pnl >= 0 ? "+" : "-") + "Rs " + fi(t._pnl);
+        pnlEl.textContent = (t._pnl >= 0 ? "+" : "-") + fi(t._pnl);
         pnlEl.className = "t-pl " + (t._pnl >= 0 ? "pos" : "neg");
       } else {
         pnlEl.textContent = "-";
@@ -1436,30 +1440,30 @@ function paint(id, p) {
       const realEl = e("psr-" + id);
       const netEl = e("psn-" + id);
       if (realEl) {
-        realEl.textContent = sgn(p._realPnl) + "Rs " + fi(p._realPnl);
+        realEl.textContent = sgn(p._realPnl) + fi(p._realPnl);
         realEl.style.color = p._realPnl >= 0 ? "var(--green)" : "var(--red)";
       }
       if (netEl) {
-        netEl.textContent = sgn(net) + "Rs " + fi(net);
+        netEl.textContent = sgn(net) + fi(net);
         netEl.style.color = net >= 0 ? "var(--green)" : "var(--red)";
       }
     }
   }
-  set("tsl-" + id, "Rs " + priceSL(p._currentSL));
+  set("tsl-" + id, priceSL(p._currentSL));
   set("days-" + id, p._days != null ? "Day " + p._days + " in trade" : "");
   const beBanner = e("beb-" + id);
   if (beBanner) beBanner.style.display = p._beSug ? "flex" : "none";
   const beConf = e("bec-" + id);
   if (beConf) {
     beConf.style.display = p.movedBE ? "block" : "none";
-    beConf.textContent = p.movedBE ? "Rs " + p.actualEntry : "";
+    beConf.textContent = p.movedBE ? pricePlain(p.actualEntry) : "";
   }
   const headRisk = e("hrisk-" + id);
   if (headRisk) {
     const displayRisk = getDisplayedRisk(p);
     const displayRiskLabel = getDisplayedRiskLabel(p);
     headRisk.style.display = displayRisk != null ? "" : "none";
-    headRisk.textContent = displayRisk != null ? `${displayRiskLabel} ${price2(displayRisk)}` : "";
+    headRisk.textContent = displayRisk != null ? `${displayRiskLabel} ${pricePlain(displayRisk)}` : "";
     headRisk.className = "head-pnl neg";
   }
   const thoughtInputDraft = e("thought-input-" + id)?.value || "";
@@ -3850,6 +3854,7 @@ function buildCard(p, num) {
   const secondaryBadge = getSecondaryBadge(p);
   const headerMeta = getHeaderMeta(p, getBucketKey(p));
   const entry = getEffectiveEntry(p);
+  const positionSize = entry != null && getTotalQty(p) != null ? getTotalQty(p) * entry : null;
   const planAvgEntry = p._avgEntry != null ? p._avgEntry : getCombinedAverageEntry(p);
   const planAvgQty = p._avgQty != null ? p._avgQty : getAverageLegQty(p);
   const execAvgEntry = p._execAvgEntry != null ? p._execAvgEntry : getExecutionCombinedAverageEntry(p);
@@ -3859,7 +3864,7 @@ function buildCard(p, num) {
   const displayRisk = getDisplayedRisk(p);
   const displayRiskLabel = getDisplayedRiskLabel(p);
   const cmpChip = p.cmp != null
-      ? `<span style="display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:999px;border:1px solid rgba(85,153,255,.35);background:linear-gradient(180deg, rgba(85,153,255,.18), rgba(85,153,255,.08));color:#9cc4ff;font-family:var(--mono);font-size:12px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;box-shadow:0 0 0 1px rgba(11,18,34,.4) inset">CMP Rs ${priceSL(p.cmp)}</span>`
+      ? `<span style="display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:999px;border:1px solid rgba(85,153,255,.35);background:linear-gradient(180deg, rgba(85,153,255,.18), rgba(85,153,255,.08));color:#9cc4ff;font-family:var(--mono);font-size:12px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;box-shadow:0 0 0 1px rgba(11,18,34,.4) inset">CMP ${priceSL(p.cmp)}</span>`
       : "";
   const slOrder = getTrailStopOrderPreview(p);
   const publicIpParts = [];
@@ -3886,16 +3891,16 @@ function buildCard(p, num) {
   let running = carriedQty != null ? carriedQty : 0;
   let trimRows = "";
   p.trims.forEach((t, i) => {
-    const sug = t._sug ? "Rs " + t._sug : (i === 1 ? "7% target" : "-");
+    const sug = t._sug ? String(t._sug) : (i === 1 ? "7% target" : "-");
     const trimQty = qty > 0 ? splits[i] : "-";
-    const pnlTxt = t._pnl != null ? (t._pnl >= 0 ? "+" : "-") + "Rs " + fi(t._pnl) : "-";
+    const pnlTxt = t._pnl != null ? (t._pnl >= 0 ? "+" : "-") + fi(t._pnl) : "-";
     running -= (t.done && t.sq ? t.sq : 0);
-        trimRows += `<tr id="tr-${i}-${p.id}" class="${t.done ? "t-done" : ""}"><td><span class="t-label">T${i + 1}</span><span class="t-pct" style="color:${trimColors[i]}">${trimLabels[i]}</span></td><td><input type="date" class="t-in t-date" ${compactTrimStyle} value="${t.dt || ""}" oninput="updTrim('${p.id}',${i},'dt',this.value)"></td><td><span id="ts${i}-${p.id}" class="${t._sug ? "t-target" : "t-na"}">${sug}</span></td><td><span class="t-target">${trimQty}</span></td><td><input type="number" step="any" inputmode="decimal" class="t-in" placeholder="Rs sell" ${compactTrimStyle} value="${t.ap != null ? t.ap : ""}" oninput="updTrim('${p.id}',${i},'ap',parseFloat(this.value)||null)"></td><td><input type="number" class="t-in" placeholder="qty" ${compactTrimStyle} value="${t.sq != null ? t.sq : ""}" oninput="updTrim('${p.id}',${i},'sq',parseInt(this.value)||null)"><span class="t-rem" id="tr${i}-${p.id}">${carriedQty != null ? running + " rem" : ""}</span></td><td><span id="tp${i}-${p.id}" class="${t._pnl != null ? "t-pl " + (t._pnl >= 0 ? "pos" : "neg") : "t-pl"}">${pnlTxt}</span></td><td style="text-align:center"><input type="checkbox" class="t-chk" ${t.done ? "checked" : ""} onchange="updTrim('${p.id}',${i},'done',this.checked)"></td></tr>`;
+        trimRows += `<tr id="tr-${i}-${p.id}" class="${t.done ? "t-done" : ""}"><td><span class="t-label">T${i + 1}</span><span class="t-pct" style="color:${trimColors[i]}">${trimLabels[i]}</span></td><td><input type="date" class="t-in t-date" ${compactTrimStyle} value="${t.dt || ""}" oninput="updTrim('${p.id}',${i},'dt',this.value)"></td><td><span id="ts${i}-${p.id}" class="${t._sug ? "t-target" : "t-na"}">${sug}</span></td><td><span class="t-target">${trimQty}</span></td><td><input type="number" step="any" inputmode="decimal" class="t-in" placeholder="sell" style="width:100%;min-width:0;height:34px;padding:6px 10px;font-size:13px" value="${t.ap != null ? t.ap : ""}" oninput="updTrim('${p.id}',${i},'ap',parseFloat(this.value)||null)"></td><td><input type="number" class="t-in" placeholder="qty" style="width:56px;min-width:0;height:26px;padding:2px 6px;font-size:11px;text-align:center" value="${t.sq != null ? t.sq : ""}" oninput="updTrim('${p.id}',${i},'sq',parseInt(this.value)||null)"><span class="t-rem" id="tr${i}-${p.id}">${carriedQty != null ? running + " rem" : ""}</span></td><td><span id="tp${i}-${p.id}" class="${t._pnl != null ? "t-pl " + (t._pnl >= 0 ? "pos" : "neg") : "t-pl"}">${pnlTxt}</span></td><td style="text-align:center"><input type="checkbox" class="t-chk" ${t.done ? "checked" : ""} onchange="updTrim('${p.id}',${i},'done',this.checked)"></td></tr>`;
   });
   const hasTrim = p.trims.some(t => t.done);
   const net = (p._realPnl || 0) + (p._openPnl || 0);
-  const pnlSumHtml = `<div class="pnl-sum" id="pnlsum-${p.id}" style="display:${hasTrim ? "flex" : "none"}"><div class="ps-item"><span>Realized:</span><strong id="psr-${p.id}" style="color:${(p._realPnl || 0) >= 0 ? "var(--green)" : "var(--red)"}">${sgn(p._realPnl || 0)}Rs ${fi(p._realPnl || 0)}</strong></div><div class="ps-item"><span>Net:</span><strong id="psn-${p.id}" style="color:${net >= 0 ? "var(--green)" : "var(--red)"}">${sgn(net)}Rs ${fi(net)}</strong></div></div>`;
-  const beBanner = `<div class="be-banner" id="beb-${p.id}" style="display:${p._beSug ? "flex" : "none"}"><span class="be-text">Day ${p._days || 0} since entry - move SL to breakeven (Rs ${entry || "-"})?</span><button class="be-btn" onclick="moveBE('${p.id}')">Apply</button></div>`;
+  const pnlSumHtml = `<div class="pnl-sum" id="pnlsum-${p.id}" style="display:${hasTrim ? "flex" : "none"}"><div class="ps-item"><span>Realized:</span><strong id="psr-${p.id}" style="color:${(p._realPnl || 0) >= 0 ? "var(--green)" : "var(--red)"}">${sgn(p._realPnl || 0)}${fi(p._realPnl || 0)}</strong></div><div class="ps-item"><span>Net:</span><strong id="psn-${p.id}" style="color:${net >= 0 ? "var(--green)" : "var(--red)"}">${sgn(net)}${fi(net)}</strong></div></div>`;
+  const beBanner = `<div class="be-banner" id="beb-${p.id}" style="display:${p._beSug ? "flex" : "none"}"><span class="be-text">Day ${p._days || 0} since entry - move SL to breakeven (${entry || "-"})?</span><button class="be-btn" onclick="moveBE('${p.id}')">Apply</button></div>`;
   return `
   <div class="pcard st-${p._status}" id="card-${p.id}">
     <div class="phead" onclick="toggleCollapse('${p.id}')">
@@ -3910,16 +3915,20 @@ function buildCard(p, num) {
         </div>
         <span class="badge badge-${primaryBadge}" id="pbadge-${p.id}">${primaryBadge.toUpperCase()}</span>
         <span class="badge badge-${secondaryBadge || "ghost"}" id="sbadge-${p.id}" style="${secondaryBadge ? "" : "display:none"}">${secondaryBadge.toUpperCase()}</span>
-        <div class="conv"><span class="conv-label">conviction</span><div class="cdots" id="conv-${p.id}">${convHtml}</div></div>
+        <div class="conv" style="display:flex;align-items:center;gap:8px;flex-wrap:nowrap">
+          <span class="conv-label">conviction</span>
+          <div class="cdots" id="conv-${p.id}">${convHtml}</div>
+          <span id="psize-head-${p.id}" style="display:inline-flex;align-items:center;justify-content:center;padding:3px 8px;border-radius:10px;border:1px solid rgba(92,227,141,.18);background:rgba(11,18,34,.58);color:var(--t1);font-family:var(--mono);font-size:12px;font-weight:900;letter-spacing:.03em;white-space:nowrap">${positionSize != null ? fi(positionSize) : "-"}</span>
+        </div>
       </div>
       <div class="phead-r">
-        ${displayRisk != null ? `<span class="head-pnl neg" id="hrisk-${p.id}">${displayRiskLabel} ${price2(displayRisk)}</span>` : `<span class="head-pnl" id="hrisk-${p.id}" style="display:none"></span>`}
+        ${displayRisk != null ? `<span class="head-pnl neg" id="hrisk-${p.id}">${displayRiskLabel} ${pricePlain(displayRisk)}</span>` : `<span class="head-pnl" id="hrisk-${p.id}" style="display:none"></span>`}
         <button class="btn-rm" onclick="event.stopPropagation();removePos('${p.id}')" title="Remove">x</button>
         <span class="chev ${p.collapsed ? "" : "open"}" id="chv-${p.id}">v</span>
       </div>
     </div>
     <div class="pbody ${p.collapsed ? "hide" : ""}" id="pb-${p.id}">
-      <div class="sec"><div class="sec-title">Merits &amp; thesis</div><textarea class="fin" rows="2" placeholder="Why this stock? RS rank, catalyst, setup pattern..." oninput="upd('${p.id}','merits',this.value)">${p.merits || ""}</textarea></div>
+      <div class="sec"><div class="sec-title">Merits &amp; thesis</div><textarea class="fin" rows="2" placeholder="Why this stock? Rank, catalyst, setup pattern..." oninput="upd('${p.id}','merits',this.value)">${p.merits || ""}</textarea></div>
       <div class="trade-io-grid">
         <div class="sec trade-panel trade-plan">
     <div class="sec-title" style="gap:10px;flex-wrap:nowrap;align-items:center">
@@ -3956,21 +3965,21 @@ function buildCard(p, num) {
               </div>
               <div style="border-top:1px solid var(--line);padding:7px 8px 8px;background:linear-gradient(180deg, rgba(22,28,45,.82), rgba(13,17,30,.94));">
                 <div class="g4" style="grid-template-columns:repeat(4,minmax(0,1fr));gap:0;align-items:stretch;">
-                  <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
-                    <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">BLENDED SL</div>
-                  <div class="fcomp mini-val" id="rps-val-${p.id}" style="display:flex;align-items:baseline;gap:6px;flex-wrap:nowrap;white-space:nowrap;color:#ff4d6d;margin-top:3px;cursor:default">${p._rps != null ? `<span style="color:#ff4d6d;font-size:16px;font-weight:800;line-height:1">${p._rps}</span>${p._blendPct != null ? ` <span style="color:#fca5a5;font-size:12px;font-weight:700;line-height:1">${p._blendPct.toFixed(2)}%</span>` : ""}` : "-"}</div>
+                <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
+                    <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">QTY</div>
+                    <div class="fcomp mini-val" id="qty-${p.id}" style="color:${planAvgQty > 0 ? "var(--green)" : "var(--t3)"};margin-top:5px">${qtyText(planAvgQty)}</div>
                   </div>
                   <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
                     <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">AVG ENTRY</div>
-                    <div class="fcomp mini-val" id="ape-${p.id}" style="color:var(--green);margin-top:5px">${planAvgEntry != null ? price2(planAvgEntry) : "-"}</div>
+                    <div class="fcomp mini-val" id="ape-${p.id}" style="color:var(--green);margin-top:5px">${planAvgEntry != null ? pricePlain(planAvgEntry) : "-"}</div>
                   </div>
                   <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
-                    <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">TOTAL QTY</div>
-                    <div class="fcomp mini-val" id="qty-${p.id}" style="color:${planAvgQty > 0 ? "var(--green)" : "var(--t3)"};margin-top:5px">${qtyText(planAvgQty)}</div>
+                    <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">BLENDED SL</div>
+                    <div class="fcomp mini-val" id="rps-val-${p.id}" style="display:flex;align-items:baseline;gap:6px;flex-wrap:nowrap;white-space:nowrap;color:#ff4d6d;margin-top:3px;cursor:default">${p._rps != null ? `<span style="color:#ff4d6d;font-size:16px;font-weight:800;line-height:1">${p._rps}</span>${p._blendPct != null ? ` <span style="color:#fca5a5;font-size:12px;font-weight:700;line-height:1">${p._blendPct.toFixed(2)}%</span>` : ""}` : "-"}</div>
                   </div>
                   <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;">
                     <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">TOTAL RISK</div>
-                    <div class="fcomp mini-val" id="prisk-${p.id}" style="color:var(--amb);margin-top:5px">${p._planRisk != null && p._planRisk > 0 ? price2(p._planRisk) : "-"}</div>
+                    <div class="fcomp mini-val" id="prisk-${p.id}" style="color:var(--amb);margin-top:5px">${p._planRisk != null && p._planRisk > 0 ? pricePlain(p._planRisk) : "-"}</div>
                   </div>
                 </div>
               </div>
@@ -4012,22 +4021,22 @@ function buildCard(p, num) {
               </div>
             </div>
             <div style="margin-top:4px;padding:6px 8px 7px;border:1px solid rgba(92,227,141,.14);border-radius:10px;background:linear-gradient(180deg, rgba(22,28,45,.82), rgba(13,17,30,.94));box-shadow:inset 0 1px 0 rgba(255,255,255,.03);">
-              <div class="g4" style="grid-template-columns:minmax(0,.95fr) minmax(0,1fr) minmax(150px,1.15fr) minmax(0,.95fr);gap:0;align-items:stretch;">
+              <div class="g4" style="grid-template-columns:minmax(150px,1.05fr) minmax(0,.9fr) minmax(0,1fr) minmax(0,1fr);gap:0;align-items:stretch;">
                 <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
-                  <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">TOTAL QTY</div>
+                  <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">EXEC RISK</div>
+                  <div class="fcomp" id="erisk-${p.id}" style="${compactBigValueStyle};color:${execRisk > 0 ? "var(--red)" : "var(--t1)"};margin-top:5px">${execRisk != null ? pricePlain(execRisk) : "-"}</div>
+                </div>
+                <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
+                  <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">QTY</div>
                   <div class="fcomp" id="totq-${p.id}" style="${compactBigValueStyle};color:var(--t1);margin-top:5px">${qtyText(execAvgQty)}</div>
                 </div>
                 <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
                   <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">AVG ENTRY</div>
-                  <div class="fcomp" id="epx-${p.id}" style="${compactBigValueStyle};color:var(--green);margin-top:5px">${execAvgEntry != null ? price2(execAvgEntry) : "-"}</div>
-                </div>
-                <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
-                  <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">POSITION SIZE</div>
-                  <div class="fcomp" id="psize-${p.id}" style="${compactBigValueStyle};color:var(--t1);margin-top:5px">${entry != null && getTotalQty(p) != null ? fi(getTotalQty(p) * entry) : "-"}</div>
+                  <div class="fcomp" id="epx-${p.id}" style="${compactBigValueStyle};color:var(--green);margin-top:5px">${execAvgEntry != null ? pricePlain(execAvgEntry) : "-"}</div>
                 </div>
                 <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;">
-                  <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">EXEC RISK</div>
-                  <div class="fcomp" id="erisk-${p.id}" style="${compactBigValueStyle};color:${execRisk > 0 ? "var(--red)" : "var(--t1)"};margin-top:5px">${execRisk != null ? price2(execRisk) : "-"}</div>
+                  <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">AVG SL</div>
+                  <div class="fcomp" id="psize-${p.id}" style="${compactBigValueStyle};color:var(--t1);margin-top:5px">${execAvgEntry != null && p._avgSL != null ? `${pricePlain(Math.abs(Number(execAvgEntry) - Number(p._avgSL)))}${execAvgEntry > 0 ? ` (${(Math.abs(Number(execAvgEntry) - Number(p._avgSL)) / Number(execAvgEntry) * 100).toFixed(1)}%)` : ""}` : "-"}</div>
                 </div>
               </div>
             </div>
@@ -4039,7 +4048,7 @@ function buildCard(p, num) {
           <div class="trade-panel-body">
             <div class="sec" style="margin-bottom:0">
               <div class="sec-title" style="margin-bottom:8px;padding-bottom:5px;color:var(--amb)">3 • TRIM</div>
-              <table class="ttbl"><thead><tr><th>Trim</th><th>Date</th><th>Suggested Rs</th><th>Trim Qty</th><th>Actual sell Rs</th><th>Qty sold</th><th>P&amp;L</th><th class="c">Done</th></tr></thead><tbody>${trimRows}</tbody></table>
+              <table class="ttbl"><thead><tr><th>Trim</th><th>Date</th><th>Suggested</th><th>Trim Qty</th><th>Sell</th><th>Qty sold</th><th>P&amp;L</th><th class="c">Done</th></tr></thead><tbody>${trimRows}</tbody></table>
               ${pnlSumHtml}
             </div>
           </div>
@@ -4049,9 +4058,9 @@ function buildCard(p, num) {
             <div class="trail-box" id="trail-${p.id}" style="margin:0;padding:0;border:none;background:transparent;box-shadow:none;min-height:100%;display:flex;flex-direction:column">
               <div class="trail-hdr"><span class="trail-title">4 • TRAIL</span><span class="trail-days" id="days-${p.id}">${p._days != null ? "Day " + p._days + " in trade" : ""}</span></div>
               <div class="trail-grid" style="grid-template-columns:1fr 1fr">
-                <div><div class="tc-label">Initial SL</div><div class="tc-val trail-num sl-c"><strong>Rs ${priceSL(p.planSL)}</strong></div></div>
-                <div><div class="tc-label">Current SL</div><div class="tc-val trail-num sl-c" id="tsl-${p.id}"><strong>Rs ${priceSL(p._currentSL)}</strong></div></div>
-                <div><div class="tc-label">Breakeven</div><div class="tc-val trail-num ${p.movedBE ? "ok-c" : ""}" id="bec-${p.id}" style="display:${p.movedBE ? "block" : "none"}">${p.movedBE ? "Rs " + priceSL(entry || p.actualEntry || p.overnightEntry) : ""}</div><div class="tc-val trail-num" ${p.movedBE ? 'style="display:none"' : ""}>${(entry || p.actualEntry || p.overnightEntry) ? "Rs " + priceSL(entry || p.actualEntry || p.overnightEntry) : "-"}</div></div>
+                <div><div class="tc-label">Initial SL</div><div class="tc-val trail-num sl-c"><strong>${priceSL(p.planSL)}</strong></div></div>
+                <div><div class="tc-label">Current SL</div><div class="tc-val trail-num sl-c" id="tsl-${p.id}"><strong>${priceSL(p._currentSL)}</strong></div></div>
+                <div><div class="tc-label">Breakeven</div><div class="tc-val trail-num ${p.movedBE ? "ok-c" : ""}" id="bec-${p.id}" style="display:${p.movedBE ? "block" : "none"}">${p.movedBE ? priceSL(entry || p.actualEntry || p.overnightEntry) : ""}</div><div class="tc-val trail-num" ${p.movedBE ? 'style="display:none"' : ""}>${(entry || p.actualEntry || p.overnightEntry) ? priceSL(entry || p.actualEntry || p.overnightEntry) : "-"}</div></div>
  <div><div class="tc-label">Override SL</div><div style="display:flex;gap:6px;align-items:center;margin-top:4px;flex-wrap:wrap"><input type="number" step="any" inputmode="decimal" class="t-in" id="toi-${p.id}" style="width:92px" placeholder="manual" value="${p.trailOverride != null ? p.trailOverride : ""}" oninput="upd('${p.id}','trailOverride',parseFloat(this.value)||null)"><button class="be-btn" type="button" onclick="updateTrailSL('${p.id}')">Update SL</button>${slOrderButton}</div></div>
               </div>
               ${beBanner}
@@ -4061,12 +4070,12 @@ function buildCard(p, num) {
                   <span class="trail-mile-spot"></span>
                 </div>
                 <div class="trail-mile-lbls">
-                  <div><div class="trail-mile-k">SL</div><div class="trail-mile-v trail-num sl-c">Rs ${priceSL(p.planSL)}</div></div>
-                  <div><div class="trail-mile-k">Entry</div><div class="trail-mile-v trail-num">Rs ${priceSL(entry || p.actualEntry || p.overnightEntry)}</div></div>
-                  <div><div class="trail-mile-k">+25%</div><div class="trail-mile-v trail-num">${(entry || p.actualEntry || p.overnightEntry) ? "Rs " + priceSL((entry || p.actualEntry || p.overnightEntry) * 1.25) : "-"}</div></div>
+                  <div><div class="trail-mile-k">SL</div><div class="trail-mile-v trail-num sl-c">${priceSL(p.planSL)}</div></div>
+                  <div><div class="trail-mile-k">Entry</div><div class="trail-mile-v trail-num">${priceSL(entry || p.actualEntry || p.overnightEntry)}</div></div>
+                  <div><div class="trail-mile-k">+25%</div><div class="trail-mile-v trail-num">${(entry || p.actualEntry || p.overnightEntry) ? priceSL((entry || p.actualEntry || p.overnightEntry) * 1.25) : "-"}</div></div>
                 </div>
               </div>
-              <div class="trail-note-wrap" style="margin-top:auto"><div class="trail-note-lbl">SL adjustment note</div><input type="text" class="t-note" id="tni-${p.id}" placeholder="e.g. moved SL to EMA20 at Rs 182 - structure holding..." value="${p.trailNote || ""}" oninput="upd('${p.id}','trailNote',this.value)"></div>
+              <div class="trail-note-wrap" style="margin-top:auto"><div class="trail-note-lbl">SL adjustment note</div><input type="text" class="t-note" id="tni-${p.id}" placeholder="e.g. moved SL to EMA20 at 182 - structure holding..." value="${p.trailNote || ""}" oninput="upd('${p.id}','trailNote',this.value)"></div>
             </div>
           </div>
         </div>

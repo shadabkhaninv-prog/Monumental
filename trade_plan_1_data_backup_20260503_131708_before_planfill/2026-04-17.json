@@ -1,0 +1,131 @@
+{
+  "date": "2026-04-17",
+  "saved_at": "2026-05-02T10:29:02",
+  "positions": [
+    {
+      "id": "p1776666098398lcx8",
+      "symbol": "APARINDS",
+      "merits": "power equipment .near high ,big gaps .strongest sector",
+      "conviction": 3,
+      "cmp": 11482,
+      "planEntry": 11488,
+      "planSL": 11078,
+      "tacticalEntry": null,
+      "tacticalSL": null,
+      "tacticalRiskPct": 30,
+      "coreQty": 9,
+      "coreEntry": 11458,
+      "coreSL": 11078,
+      "riskAmount": 3000,
+      "actualEntry": null,
+      "daySL": null,
+      "actualQty": null,
+      "tacticalQty": null,
+      "entryDate": "2026-04-17",
+      "posHigh": null,
+      "trailOverride": null,
+      "trailNote": "",
+      "thoughtTag": "NOTE",
+      "thoughtLog": [],
+      "movedBE": false,
+      "trims": [
+        {
+          "pct": 3,
+          "type": "fixed",
+          "ap": 11587,
+          "sq": 5,
+          "dt": "2026-04-17",
+          "done": true,
+          "_sug": 11801.74,
+          "_pnl": 645
+        },
+        {
+          "pct": 10,
+          "type": "trail",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 12260.06,
+          "_pnl": null
+        },
+        {
+          "pct": 15,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 13176.7,
+          "_pnl": null
+        },
+        {
+          "pct": 25,
+          "type": "fixed",
+          "ap": null,
+          "sq": null,
+          "dt": "",
+          "done": false,
+          "_sug": 14322.5,
+          "_pnl": null
+        }
+      ],
+      "mgmt": {
+        "checklist": [
+          [
+            false,
+            false,
+            false
+          ],
+          [
+            false,
+            false,
+            false
+          ],
+          [
+            false,
+            false,
+            false
+          ]
+        ],
+        "note": "",
+        "fe": false,
+        "fsl": false,
+        "ft": false,
+        "fbe": false
+      },
+      "collapsed": false,
+      "_qty": 7,
+      "_rps": 410,
+      "_rr": "4.5",
+      "_rem": 4,
+      "_realPnl": 645,
+      "_openPnl": 96,
+      "_currentSL": 11078,
+      "_days": 15,
+      "_beSug": true,
+      "_status": "partial",
+      "_predRisk": 2870,
+      "_predQty": 7,
+      "_coreRps": 410,
+      "_tacticalRps": null,
+      "_actualRps": null,
+      "_availableRisk": 3000,
+      "_suggestedTacticalQty": 2,
+      "_tacticalQty": 0,
+      "_tacticalRisk": 0,
+      "_actualRisk": 0,
+      "_planRisk": 2870,
+      "_avgEntry": 11488,
+      "_avgSL": 11078,
+      "_avgQty": 7,
+      "_execAvgEntry": 11458,
+      "_execAvgQty": 9,
+      "_avgTacticalEntry": 11458,
+      "_avgPlanEntry": 11488,
+      "_blendRps": 410,
+      "_blendPct": 3.57,
+      "_suggestedQty": 3
+    }
+  ]
+}

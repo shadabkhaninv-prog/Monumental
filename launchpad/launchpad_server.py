@@ -33,7 +33,7 @@ LAUNCHPAD_PORT = int(os.environ.get("LAUNCHPAD_PORT", "9000"))
 
 # Per-user settings that persist between runs (editable from the UI)
 DEFAULT_SETTINGS: Dict = {
-    "trade_plan_html": r"C:\Users\shada\Monumental\trade_plan_1.html",
+    "trade_plan_html": r"C:\Users\shada\Monumental\TRADEP_12_1.htm",
     "trade_plan_port": 8765,
     "ip_fire_port":    8501,
     "bhav_port":       5000,

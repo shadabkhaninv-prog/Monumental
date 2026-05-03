@@ -1,0 +1,110 @@
+{
+    "date":  "2026-04-10",
+    "saved_at":  "2026-04-26T11:46:21",
+    "positions":  [
+                      {
+                          "id":  "p1777175488720xzpn",
+                          "symbol":  "TDPOWERSYS",
+                          "merits":  "",
+                          "conviction":  3,
+                          "cmp":  926.6,
+                          "planEntry":  905.26,
+                          "planSL":  882.4,
+                          "riskAmount":  3000,
+                          "entryDate":  "2026-04-10",
+                          "posHigh":  null,
+                          "trailOverride":  null,
+                          "trailNote":  "",
+                          "thoughtTag":  "NOTE",
+                          "thoughtLog":  [
+
+                                         ],
+                          "movedBE":  false,
+                          "trims":  [
+                                        {
+                                            "pct":  3,
+                                            "type":  "fixed",
+                                            "ap":  927.8,
+                                            "sq":  25,
+                                            "dt":  "2026-04-10",
+                                            "done":  true,
+                                            "_sug":  932.42,
+                                            "_pnl":  563
+                                        },
+                                        {
+                                            "pct":  10,
+                                            "type":  "trail",
+                                            "ap":  907.4,
+                                            "sq":  50,
+                                            "dt":  "2026-04-13",
+                                            "done":  true,
+                                            "_sug":  968.63,
+                                            "_pnl":  107
+                                        },
+                                        {
+                                            "pct":  15,
+                                            "type":  "fixed",
+                                            "ap":  null,
+                                            "sq":  null,
+                                            "dt":  "",
+                                            "done":  false,
+                                            "_sug":  1041.05,
+                                            "_pnl":  null
+                                        },
+                                        {
+                                            "pct":  25,
+                                            "type":  "fixed",
+                                            "ap":  null,
+                                            "sq":  null,
+                                            "dt":  "",
+                                            "done":  false,
+                                            "_sug":  1131.58,
+                                            "_pnl":  null
+                                        }
+                                    ],
+                          "mgmt":  {
+                                       "checklist":  [
+                                                         [
+                                                             false,
+                                                             false,
+                                                             false
+                                                         ],
+                                                         [
+                                                             false,
+                                                             false,
+                                                             false
+                                                         ],
+                                                         [
+                                                             false,
+                                                             false,
+                                                             false
+                                                         ]
+                                                     ],
+                                       "note":  ""
+                                   },
+                          "collapsed":  false,
+                          "_coreRps":  22.860000000000014,
+                          "_blendRps":  22.860000000000014,
+                          "_rps":  "Core Rs 22.86 | Intra Rs 22.86 | Blend Rs 22.86",
+                          "_qty":  132,
+                          "_predQty":  131,
+                          "_predRisk":  2994.66,
+                          "_planRisk":  3017.52,
+                          "_suggestedQty":  23,
+                          "_rem":  0,
+                          "_realPnl":  670,
+                          "_openPnl":  null,
+                          "_currentSL":  882.4,
+                          "_days":  16,
+                          "_beSug":  true,
+                          "_status":  "closed",
+                          "tacticalSL":  null,
+                          "coreQty":  75,
+                          "coreEntry":  905.26,
+                          "actualQty":  null,
+                          "actualEntry":  null,
+                          "daySL":  null,
+                          "coreSL":  882.4
+                      }
+                  ]
+}
