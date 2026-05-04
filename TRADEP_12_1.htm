@@ -101,26 +101,22 @@
 
   /* ----- MONTH SUMMARY ----- */
   .sidebar-stack{margin-top:auto;display:flex;flex-direction:column;gap:9px}
-  .month-summary{margin-top:0;border:1px solid var(--line);border-radius:6px;background:var(--panel);padding:10px 11px 11px;min-height:168px}
+  .month-summary{margin-top:0;border:1px solid #1a2434;border-radius:8px;background:linear-gradient(180deg,#0f1722 0%,#111c2a 100%);padding:12px 10px 12px;min-height:188px;box-shadow:inset 0 1px 0 rgba(255,255,255,.02)}
   .ms-head{display:flex;align-items:center;justify-content:flex-start;gap:8px;margin-bottom:8px}
-  .ms-title{font-size:10px;letter-spacing:.28em;color:var(--cyan-dim);text-transform:uppercase;font-weight:600}
+  .ms-title{font-size:12px;letter-spacing:.28em;color:var(--cyan-dim);text-transform:uppercase;font-weight:700}
   .ms-month{display:none}
-  .ms-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0;margin-top:0;position:relative;align-content:start}
-  .ms-grid::before{content:"";position:absolute;left:50%;top:6px;bottom:6px;width:1px;background:var(--line)}
-  .ms-grid::after{content:"";position:absolute;left:8px;right:8px;top:50%;height:1px;background:var(--line)}
-  .ms-cell{display:flex;flex-direction:column;gap:4px;min-width:0;min-height:66px;padding:9px 12px 10px 10px;position:relative}
-  .ms-cell:nth-child(even){padding-left:14px;padding-right:10px}
-  .ms-cell:nth-child(odd){padding-right:14px}
-  .hs-ico{width:28px;height:28px;border-radius:999px;border:1px solid var(--line-2);display:inline-flex;align-items:center;justify-content:center;margin-bottom:9px;font-size:13px;line-height:1;background:rgba(255,255,255,.02)}
-  .hs-exp .hs-ico{color:var(--amber);box-shadow:0 0 0 1px rgba(245,158,11,.06) inset;background:rgba(245,158,11,.05)}
-  .hs-pos .hs-ico{color:var(--green);box-shadow:0 0 0 1px rgba(34,197,94,.06) inset;background:rgba(34,197,94,.04)}
-  .hs-win .hs-ico{color:var(--cyan);box-shadow:0 0 0 1px rgba(45,212,191,.06) inset;background:rgba(45,212,191,.04)}
-  .hs-open .hs-ico{color:var(--green);box-shadow:0 0 0 1px rgba(34,197,94,.06) inset;background:rgba(34,197,94,.04)}
-  .ms-cell .l{font-size:10px;letter-spacing:.2em;color:var(--text-faint);text-transform:uppercase;font-weight:500}
-  .ms-cell .v{font-size:11.5px;color:var(--text);font-variant-numeric:tabular-nums;font-weight:700;line-height:1.06;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .ms-cell .v.am{color:var(--amber)}
-  .ms-cell .v.gn{color:var(--green)}
-  .ms-cell .v.cy{color:var(--cyan)}
+  .ms-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0;margin-top:0;position:relative;align-content:start;border-top:1px solid #16202f;border-left:1px solid #16202f}
+  .ms-grid::before{content:"";position:absolute;left:50%;top:0;bottom:0;width:1px;background:#16202f}
+  .ms-grid::after{content:"";position:absolute;left:0;right:0;top:50%;height:1px;background:#16202f}
+  .ms-cell{display:flex;flex-direction:column;gap:5px;min-width:0;min-height:92px;padding:15px 14px 14px 14px;position:relative;border-right:1px solid #16202f;border-bottom:1px solid #16202f}
+  .ms-cell .hs-ico{display:none}
+  .ms-cell .l{font-size:10px;letter-spacing:.16em;color:#4c5f74;text-transform:uppercase;font-weight:700}
+  .ms-cell .v{display:block;font-size:18px;color:var(--text);font-variant-numeric:tabular-nums;font-weight:800;line-height:1.05;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ms-cell .hs-sub{display:block;margin-top:3px;font-size:11px;color:#6d8298;line-height:1.05;letter-spacing:.01em;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ms-cell .v.am{color:#f5c56a}
+  .ms-cell .v.gn{color:#e7edf6}
+  .ms-cell .v.cy{color:#4fe1ca}
+  .ms-cell .v .pct{font-size:.74em;color:inherit;opacity:1}
   .earnings-box{margin-top:0;border:1px solid var(--line);border-radius:6px;background:rgba(10,16,31,.72);padding:9px 10px}
   .earn-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
   .earn-title{font-size:10px;letter-spacing:.18em;color:var(--cyan-dim);text-transform:uppercase;font-weight:600}
@@ -128,7 +124,7 @@
   .earn-list{display:flex;flex-direction:column;gap:6px}
   .earn-row{display:grid;grid-template-columns:78px 1fr;gap:8px;align-items:center;padding:6px 8px;border:1px solid var(--line);border-radius:5px;background:rgba(255,255,255,.015)}
   .earn-row .sym{font-size:12px;font-weight:700;color:var(--text);letter-spacing:.04em}
-  .earn-row .meta{font-size:11px;color:var(--text-dim);letter-spacing:.03em;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
+  .earn-row .meta{font-size:12px;color:var(--text);opacity:.9;font-weight:600;letter-spacing:.03em;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
   .earn-empty{padding:6px 8px;font-size:11px;color:var(--text-faint);letter-spacing:.02em}
 
   /* ============ MAIN ============ */
@@ -449,7 +445,7 @@
   .exec-foot .efl-dot.done{background:var(--green-dim)}
 
   /* qty + sl columns in protect */
-  .prot-list .pos{grid-template-columns:18px 126px minmax(298px,1fr) 46px 52px 84px;padding:3px 8px 3px 7px;min-height:36px}
+  .prot-list .pos{grid-template-columns:126px minmax(298px,1fr) 46px 52px 84px 18px;padding:3px 8px 3px 7px;min-height:36px}
   .prot-list .pos.safe,.prot-list .pos.watch,.prot-list .pos.hold{ --bar-color: var(--green-dim); }
   .prot-list .pos.safe{ --bar-color: var(--green-dim); }
   .prot-list .pos.watch{ --bar-color: var(--amber-dim); }
@@ -471,9 +467,9 @@
   .exec-col-hdr.sl-hdr{color:var(--red-dim)}
   .pos .qty-col input.q-input:hover{border-color:var(--line-3)}
   .pos .qty-col input.q-input:focus{border-color:var(--cyan-dim);background:rgba(45,212,191,.05)}
-  .exec-col-hdr{font-size:9.5px;letter-spacing:.18em;color:var(--text-faint);text-transform:uppercase;font-weight:500;text-align:center}
-  .pe-head .qty-hdr{margin-left:20px}
-  .pe-head .sl-hdr{margin-left:16px}
+  .exec-col-hdr{display:inline-flex;align-items:center;justify-content:center;font-size:9.5px;letter-spacing:.18em;color:var(--text-faint);text-transform:uppercase;font-weight:500;text-align:center;box-sizing:border-box}
+  .pe-head .qty-hdr{margin-left:0;width:52px !important}
+  .pe-head .sl-hdr{margin-left:0;width:84px !important;justify-content:flex-end}
 
   /* ============ CLOSING â€” REDESIGNED, COMPACT ============ */
   .closing{flex:0 0 auto}
@@ -705,10 +701,10 @@
             <div class="gameplan-banner" aria-live="polite"></div>
             <textarea class="field" rows="4" style="min-height:unset;font-size:14px;line-height:1.6;padding:10px 12px" placeholder="Two-way tape? Trending? PSU still leading? Where will I size up, where will I sit out? When do I act â€” open, 09:30, late?">Two-way tape. Wait first 15 min â€” no opening-bell trades. PSU & Defence still leading; size up if SBIN clears PDH cleanly. Mid-caps frothy, skip them. Cut day after 2 losers in a row.</textarea>
             <div class="timing-grid" data-group="timing" style="margin-top:7px">
-              <div class="timing-cell"><div class="t-time mono">09:15</div><div class="t-label">Strike open</div></div>
-              <div class="timing-cell on"><div class="t-time mono">09:30</div><div class="t-label">Wait 15m</div></div>
-              <div class="timing-cell"><div class="t-time mono">10:00+</div><div class="t-label">Setup forms</div></div>
-              <div class="timing-cell"><div class="t-time mono">14:00+</div><div class="t-label">Late only</div></div>
+              <div class="timing-cell"><div class="t-time mono">09:20</div><div class="t-label">Buy 5 min ORB</div></div>
+              <div class="timing-cell on"><div class="t-time mono">09:25</div><div class="t-label">Buy 10 min ORB</div></div>
+              <div class="timing-cell"><div class="t-time mono">10:00+</div><div class="t-label">Watch range breaks</div></div>
+              <div class="timing-cell"><div class="t-time mono">12:00+</div><div class="t-label">Setup breaks</div></div>
             </div>
           </div>
 
@@ -1116,7 +1112,7 @@
       gamePlan: sorted.length ? `${sorted[0].symbol || 'TICKER'} leading. ${sorted[0].merits || 'Stay with the cleanest setup.'} ${planTail(sorted)}` : 'Wait for clean setups. Keep the first 15 min neutral.',
       aggression: 3,
       stance: 'neutral',
-      timing: '09:30',
+      timing: '09:25',
       watchlist: rows,
       protectChecks: {},
       executeChecks: {},
@@ -1165,7 +1161,7 @@
       gamePlan: String(source.gamePlan ?? source.game_plan ?? '').trim(),
       aggression: Math.max(1, Math.min(5, Number(source.aggression || 3) || 3)),
       stance: String(source.stance || 'neutral').toLowerCase(),
-      timing: String(source.timing || '09:30'),
+      timing: String(source.timing || '09:25'),
       watchlist,
       protectChecks,
       executeChecks,
@@ -1204,7 +1200,7 @@
 
   function currentTimingValue() {
     const active = document.querySelector('[data-group="timing"] .timing-cell.on .t-time');
-    return active ? String(active.textContent || '').trim() : '09:30';
+    return active ? String(active.textContent || '').trim() : '09:25';
   }
 
   function gamePlanLockMinutes() {
@@ -1281,6 +1277,11 @@
   let briefingSaveSeq = 0;
   let gamePlanLockTimer = null;
 
+  function syncBriefingDraft() {
+    if (!currentDay || typeof currentDay !== 'object') return;
+    currentDay.briefing = collectBriefingPayload();
+  }
+
   function collectBriefingPayload() {
     const sorted = topRows(currentDay?.positions || [], 5);
     const defaults = briefingDefaults(sorted);
@@ -1334,8 +1335,11 @@
 
   async function flushBriefingSave(options = {}) {
     if (!selectedDate) return null;
+    syncBriefingDraft();
     const seq = ++briefingSaveSeq;
-    const payload = collectBriefingPayload();
+    const payload = currentDay?.briefing && typeof currentDay.briefing === 'object'
+      ? currentDay.briefing
+      : collectBriefingPayload();
     const body = { date: selectedDate, briefing: payload };
     const result = await api(`/api/day-view?date=${encodeURIComponent(selectedDate)}`, {
       method: 'POST',
@@ -1349,6 +1353,7 @@
   }
 
   function scheduleBriefingSave() {
+    syncBriefingDraft();
     if (briefingSaveTimer) clearTimeout(briefingSaveTimer);
     briefingSaveTimer = setTimeout(() => {
       briefingSaveTimer = null;
@@ -1369,6 +1374,12 @@
       if (!target || !target.matches('.gameplan textarea.field, .watch-list .field, .wins-grid .title-input, .wins-grid .desc-input, .best .text-input')) return;
       scheduleBriefingSave();
     });
+    document.addEventListener('blur', (e) => {
+      const target = e.target;
+      if (!target || !target.matches('.gameplan textarea.field, .watch-list .field, .wins-grid .title-input, .wins-grid .desc-input, .best .text-input')) return;
+      syncBriefingDraft();
+      flushBriefingSave({ keepalive: true }).catch(err => console.warn('Briefing save failed', err));
+    }, true);
     document.addEventListener('click', (e) => {
       const target = e.target;
       if (!target) return;
@@ -1773,17 +1784,25 @@
       if (highestExposureCell) {
         const amount = Number(highestExposure.amount || 0);
         const pct = Number(highestExposure.pct || 0);
-        highestExposureCell.textContent = amount > 0 ? `${String(Math.round(amount))} (${Math.round(pct)}%)` : '-';
+        highestExposureCell.innerHTML = amount > 0
+          ? `<span class="v am">${nf0.format(Math.round(amount))}</span><span class="hs-sub">${Math.round(pct)}% of portfolio</span>`
+          : '<span class="v am">-</span>';
       }
       if (biggestPositionCell) {
-        biggestPositionCell.textContent = biggestPosition.value ? `${String(Math.round(n(biggestPosition.value)))}` : '-';
+        biggestPositionCell.innerHTML = biggestPosition.value
+          ? `<span class="v gn">${nf0.format(Math.round(n(biggestPosition.value)))}</span>`
+          : '<span class="v gn">-</span>';
       }
       if (biggestWinnerCell) {
-        biggestWinnerCell.textContent = biggestWinner.pct != null ? `${n(biggestWinner.pct) >= 0 ? '+' : ''}${Number(biggestWinner.pct || 0).toFixed(1)}%` : '-';
+        biggestWinnerCell.innerHTML = biggestWinner.pct != null
+          ? `<span class="v cy">${n(biggestWinner.pct) >= 0 ? '+' : ''}${Number(biggestWinner.pct || 0).toFixed(1)}%</span><span class="hs-sub">best position</span>`
+          : '<span class="v cy">-</span>';
       }
       if (highestOpenCell) {
         const count = Number(highlights.highest_open_positions?.count || 0);
-        highestOpenCell.textContent = count > 0 ? String(count) : '-';
+        highestOpenCell.innerHTML = count > 0
+          ? `<span class="v gn">${count}</span><span class="hs-sub">active</span>`
+          : '<span class="v gn">-</span>';
       }
     }
 
@@ -1854,7 +1873,6 @@
     const isChecked = checked == null ? defaultChecked : !!checked;
     return `
       <div class="pos ${status.cls}${isChecked ? ' executed' : ''}" data-protect-key="${esc(execKey(pos))}" style="--fill:${fill}%;--bar-color:${barColor}">
-        <span class="chk${isChecked ? ' on' : ''}" role="checkbox" aria-checked="${isChecked ? 'true' : 'false'}" tabindex="0" title="Mark protected">${isChecked ? '✓' : ''}</span>
         <div class="pos-left">
           <div class="pos-top"><span class="ticker">${esc(pos.symbol || 'SYMBOL')}</span><span class="pill ${status.cls}">${status.text}</span></div>
         </div>
@@ -1867,6 +1885,7 @@
         </div>
         <div class="prot-qty"><span class="pq-v">${qty(qtyVal)}</span><span class="pq-l">sh</span></div>
         <div class="prot-sl"><span class="price">${price(sl)}</span></div>
+        <span class="chk${isChecked ? ' on' : ''}" role="checkbox" aria-checked="${isChecked ? 'true' : 'false'}" tabindex="0" title="Mark protected">${isChecked ? '✓' : ''}</span>
       </div>`;
   }
 
@@ -2156,6 +2175,14 @@
     selectedDate = String(date || '').slice(0, 10);
     sidebarMonth = monthKey(selectedDate);
     currentDay = await api(`/api/day-view?date=${encodeURIComponent(selectedDate)}`);
+    try {
+      const planPayload = await api(`/api/plan?date=${encodeURIComponent(selectedDate)}`);
+      if (planPayload && typeof planPayload === 'object' && planPayload.briefing && Object.keys(planPayload.briefing).length > 0) {
+        currentDay.briefing = planPayload.briefing;
+      }
+    } catch (_err) {
+      // If the plan payload cannot be loaded, keep the day-view snapshot.
+    }
     renderAll();
     bindWatchRowDeleteButtons();
   }

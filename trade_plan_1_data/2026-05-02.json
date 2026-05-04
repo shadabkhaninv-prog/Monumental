@@ -1,6 +1,6 @@
 {
   "date": "2026-05-02",
-  "saved_at": "2026-05-03T13:24:25",
+  "saved_at": "2026-05-03T21:42:59",
   "positions": [
     {
       "id": "p17770254578501mo0",
@@ -570,5 +570,65 @@
       "prev_day_close": 1295.35,
       "prev_day_date": "2026-04-30"
     }
-  ]
+  ],
+  "path": "C:\\Users\\shada\\Monumental\\trade_plan_1_data\\2026-05-02.json",
+  "exists": true,
+  "briefing": {
+    "gamePlan": "BSE leading. market tml . biggest whatle . shallow pullback to 8 ema , wait for break of fallng wedge Keep it and power in focus.",
+    "aggression": 3,
+    "stance": "Neutral \u00b7 Two-way",
+    "timing": "09:30",
+    "watchlist": [
+      {
+        "symbol": "BSE",
+        "why": "market tml . biggest whatle . shallow pullback to 8 ema , wait for break of fallng wedge"
+      },
+      {
+        "symbol": "MCX",
+        "why": "TML . but bit of a drag ,tracking BSE"
+      },
+      {
+        "symbol": "CGPOWER",
+        "why": "HOTTEST SECTOR .POWER SECTOR . BULL FLAG .TIGHT TWO DAYS"
+      },
+      {
+        "symbol": "KRN",
+        "why": "DATA CENTRE THEME . HAD A STRONG CLOSE IN WEAK MARKET"
+      },
+      {
+        "symbol": "",
+        "why": ""
+      }
+    ],
+    "protectChecks": {
+      "P17770254578501MO0": true,
+      "P1777275356085EBJU": true,
+      "P1777372385419PQW8": false,
+      "P1777549077930PIU7": false
+    },
+    "executeChecks": {
+      "P1777549077930PIU7": false
+    },
+    "closing": {
+      "cards": [
+        {
+          "title": "Discipline with BSE",
+          "desc": "Made a new high if it breaks day's low , out of here."
+        },
+        {
+          "title": "Process with MCX",
+          "desc": "Trail SL updated to Rs 2829"
+        },
+        {
+          "title": "Patience with CGPOWER",
+          "desc": "HOTTEST SECTOR .POWER SECTOR . BULL FLAG .TIGHT TWO DAYS"
+        },
+        {
+          "title": "Execution with KRN",
+          "desc": "DATA CENTRE THEME . HAD A STRONG CLOSE IN WEAK MARKET"
+        }
+      ],
+      "bestMoment": "Made a new high if it breaks day's low , out of here."
+    }
+  }
 }

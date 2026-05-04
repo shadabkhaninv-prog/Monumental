@@ -151,6 +151,7 @@ class BhavRepository:
         self._symbol_set: set[str] = set()
         self._inactive_map: Dict[str, str] = {}
         self._company_names: Dict[str, str] = {}
+        self._bhav_date_cache: Dict[Tuple[int, str, bool], Optional[date]] = {}
         self._debug_log_path = Path(__file__).resolve().parent / "logs" / "trade_plan_server.log"
         self._load_reference_data()
 
@@ -213,6 +214,37 @@ class BhavRepository:
                         conn.close()
                     except Exception:
                         pass
+
+    def _resolve_bhav_date(self, year: int, trade_date: date, inclusive: bool = True) -> Optional[date]:
+        key = (year, trade_date.isoformat(), inclusive)
+        cached = self._bhav_date_cache.get(key)
+        if cached is not None or key in self._bhav_date_cache:
+            return cached
+
+        comparator = "<=" if inclusive else "<"
+
+        def lookup(cursor):
+            cursor.execute(
+                f"""
+                SELECT MAX(MKTDATE)
+                FROM bhav{year}
+                WHERE MKTDATE {comparator} %s
+                """,
+                (trade_date,),
+            )
+            row = cursor.fetchone()
+            return row[0] if row else None
+
+        try:
+            resolved = self._with_retry_cursor(lookup, f"resolve bhav date table=bhav{year} trade_date={trade_date} inclusive={inclusive}")
+        except Exception as exc:
+            self._log_debug(f"resolve_bhav_date failed year={year} trade_date={trade_date} inclusive={inclusive}: {exc}")
+            resolved = None
+        if isinstance(resolved, date):
+            self._bhav_date_cache[key] = resolved
+            return resolved
+        self._bhav_date_cache[key] = None
+        return None
 
     def _load_reference_data(self) -> None:
         self._inactive_map = self._load_inactive_map()
@@ -430,19 +462,20 @@ class BhavRepository:
 
         candidate_years = [year for year in self.available_year_tables() if year <= trade_date.year]
         for year in candidate_years:
+            resolved_date = self._resolve_bhav_date(year, trade_date, inclusive=True)
+            if resolved_date is None:
+                continue
             row = None
 
             def lookup(cursor):
                 cursor.execute(
                     f"""
-                    SELECT UPPER(SYMBOL) AS symbol, CLOSE, MKTDATE
+                    SELECT SYMBOL AS symbol, CLOSE, MKTDATE
                     FROM bhav{year}
-                    WHERE UPPER(SYMBOL) = %s
-                      AND MKTDATE <= %s
-                    ORDER BY MKTDATE DESC
-                    LIMIT 1
+                    WHERE SYMBOL = %s
+                      AND MKTDATE = %s
                     """,
-                    (normalized, trade_date),
+                    (normalized, resolved_date),
                 )
                 return cursor.fetchone()
 
@@ -468,6 +501,9 @@ class BhavRepository:
 
         candidate_years = [year for year in self.available_year_tables() if year <= trade_date.year]
         for year in candidate_years:
+            resolved_date = self._resolve_bhav_date(year, trade_date, inclusive=False)
+            if resolved_date is None:
+                continue
             row = None
 
             def lookup(cursor):
@@ -475,12 +511,10 @@ class BhavRepository:
                     f"""
                     SELECT MKTDATE, HIGH, LOW, CLOSE
                     FROM bhav{year}
-                    WHERE UPPER(SYMBOL) = %s
-                      AND MKTDATE < %s
-                    ORDER BY MKTDATE DESC
-                    LIMIT 1
+                    WHERE SYMBOL = %s
+                      AND MKTDATE = %s
                     """,
-                    (normalized, trade_date),
+                    (normalized, resolved_date),
                 )
                 return cursor.fetchone()
 
@@ -500,6 +534,110 @@ class BhavRepository:
                     "table": f"bhav{year}",
                 }
         return None
+
+    def lookup_previous_session_bars(self, symbols: Sequence[str], trade_date: date) -> Dict[str, Dict[str, object]]:
+        normalized: List[str] = []
+        seen: set[str] = set()
+        for symbol in symbols:
+            norm = normalize_symbol(str(symbol or ""))
+            if norm and norm not in seen:
+                normalized.append(norm)
+                seen.add(norm)
+        if not normalized:
+            return {}
+
+        placeholders = ", ".join(["%s"] * len(normalized))
+        result: Dict[str, Dict[str, object]] = {}
+
+        for year in [year for year in self.available_year_tables() if year <= trade_date.year]:
+            resolved_date = self._resolve_bhav_date(year, trade_date, inclusive=False)
+            if resolved_date is None:
+                continue
+            def lookup(cursor):
+                cursor.execute(
+                    f"""
+                    SELECT SYMBOL AS symbol, MKTDATE, HIGH, LOW, CLOSE
+                    FROM bhav{year}
+                    WHERE SYMBOL IN ({placeholders})
+                      AND MKTDATE = %s
+                    """,
+                    tuple(normalized) + (resolved_date,),
+                )
+                rows: List[Dict[str, object]] = []
+                for symbol, mktdate, high_price, low_price, close_price in cursor.fetchall():
+                    rows.append(
+                        {
+                            "symbol": normalize_symbol(str(symbol or "")),
+                            "mktdate": mktdate,
+                            "high": float(high_price) if high_price is not None else None,
+                            "low": float(low_price) if low_price is not None else None,
+                            "close": float(close_price) if close_price is not None else None,
+                            "table": f"bhav{year}",
+                        }
+                    )
+                return rows
+
+            try:
+                rows = self._with_retry_cursor(lookup, f"lookup_previous_session_bars table=bhav{year} symbols={len(normalized)}")
+            except Exception as exc:
+                self._log_debug(f"lookup_previous_session_bars failed year={year}: {exc}")
+                continue
+            for row in rows or []:
+                symbol = str(row.get("symbol") or "")
+                if symbol and symbol not in result:
+                    result[symbol] = row
+        return result
+
+    def lookup_last_close_map(self, symbols: Sequence[str], trade_date: date) -> Dict[str, Dict[str, object]]:
+        normalized: List[str] = []
+        seen: set[str] = set()
+        for symbol in symbols:
+            norm = normalize_symbol(str(symbol or ""))
+            if norm and norm not in seen:
+                normalized.append(norm)
+                seen.add(norm)
+        if not normalized:
+            return {}
+
+        placeholders = ", ".join(["%s"] * len(normalized))
+        result: Dict[str, Dict[str, object]] = {}
+
+        for year in [year for year in self.available_year_tables() if year <= trade_date.year]:
+            resolved_date = self._resolve_bhav_date(year, trade_date, inclusive=True)
+            if resolved_date is None:
+                continue
+            def lookup(cursor):
+                cursor.execute(
+                    f"""
+                    SELECT b.SYMBOL AS symbol, b.CLOSE, b.MKTDATE
+                    FROM bhav{year} b
+                    WHERE b.SYMBOL IN ({placeholders})
+                      AND b.MKTDATE = %s
+                    """,
+                    tuple(normalized) + (resolved_date,),
+                )
+                rows: List[Dict[str, object]] = []
+                for symbol, close_price, mktdate in cursor.fetchall():
+                    rows.append(
+                        {
+                            "symbol": normalize_symbol(str(symbol or "")),
+                            "cmp": float(close_price) if close_price is not None else None,
+                            "price_date": mktdate.isoformat() if mktdate else "",
+                            "table": f"bhav{year}",
+                        }
+                    )
+                return rows
+
+            try:
+                rows = self._with_retry_cursor(lookup, f"lookup_last_close_map table=bhav{year} symbols={len(normalized)}")
+            except Exception as exc:
+                self._log_debug(f"lookup_last_close_map failed year={year}: {exc}")
+                continue
+            for row in rows or []:
+                symbol = str(row.get("symbol") or "")
+                if symbol and symbol not in result:
+                    result[symbol] = row
+        return result
 
     def fetch_daily_bars(self, symbol: str, start_date: date, end_date: date) -> List[Dict[str, object]]:
         normalized = normalize_symbol(symbol)
@@ -618,6 +756,9 @@ class TradePlanStore:
         self._kite_token_maps: Optional[Tuple[Dict[str, int], Dict[str, int]]] = None
         self._kite_client = None
         self._trim_date_hints_cache: Optional[Dict[str, Dict[int, date]]] = None
+        self._cache_version = 0
+        self._day_view_cache: Dict[str, Tuple[int, Dict[str, object]]] = {}
+        self._dashboard_cache: Optional[Tuple[int, Dict[str, object]]] = None
 
     def _log_debug(self, message: str) -> None:
         stamp = datetime.now().isoformat(timespec="seconds")
@@ -630,6 +771,11 @@ class TradePlanStore:
 
     def _trim_position_key(self, position: dict) -> str:
         return self._canonical_position_key(position)
+
+    def _invalidate_caches(self) -> None:
+        self._cache_version += 1
+        self._day_view_cache.clear()
+        self._dashboard_cache = None
 
     def _strip_legacy_trade_fields(self, position: Dict[str, object]) -> Dict[str, object]:
         if not isinstance(position, dict):
@@ -3138,12 +3284,12 @@ class TradePlanStore:
         return list(latest_positions.values())
 
     def build_day_view(self, plan_date: str, repo: BhavRepository) -> Dict[str, object]:
+        cached = self._day_view_cache.get(plan_date)
+        if cached and cached[0] == self._cache_version:
+            return cached[1]
         target_dt = datetime.strptime(plan_date, "%Y-%m-%d").date()
         dates = [d for d in self.list_plan_dates() if d <= plan_date]
         settings = self.load_settings()
-
-        def previous_session_bar(symbol: str) -> Optional[Dict[str, object]]:
-            return repo.lookup_previous_session_bar(symbol, target_dt)
 
         open_positions: Dict[str, Dict[str, object]] = {}
         closed_keys: set[str] = set()
@@ -3189,11 +3335,24 @@ class TradePlanStore:
         )
         day_positions = carried_positions + exited_today_positions + planning_for_day
 
+        symbol_list: List[str] = []
+        seen_symbols: set[str] = set()
+        for position in day_positions:
+            if not isinstance(position, dict):
+                continue
+            symbol = normalize_symbol(str(position.get("symbol") or ""))
+            if symbol and symbol not in seen_symbols:
+                symbol_list.append(symbol)
+                seen_symbols.add(symbol)
+
+        prev_bar_map = repo.lookup_previous_session_bars(symbol_list, target_dt) if symbol_list else {}
+        last_close_map = repo.lookup_last_close_map(symbol_list, target_dt) if symbol_list else {}
+
         for position in day_positions:
             if not isinstance(position, dict):
                 continue
             symbol = str(position.get("symbol", ""))
-            prev_bar = previous_session_bar(symbol)
+            prev_bar = prev_bar_map.get(normalize_symbol(symbol))
             if prev_bar:
                 position["prev_day_high"] = prev_bar.get("high")
                 position["prev_day_low"] = prev_bar.get("low")
@@ -3203,7 +3362,7 @@ class TradePlanStore:
         exposure = 0.0
         for position in carried_positions:
             symbol = str(position.get("symbol", ""))
-            price_info = repo.lookup_last_close(symbol, target_dt) if symbol else None
+            price_info = last_close_map.get(normalize_symbol(symbol)) if symbol else None
             if price_info and price_info.get("cmp") is not None:
                 position["cmp"] = price_info["cmp"]
             remaining_qty = self._as_float(position.get("_rem"))
@@ -3277,7 +3436,7 @@ class TradePlanStore:
         ) if earnings_symbols else []
         sector_summary = repo.load_sector_summary(target_dt)
 
-        return {
+        result = {
             "ok": True,
             "date": plan_date,
             "positions": day_positions,
@@ -3298,8 +3457,12 @@ class TradePlanStore:
             "earnings_due": earnings_due,
             "settings": settings,
         }
+        self._day_view_cache[plan_date] = (self._cache_version, result)
+        return result
 
     def build_dashboard(self, repo: BhavRepository) -> Dict[str, object]:
+        if self._dashboard_cache and self._dashboard_cache[0] == self._cache_version:
+            return self._dashboard_cache[1]
         settings = self.load_settings()
         dated_views: List[Tuple[str, Dict[str, object]]] = []
         first_seen_entry_by_id: Dict[str, str] = {}
@@ -3417,7 +3580,7 @@ class TradePlanStore:
                     "date": str(first_rec.get("entryDate") or ""),
                 }
         latest_date = items[-1]["date"] if items else date.today().isoformat()
-        return {
+        result = {
             "ok": True,
             "items": items,
             "latest_date": latest_date,
@@ -3437,6 +3600,8 @@ class TradePlanStore:
             },
             "settings": settings,
         }
+        self._dashboard_cache = (self._cache_version, result)
+        return result
 
     def build_goal_tracker(self, repo: BhavRepository) -> Dict[str, object]:
         dashboard = self.build_dashboard(repo)
@@ -3642,6 +3807,7 @@ class TradePlanStore:
         }
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         self._trim_date_hints_cache = None
+        self._invalidate_caches()
         return {"ok": True, "date": plan_date, "path": str(path), "saved_at": payload["saved_at"]}
 
     def save_day_briefing(self, plan_date: str, briefing: dict) -> Dict[str, object]:
@@ -4005,7 +4171,7 @@ class TradePlanHandler(BaseHTTPRequestHandler):
             self.wfile.write(blob)
             return
 
-        if parsed.path == "/trade_plan_1.html":
+        if parsed.path in {"/trade_plan_1", "/trade_plan_1.html"}:
             html_path = self.store.base_dir / "trade_plan_1.html"
             if not html_path.exists():
                 return self._send_error_json(HTTPStatus.NOT_FOUND, "trade_plan_1.html not found.")
@@ -4263,6 +4429,11 @@ def main() -> None:
     TradePlanHandler.store = store
 
     server = ThreadingHTTPServer((args.host, args.port), TradePlanHandler)
+    try:
+        print("Warming briefing cache...")
+        store.build_dashboard(repo)
+    except Exception as exc:
+        print(f"Cache warmup failed: {exc}")
     print(f"Trade plan API listening on http://{args.host}:{args.port}")
     print(f"HTML file : {html_path}")
     print(f"Save dir  : {store.save_dir}")

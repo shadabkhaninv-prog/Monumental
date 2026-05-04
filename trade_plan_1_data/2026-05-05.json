@@ -1,6 +1,6 @@
 {
-  "date": "2026-05-03",
-  "saved_at": "2026-05-04T10:46:17",
+  "date": "2026-05-05",
+  "saved_at": "2026-05-04T10:57:08",
   "positions": [
     {
       "id": "p17770254578501mo0",
@@ -156,7 +156,7 @@
     {
       "id": "p1777275356085ebju",
       "symbol": "MCX",
-      "merits": "text size i dont wnat ",
+      "merits": "TML . but bit of a drag ,tracking BSE ",
       "conviction": 2,
       "cmp": 2971.5,
       "planEntry": 2815,
@@ -174,7 +174,7 @@
       "tacticalQty": null,
       "entryDate": "2026-04-27",
       "posHigh": null,
-      "trailOverride": 2829,
+      "trailOverride": 2861,
       "trailNote": "Trail SL updated to Rs 2829",
       "thoughtTag": "LESSON",
       "thoughtLog": [
@@ -280,7 +280,7 @@
       "_rem": 18,
       "_realPnl": 1300,
       "_openPnl": 2777,
-      "_currentSL": 2829,
+      "_currentSL": 2861,
       "_days": 7,
       "_beSug": true,
       "_status": "partial",
@@ -303,278 +303,12 @@
       "prev_day_low": 2925.7,
       "prev_day_close": 2971.5,
       "prev_day_date": "2026-04-30"
-    },
-    {
-      "id": "p1777372385419pqw8",
-      "symbol": "CGPOWER",
-      "merits": "HOTTEST SECTOR .POWER SECTOR . BULL FLAG .TIGHT TWO DAYS",
-      "conviction": 3,
-      "cmp": 813.35,
-      "planEntry": 837.1,
-      "planSL": 817.9,
-      "tacticalEntry": 830.2,
-      "tacticalSL": 817.9,
-      "tacticalRiskPct": 30,
-      "coreQty": 174,
-      "coreEntry": 837,
-      "coreSL": 831,
-      "riskAmount": 4000,
-      "actualEntry": 837.34,
-      "daySL": 831.9,
-      "actualQty": 140,
-      "tacticalQty": 123,
-      "entryDate": "2026-04-29",
-      "posHigh": null,
-      "trailOverride": null,
-      "trailNote": "",
-      "thoughtTag": "NOTE",
-      "thoughtLog": [
-        {
-          "ts": "2026-04-29T10:01:46.713Z",
-          "tag": "NOTE",
-          "text": "it never really broke that 840 levels"
-        },
-        {
-          "ts": "2026-04-29T10:01:56.553Z",
-          "tag": "NOTE",
-          "text": "power sector pulled back"
-        },
-        {
-          "ts": "2026-04-30T04:47:56.460Z",
-          "tag": "NOTE",
-          "text": "unable to sell due to short delivery"
-        }
-      ],
-      "movedBE": false,
-      "trims": [
-        {
-          "pct": 3,
-          "type": "fixed",
-          "ap": 831,
-          "sq": 140,
-          "dt": "2026-04-29",
-          "done": true,
-          "_sug": 860.25,
-          "_pnl": -587
-        },
-        {
-          "pct": 10,
-          "type": "trail",
-          "ap": 827,
-          "sq": 257,
-          "dt": "2026-04-29",
-          "done": true,
-          "_sug": 893.65,
-          "_pnl": -2105
-        },
-        {
-          "pct": 15,
-          "type": "fixed",
-          "ap": null,
-          "sq": null,
-          "dt": "",
-          "done": false,
-          "_sug": 960.47,
-          "_pnl": null
-        },
-        {
-          "pct": 25,
-          "type": "fixed",
-          "ap": null,
-          "sq": null,
-          "dt": "",
-          "done": false,
-          "_sug": 1043.99,
-          "_pnl": null
-        }
-      ],
-      "mgmt": {
-        "checklist": [
-          [
-            false,
-            false,
-            false
-          ],
-          [
-            false,
-            false,
-            false
-          ],
-          [
-            false,
-            false,
-            false
-          ]
-        ],
-        "note": ""
-      },
-      "collapsed": false,
-      "_coreRps": 19.200000000000045,
-      "_blendRps": 11.32,
-      "_blendPct": 1.36,
-      "_rps": 11.32,
-      "_qty": 212,
-      "_predQty": 89,
-      "_predRisk": 1708.8,
-      "_planRisk": 3983.3,
-      "_avgPlanEntry": 834.78,
-      "_suggestedQty": 131,
-      "_rem": 40,
-      "_realPnl": -2692,
-      "_openPnl": -874,
-      "_currentSL": 817.9,
-      "_days": 5,
-      "_beSug": true,
-      "_status": "partial",
-      "_tacticalRps": 12.300000000000068,
-      "_tacticalQty": 123,
-      "_tacticalRisk": 1512.9,
-      "_avgTacticalEntry": 835.19,
-      "_suggestedTacticalQty": 27,
-      "_avgEntry": 834.78,
-      "_avgQty": 352,
-      "_execAvgEntry": 835.19,
-      "_execAvgQty": 437,
-      "_actualRps": 5.440000000000055,
-      "_availableRisk": 1725.499999999984,
-      "_actualRisk": 761.6,
-      "_avgSL": 823.47,
-      "positionKey": "p1777372385419pqw8",
-      "prev_day_high": 824.75,
-      "prev_day_low": 803.9,
-      "prev_day_close": 813.35,
-      "prev_day_date": "2026-04-30"
-    },
-    {
-      "id": "p1777549077930piu7",
-      "symbol": "KRN",
-      "merits": "DATA CENTRE THEME . HAD A STRONG CLOSE IN WEAK MARKET",
-      "conviction": 3,
-      "cmp": 1295.35,
-      "planEntry": 1315.1,
-      "planSL": 1270.9,
-      "tacticalEntry": 1294.41,
-      "tacticalSL": 1270.9,
-      "tacticalRiskPct": 30,
-      "coreQty": null,
-      "coreEntry": null,
-      "coreSL": null,
-      "riskAmount": 3500,
-      "actualEntry": null,
-      "daySL": null,
-      "actualQty": null,
-      "tacticalQty": 69,
-      "entryDate": "2026-05-01",
-      "posHigh": null,
-      "trailOverride": null,
-      "trailNote": "",
-      "thoughtTag": "NOTE",
-      "thoughtLog": [],
-      "movedBE": false,
-      "trims": [
-        {
-          "pct": 3,
-          "type": "fixed",
-          "ap": null,
-          "sq": null,
-          "dt": "2026-05-01",
-          "done": false,
-          "_sug": 1333.24,
-          "_pnl": null
-        },
-        {
-          "pct": 10,
-          "type": "trail",
-          "ap": null,
-          "sq": null,
-          "dt": "",
-          "done": false,
-          "_sug": 1385.02,
-          "_pnl": null
-        },
-        {
-          "pct": 15,
-          "type": "fixed",
-          "ap": null,
-          "sq": null,
-          "dt": "",
-          "done": false,
-          "_sug": 1488.57,
-          "_pnl": null
-        },
-        {
-          "pct": 25,
-          "type": "fixed",
-          "ap": null,
-          "sq": null,
-          "dt": "",
-          "done": false,
-          "_sug": 1618.01,
-          "_pnl": null
-        }
-      ],
-      "mgmt": {
-        "checklist": [
-          [
-            false,
-            false,
-            false
-          ],
-          [
-            false,
-            false,
-            false
-          ],
-          [
-            false,
-            false,
-            false
-          ]
-        ],
-        "note": ""
-      },
-      "collapsed": false,
-      "_coreRps": 44.19999999999982,
-      "_tacticalRps": 23.50999999999999,
-      "_blendRps": 31.34,
-      "_blendPct": 2.41,
-      "_rps": 31.34,
-      "_suggestedTacticalQty": 13,
-      "_qty": 111,
-      "_tacticalQty": 69,
-      "_predQty": 42,
-      "_predRisk": 1856.4,
-      "_tacticalRisk": 1622.19,
-      "_planRisk": 3478.59,
-      "_avgEntry": 1302.24,
-      "_avgQty": 111,
-      "_execAvgEntry": 1294.41,
-      "_execAvgQty": 69,
-      "_avgTacticalEntry": 1294.41,
-      "_avgPlanEntry": 1302.24,
-      "_suggestedQty": 21,
-      "_rem": 69,
-      "_realPnl": 0,
-      "_openPnl": 65,
-      "_currentSL": 1270.9,
-      "_days": 3,
-      "_beSug": true,
-      "_status": "active",
-      "_actualRisk": 0,
-      "_avgSL": 1270.9,
-      "_actualRps": null,
-      "_availableRisk": 1877.8100000000006,
-      "positionKey": "p1777549077930piu7",
-      "prev_day_high": 1314,
-      "prev_day_low": 1271,
-      "prev_day_close": 1295.35,
-      "prev_day_date": "2026-04-30"
     }
   ],
-  "path": "C:\\Users\\shada\\Monumental\\trade_plan_1_data\\2026-05-03.json",
+  "path": "C:\\Users\\shada\\Monumental\\trade_plan_1_data\\2026-05-05.json",
   "exists": true,
   "briefing": {
-    "gamePlan": "BSE leading. market tml . biggest whatle . shallow pullback to 8 ema , wait for break of fallng wedge Keep it and core in focus.",
+    "gamePlan": "BSE leading. market tml . biggest whatle . shallow pullback to 8 ema , wait for break of fallng wedge Keep it in focus.",
     "aggression": 3,
     "stance": "Neutral \u00b7 Two-way",
     "timing": "09:25",
@@ -585,15 +319,15 @@
       },
       {
         "symbol": "MCX",
-        "why": "text size i dont wnat"
+        "why": "TML . but bit of a drag ,tracking BSE"
       },
       {
-        "symbol": "CGPOWER",
-        "why": "HOTTEST SECTOR .POWER SECTOR . BULL FLAG .TIGHT TWO DAYS"
+        "symbol": "",
+        "why": ""
       },
       {
-        "symbol": "KRN",
-        "why": "DATA CENTRE THEME . HAD A STRONG CLOSE IN WEAK MARKET"
+        "symbol": "",
+        "why": ""
       },
       {
         "symbol": "",
@@ -602,13 +336,9 @@
     ],
     "protectChecks": {
       "P17770254578501MO0": true,
-      "P1777275356085EBJU": true,
-      "P1777372385419PQW8": false,
-      "P1777549077930PIU7": false
+      "P1777275356085EBJU": true
     },
-    "executeChecks": {
-      "P1777549077930PIU7": false
-    },
+    "executeChecks": {},
     "closing": {
       "cards": [
         {
@@ -617,15 +347,15 @@
         },
         {
           "title": "Process with MCX",
-          "desc": "Trail SL updated to Rs 2829"
+          "desc": "TRIAL HIT WIHT MCX"
         },
         {
-          "title": "Patience with CGPOWER",
-          "desc": "HOTTEST SECTOR .POWER SECTOR . BULL FLAG .TIGHT TWO DAYS"
+          "title": "",
+          "desc": ""
         },
         {
-          "title": "Execution with KRN",
-          "desc": "DATA CENTRE THEME . HAD A STRONG CLOSE IN WEAK MARKET"
+          "title": "Sized SBIN at full plan",
+          "desc": "120 sh as planned. No half-sizing out of fear. Trusted the prep."
         }
       ],
       "bestMoment": "Made a new high if it breaks day's low , out of here."

@@ -61,11 +61,19 @@ const startupDate = new URLSearchParams(location.search).get("date") || "";
 const QUIET = new Set(["symbol", "merits", "trailNote", "mgmt.fe", "mgmt.fsl", "mgmt.ft", "mgmt.fbe", "mgmt.note"]);
 
 function todayStr() {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, "0");
-  const d = String(now.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Calcutta",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(new Date());
+  const byType = Object.fromEntries(parts.filter(part => part.type !== "literal").map(part => [part.type, part.value]));
+  return `${byType.year}-${byType.month}-${byType.day}`;
+}
+function isTodayOrFuture(dateValue) {
+  const target = normalizeIsoDate(dateValue, "");
+  if (!target) return false;
+  return target >= todayStr();
 }
 function pkey(d) { return "tp_v3_" + d; }
 function normalizeSymbol(v) { return (v || "").toUpperCase().replace(/[^A-Z0-9]/g, ""); }
@@ -96,6 +104,26 @@ function priceSL(v) {
   const n = Number(v);
   if (!Number.isFinite(n)) return "-";
   return n.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+}
+function formatSignedPrice(v) {
+  if (v == null) return "-";
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "-";
+  const sign = n >= 0 ? "+" : "-";
+  return `${sign}${pricePlain(Math.abs(n))}`;
+}
+function formatSignedPct(v) {
+  if (v == null) return "-";
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "-";
+  const sign = n >= 0 ? "+" : "-";
+  return `${sign}${Math.abs(n).toFixed(2)}%`;
+}
+function formatQty(v) {
+  if (v == null) return "-";
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "-";
+  return n.toLocaleString("en-IN", { maximumFractionDigits: 0 });
 }
 function roundToTick(value, tickSize = 0.05) {
   const tick = Number(tickSize);
@@ -427,7 +455,7 @@ function syncChrome() {
   if (e("date-row")) e("date-row").style.display = showDay ? "" : "none";
   if (e("btn-add")) e("btn-add").style.display = showDay ? "" : "none";
   if (e("btn-collapse-all")) e("btn-collapse-all").style.display = "none";
-  if (e("btn-add")) e("btn-add").disabled = showDay ? positions.length >= 5 : true;
+ if (e("btn-add")) e("btn-add").disabled = !showDay || !isTodayOrFuture(planDate);
   if (document.querySelector(".sumbar")) document.querySelector(".sumbar").style.display = showDay ? "flex" : "none";
   if (document.querySelector(".savebar")) document.querySelector(".savebar").style.display = showDay ? "flex" : "none";
   setNav(currentView);
@@ -783,6 +811,69 @@ function getDisplayedRiskLabel(p) {
 
 function getEffectiveEntry(p) {
   return getExecutionCombinedAverageEntry(p);
+}
+
+function getHeaderOpenQty(p) {
+  const openQty = p._rem != null ? Number(p._rem) : getTotalQty(p);
+  return Number.isFinite(openQty) && openQty > 0 ? openQty : null;
+}
+
+function getHeaderStopLoss(p) {
+  const entry = getEffectiveEntry(p);
+  const current = p._currentSL != null ? Number(p._currentSL) : null;
+  const plan = p.planSL != null ? Number(p.planSL) : null;
+  const fallback = p._avgSL != null ? Number(p._avgSL) : null;
+  const sl = Number.isFinite(current) && current > 0 ? current : (Number.isFinite(plan) && plan > 0 ? plan : (Number.isFinite(fallback) && fallback > 0 ? fallback : null));
+  if (!(entry > 0 && sl > 0)) return null;
+  return sl;
+}
+
+function getHeaderRiskShare(p) {
+  const entry = getEffectiveEntry(p);
+  const sl = getHeaderStopLoss(p);
+  if (!(entry > 0 && sl > 0)) return null;
+  return +(entry - sl).toFixed(2);
+}
+
+function getHeaderStopLossPct(p) {
+  const entry = getEffectiveEntry(p);
+  const sl = getHeaderStopLoss(p);
+  if (!(entry > 0 && sl > 0)) return null;
+  return +(((sl - entry) / entry) * 100).toFixed(2);
+}
+
+function getHeaderValue(p) {
+  const entry = getEffectiveEntry(p);
+  const openQty = getHeaderOpenQty(p);
+  if (!(entry > 0 && openQty > 0)) return null;
+  return +(entry * openQty).toFixed(0);
+}
+
+function getHeaderLiveRisk(p) {
+  const entry = getEffectiveEntry(p);
+  const openQty = getHeaderOpenQty(p);
+  const riskShare = getHeaderRiskShare(p);
+  if (!(entry > 0 && openQty > 0 && riskShare != null)) return null;
+  return +(Math.max(0, riskShare) * openQty).toFixed(2);
+}
+
+function getHeaderPnlPct(p) {
+  const cmp = p.cmp != null ? Number(p.cmp) : null;
+  const entry = getEffectiveEntry(p);
+  if (!(cmp > 0 && entry > 0)) return null;
+  return +(((cmp - entry) / entry) * 100).toFixed(2);
+}
+
+function getRemainingPartsCount(p) {
+  if (!p || !Array.isArray(p.trims) || !p.trims.length) return 0;
+  const remaining = p.trims.reduce((count, t) => count + (t && t.done ? 0 : 1), 0);
+  return Math.max(0, remaining);
+}
+
+function isMeritsLocked(p) {
+  const coreQty = Number(p && p.coreQty != null ? p.coreQty : 0);
+  const entryDate = String(p && p.entryDate ? p.entryDate : "").trim();
+  return coreQty > 0 && entryDate && entryDate <= todayStr();
 }
 
 function getPlanSummaryLegs(p) {
@@ -2256,7 +2347,7 @@ function renderExposureView() {
 }
 
 function addPos() {
-  if (currentView !== "day" || positions.length >= 5) return;
+  if (currentView !== "day" || !isTodayOrFuture(planDate)) return;
   const fresh = newPos();
   positions.push(fresh);
   selectedPositionId = fresh.id;
@@ -3147,7 +3238,7 @@ function renderDayView() {
   empty.style.display = positions.length === 0 ? "block" : "none";
   empty.innerHTML = `<h3>No positions for ${fmtDateLabel(planDate)}</h3><p>Add a trade plan or let older open positions carry into this date.</p>`;
   main.appendChild(empty);
-  if (e("btn-add")) e("btn-add").disabled = positions.length >= 5;
+  if (e("btn-add")) e("btn-add").disabled = !isTodayOrFuture(planDate);
   const buckets = { overnight: [], current: [], exited: [], planning: [] };
   positions.forEach(p => {
     compute(p);
@@ -3895,40 +3986,89 @@ function buildCard(p, num) {
     const trimQty = qty > 0 ? splits[i] : "-";
     const pnlTxt = t._pnl != null ? (t._pnl >= 0 ? "+" : "-") + fi(t._pnl) : "-";
     running -= (t.done && t.sq ? t.sq : 0);
-        trimRows += `<tr id="tr-${i}-${p.id}" class="${t.done ? "t-done" : ""}"><td><span class="t-label">T${i + 1}</span><span class="t-pct" style="color:${trimColors[i]}">${trimLabels[i]}</span></td><td><input type="date" class="t-in t-date" ${compactTrimStyle} value="${t.dt || ""}" oninput="updTrim('${p.id}',${i},'dt',this.value)"></td><td><span id="ts${i}-${p.id}" class="${t._sug ? "t-target" : "t-na"}">${sug}</span></td><td><span class="t-target">${trimQty}</span></td><td><input type="number" step="any" inputmode="decimal" class="t-in" placeholder="sell" style="width:100%;min-width:0;height:34px;padding:6px 10px;font-size:13px" value="${t.ap != null ? t.ap : ""}" oninput="updTrim('${p.id}',${i},'ap',parseFloat(this.value)||null)"></td><td><input type="number" class="t-in" placeholder="qty" style="width:56px;min-width:0;height:26px;padding:2px 6px;font-size:11px;text-align:center" value="${t.sq != null ? t.sq : ""}" oninput="updTrim('${p.id}',${i},'sq',parseInt(this.value)||null)"><span class="t-rem" id="tr${i}-${p.id}">${carriedQty != null ? running + " rem" : ""}</span></td><td><span id="tp${i}-${p.id}" class="${t._pnl != null ? "t-pl " + (t._pnl >= 0 ? "pos" : "neg") : "t-pl"}">${pnlTxt}</span></td><td style="text-align:center"><input type="checkbox" class="t-chk" ${t.done ? "checked" : ""} onchange="updTrim('${p.id}',${i},'done',this.checked)"></td></tr>`;
+        trimRows += `<tr id="tr-${i}-${p.id}" class="${t.done ? "t-done" : ""}"><td><span class="t-label">T${i + 1}</span><span class="t-pct" style="color:${trimColors[i]}">${trimLabels[i]}</span></td><td><input type="date" class="t-in t-date" ${compactTrimStyle} value="${t.dt || ""}" oninput="updTrim('${p.id}',${i},'dt',this.value)"></td><td><span id="ts${i}-${p.id}" class="${t._sug ? "t-target" : "t-na"}">${sug}</span></td><td><span class="t-target">${trimQty}</span></td><td><input type="number" step="any" inputmode="decimal" class="t-in" placeholder="sell" style="width:100%;min-width:0;height:34px;padding:6px 10px;font-size:13px" value="${t.ap != null ? t.ap : ""}" oninput="updTrim('${p.id}',${i},'ap',parseFloat(this.value)||null)"></td><td><input type="number" class="t-in" placeholder="qty" style="width:66px;min-width:0;height:26px;padding:2px 7px;font-size:11px;text-align:center" value="${t.sq != null ? t.sq : ""}" oninput="updTrim('${p.id}',${i},'sq',parseInt(this.value)||null)"><span class="t-rem" id="tr${i}-${p.id}">${carriedQty != null ? running + " rem" : ""}</span></td><td><span id="tp${i}-${p.id}" class="${t._pnl != null ? "t-pl " + (t._pnl >= 0 ? "pos" : "neg") : "t-pl"}">${pnlTxt}</span></td><td style="text-align:center"><input type="checkbox" class="t-chk" ${t.done ? "checked" : ""} onchange="updTrim('${p.id}',${i},'done',this.checked)"></td></tr>`;
   });
   const hasTrim = p.trims.some(t => t.done);
   const net = (p._realPnl || 0) + (p._openPnl || 0);
   const pnlSumHtml = `<div class="pnl-sum" id="pnlsum-${p.id}" style="display:${hasTrim ? "flex" : "none"}"><div class="ps-item"><span>Realized:</span><strong id="psr-${p.id}" style="color:${(p._realPnl || 0) >= 0 ? "var(--green)" : "var(--red)"}">${sgn(p._realPnl || 0)}${fi(p._realPnl || 0)}</strong></div><div class="ps-item"><span>Net:</span><strong id="psn-${p.id}" style="color:${net >= 0 ? "var(--green)" : "var(--red)"}">${sgn(net)}${fi(net)}</strong></div></div>`;
   const beBanner = `<div class="be-banner" id="beb-${p.id}" style="display:${p._beSug ? "flex" : "none"}"><span class="be-text">Day ${p._days || 0} since entry - move SL to breakeven (${entry || "-"})?</span><button class="be-btn" onclick="moveBE('${p.id}')">Apply</button></div>`;
+  const headerEntry = getEffectiveEntry(p);
+  const headerOpenQty = getHeaderOpenQty(p);
+  const headerSl = getHeaderStopLoss(p);
+  const headerRiskShare = getHeaderRiskShare(p);
+  const headerStopPct = getHeaderStopLossPct(p);
+  const headerValue = getHeaderValue(p);
+  const headerPnlPct = getHeaderPnlPct(p);
+  const liveRiskValue = getHeaderLiveRisk(p);
+  const headerRisk = liveRiskValue ?? getDisplayedRisk(p);
+  const headerRiskLabel = liveRiskValue === 0 ? "RISK FREE" : (liveRiskValue != null ? "LIVE RISK" : "PLANNED RISK");
+  const headerRiskClass = liveRiskValue === 0 ? "riskfree" : (liveRiskValue != null ? "neg" : "neu");
+  const remainingPartsCount = getRemainingPartsCount(p);
+  const markBars = Array.from({ length: 4 }, (_v, i) => `<span class="${i < remainingPartsCount ? "on" : ""}"></span>`).join("");
   return `
   <div class="pcard st-${p._status}" id="card-${p.id}">
-    <div class="phead" onclick="toggleCollapse('${p.id}')">
-      <div class="phead-l">
-        <div class="pos-num">${num}</div>
-        <div class="phead-core">
-          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-            <input type="text" class="sym-in" id="sym-${p.id}" list="symbol-suggestions" placeholder="SYMBOL" value="${p.symbol}" oninput="handleSymbolInput('${p.id}',this)" onblur="commitSymbol('${p.id}',this)" onclick="event.stopPropagation()">
-            ${cmpChip}
+    <div class="phead position-head" onclick="toggleCollapse('${p.id}')">
+      <div class="position-head-main">
+        <div class="position-head-top">
+          <div class="position-head-left">
+            <div class="pos-num">${num}</div>
+            <div class="position-mark" aria-hidden="true">${markBars}</div>
+            <div class="position-symbol-wrap">
+              <input type="text" class="sym-in position-symbol-input" id="sym-${p.id}" list="symbol-suggestions" placeholder="SYMBOL" value="${p.symbol}" oninput="handleSymbolInput('${p.id}',this)" onblur="commitSymbol('${p.id}',this)" onclick="event.stopPropagation()">
+            </div>
           </div>
-          <div class="hmeta" id="hmeta-${p.id}">${headerMeta}</div>
+          <div class="position-metrics">
+            <div class="position-metric">
+              <div class="position-metric-k">CMP</div>
+              <div class="position-metric-v big cmp">${p.cmp != null ? pricePlain(p.cmp) : "-"}</div>
+            </div>
+            <div class="position-metric">
+              <div class="position-metric-k">ENTRY</div>
+              <div class="position-metric-v entry">${headerEntry != null ? pricePlain(headerEntry) : "-"}</div>
+            </div>
+            <div class="position-metric">
+              <div class="position-metric-k">STOP LOSS</div>
+              <div class="position-metric-v sl">${headerSl != null ? pricePlain(headerSl) : "-"}</div>
+              <div class="position-metric-sub ${headerStopPct != null && headerStopPct <= 0 ? "neg" : "pos"}">${headerStopPct != null ? formatSignedPct(headerStopPct) : "-"}</div>
+            </div>
+            <div class="position-metric qty-cell">
+              <div class="position-metric-k">OPEN QTY</div>
+              <div class="position-metric-v qty">${headerOpenQty != null ? formatQty(headerOpenQty) : "-"}</div>
+            </div>
+            <div class="position-metric">
+              <div class="position-metric-k">VALUE</div>
+              <div class="position-metric-v value">${headerValue != null ? fi(headerValue) : "-"}</div>
+            </div>
+            <div class="position-metric pnl-cell ${headerPnlPct != null && headerPnlPct < 0 ? "neg" : "pos"}">
+              <div class="position-metric-k ${headerPnlPct != null && headerPnlPct >= 0 ? "pos" : "neg"}">P&L %</div>
+              <div class="position-metric-v pnlpct ${headerPnlPct != null && headerPnlPct >= 0 ? "pos" : "neg"}">${headerPnlPct != null ? formatSignedPct(headerPnlPct) : "-"}</div>
+            </div>
+            <div class="position-metric risk-cell ${headerRiskClass}">
+              <div class="position-metric-k ${headerRiskClass}">${headerRiskLabel}</div>
+              <div class="position-metric-v risk ${headerRiskClass}">${liveRiskValue === 0 ? "" : (headerRisk != null ? pricePlain(headerRisk) : "-")}</div>
+            </div>
+          </div>
         </div>
-        <span class="badge badge-${primaryBadge}" id="pbadge-${p.id}">${primaryBadge.toUpperCase()}</span>
-        <span class="badge badge-${secondaryBadge || "ghost"}" id="sbadge-${p.id}" style="${secondaryBadge ? "" : "display:none"}">${secondaryBadge.toUpperCase()}</span>
-        <div class="conv" style="display:flex;align-items:center;gap:8px;flex-wrap:nowrap">
-          <span class="conv-label">conviction</span>
-          <div class="cdots" id="conv-${p.id}">${convHtml}</div>
-          <span id="psize-head-${p.id}" style="display:inline-flex;align-items:center;justify-content:center;padding:3px 8px;border-radius:10px;border:1px solid rgba(92,227,141,.18);background:rgba(11,18,34,.58);color:var(--t1);font-family:var(--mono);font-size:12px;font-weight:900;letter-spacing:.03em;white-space:nowrap">${positionSize != null ? fi(positionSize) : "-"}</span>
+        <div class="position-head-sub">
+          <div class="position-conv">
+            <span class="conv-label">CONVICTION</span>
+            <div class="cdots" id="conv-${p.id}">${convHtml}</div>
+          </div>
+          <span class="position-divider-char" aria-hidden="true">|</span>
+          <div class="position-stats">
+            <span>SL distance <strong class="sl-pts">${headerRiskShare != null ? `${formatSignedPrice(headerRiskShare)} pts` : "-"}</strong></span>
+            <span class="position-divider-char" aria-hidden="true">|</span>
+            <span>Risk / share <strong>${headerRiskShare != null ? formatSignedPrice(headerRiskShare) : "-"}</strong></span>
+          </div>
         </div>
       </div>
-      <div class="phead-r">
-        ${displayRisk != null ? `<span class="head-pnl neg" id="hrisk-${p.id}">${displayRiskLabel} ${pricePlain(displayRisk)}</span>` : `<span class="head-pnl" id="hrisk-${p.id}" style="display:none"></span>`}
+      <div class="phead-r position-actions">
         <button class="btn-rm" onclick="event.stopPropagation();removePos('${p.id}')" title="Remove">x</button>
         <span class="chev ${p.collapsed ? "" : "open"}" id="chv-${p.id}">v</span>
       </div>
     </div>
     <div class="pbody ${p.collapsed ? "hide" : ""}" id="pb-${p.id}">
-      <div class="sec"><div class="sec-title">Merits &amp; thesis</div><textarea class="fin" rows="2" placeholder="Why this stock? Rank, catalyst, setup pattern..." oninput="upd('${p.id}','merits',this.value)">${p.merits || ""}</textarea></div>
+      <div class="sec"><div class="sec-title">Merits &amp; thesis</div>${isMeritsLocked(p) ? `<div class="merits-banner">${escHtml(p.merits || "Merits will appear here once the position is entered.")}</div>` : `<textarea class="fin merits-input" rows="2" style="font-size:15px;line-height:1.45" placeholder="Why this stock? Rank, catalyst, setup pattern..." oninput="upd('${p.id}','merits',this.value)">${escHtml(p.merits || "")}</textarea>`}</div>
       <div class="trade-io-grid">
         <div class="sec trade-panel trade-plan">
     <div class="sec-title" style="gap:10px;flex-wrap:nowrap;align-items:center">
@@ -3963,23 +4103,23 @@ function buildCard(p, num) {
                 <div style="padding:6px 8px;border-right:1px solid var(--line)"><input type="text" class="fin num en-f" id="plan-intra-entry-${p.id}" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px;background:rgba(11,18,34,.58)" value="${p.actualEntry != null ? p.actualEntry : ""}" readonly></div>
                 <div style="padding:6px 8px"><input type="text" class="fin num sl-f" id="plan-intra-sl-${p.id}" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px;background:rgba(11,18,34,.58)" value="${p.daySL != null ? p.daySL : ""}" readonly></div>
               </div>
-              <div style="border-top:1px solid var(--line);padding:7px 8px 8px;background:linear-gradient(180deg, rgba(22,28,45,.82), rgba(13,17,30,.94));">
+              <div style="border-top:1px solid var(--line);padding:5px 8px 5px;background:linear-gradient(180deg, rgba(22,28,45,.82), rgba(13,17,30,.94));">
                 <div class="g4" style="grid-template-columns:repeat(4,minmax(0,1fr));gap:0;align-items:stretch;">
-                <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
-                    <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">QTY</div>
-                    <div class="fcomp mini-val" id="qty-${p.id}" style="color:${planAvgQty > 0 ? "var(--green)" : "var(--t3)"};margin-top:5px">${qtyText(planAvgQty)}</div>
-                  </div>
-                  <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
-                    <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">AVG ENTRY</div>
-                    <div class="fcomp mini-val" id="ape-${p.id}" style="color:var(--green);margin-top:5px">${planAvgEntry != null ? pricePlain(planAvgEntry) : "-"}</div>
-                  </div>
-                  <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
-                    <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">BLENDED SL</div>
-                    <div class="fcomp mini-val" id="rps-val-${p.id}" style="display:flex;align-items:baseline;gap:6px;flex-wrap:nowrap;white-space:nowrap;color:#ff4d6d;margin-top:3px;cursor:default">${p._rps != null ? `<span style="color:#ff4d6d;font-size:16px;font-weight:800;line-height:1">${p._rps}</span>${p._blendPct != null ? ` <span style="color:#fca5a5;font-size:12px;font-weight:700;line-height:1">${p._blendPct.toFixed(2)}%</span>` : ""}` : "-"}</div>
-                  </div>
-                  <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;">
+                <div class="field" style="min-height:0;padding:1px 10px 0;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
                     <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">TOTAL RISK</div>
-                    <div class="fcomp mini-val" id="prisk-${p.id}" style="color:var(--amb);margin-top:5px">${p._planRisk != null && p._planRisk > 0 ? pricePlain(p._planRisk) : "-"}</div>
+                    <div class="fcomp mini-val" id="prisk-${p.id}" style="color:var(--amb);margin-top:3px">${p._planRisk != null && p._planRisk > 0 ? pricePlain(p._planRisk) : "-"}</div>
+                  </div>
+                <div class="field" style="min-height:0;padding:1px 10px 0;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
+                    <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">QTY</div>
+                    <div class="fcomp mini-val" id="qty-${p.id}" style="color:${planAvgQty > 0 ? "var(--green)" : "var(--t3)"};margin-top:3px">${qtyText(planAvgQty)}</div>
+                  </div>
+                  <div class="field" style="min-height:0;padding:1px 10px 0;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
+                    <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">AVG ENTRY</div>
+                    <div class="fcomp mini-val" id="ape-${p.id}" style="color:var(--green);margin-top:3px">${planAvgEntry != null ? pricePlain(planAvgEntry) : "-"}</div>
+                  </div>
+                  <div class="field" style="min-height:0;padding:1px 10px 0;background:transparent;border:none;box-shadow:none;">
+                    <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">AVG SL</div>
+                    <div class="fcomp mini-val" id="rps-val-${p.id}" style="display:flex;align-items:baseline;gap:6px;flex-wrap:nowrap;white-space:nowrap;color:#ff4d6d;margin-top:1px;cursor:default">${p._rps != null ? `<span style="color:#ff4d6d;font-size:12px;font-weight:800;line-height:1">${p._rps}</span>${p._blendPct != null ? ` <span style="color:#fca5a5;font-size:11px;font-weight:700;line-height:1">${p._blendPct.toFixed(2)}%</span>` : ""}` : "-"}</div>
                   </div>
                 </div>
               </div>
@@ -4020,23 +4160,23 @@ function buildCard(p, num) {
                 <div style="padding:6px 8px"><input type="number" step="any" inputmode="decimal" class="fin num sl-f" style="width:100%;min-width:0;height:30px;padding-top:5px;padding-bottom:5px" placeholder="intraday sl" value="${p.daySL != null ? p.daySL : ""}" oninput="upd('${p.id}','daySL',parseFloat(this.value)||null)"></div>
               </div>
             </div>
-            <div style="margin-top:4px;padding:6px 8px 7px;border:1px solid rgba(92,227,141,.14);border-radius:10px;background:linear-gradient(180deg, rgba(22,28,45,.82), rgba(13,17,30,.94));box-shadow:inset 0 1px 0 rgba(255,255,255,.03);">
+            <div style="margin-top:2px;padding:5px 8px 5px;border:1px solid rgba(92,227,141,.14);border-radius:10px;background:linear-gradient(180deg, rgba(22,28,45,.82), rgba(13,17,30,.94));box-shadow:inset 0 1px 0 rgba(255,255,255,.03);">
               <div class="g4" style="grid-template-columns:minmax(150px,1.05fr) minmax(0,.9fr) minmax(0,1fr) minmax(0,1fr);gap:0;align-items:stretch;">
-                <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
+                <div class="field" style="min-height:0;padding:1px 10px 0;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
                   <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">EXEC RISK</div>
-                  <div class="fcomp" id="erisk-${p.id}" style="${compactBigValueStyle};color:${execRisk > 0 ? "var(--red)" : "var(--t1)"};margin-top:5px">${execRisk != null ? pricePlain(execRisk) : "-"}</div>
+                  <div class="fcomp" id="erisk-${p.id}" style="${compactBigValueStyle};color:${execRisk > 0 ? "var(--red)" : "var(--t1)"};margin-top:3px">${execRisk != null ? pricePlain(execRisk) : "-"}</div>
                 </div>
-                <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
+                <div class="field" style="min-height:0;padding:1px 10px 0;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
                   <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">QTY</div>
-                  <div class="fcomp" id="totq-${p.id}" style="${compactBigValueStyle};color:var(--t1);margin-top:5px">${qtyText(execAvgQty)}</div>
+                  <div class="fcomp" id="totq-${p.id}" style="${compactBigValueStyle};color:var(--t1);margin-top:3px">${qtyText(execAvgQty)}</div>
                 </div>
-                <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
+                <div class="field" style="min-height:0;padding:1px 10px 0;background:transparent;border:none;box-shadow:none;border-right:1px solid rgba(142,160,184,.12);">
                   <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">AVG ENTRY</div>
-                  <div class="fcomp" id="epx-${p.id}" style="${compactBigValueStyle};color:var(--green);margin-top:5px">${execAvgEntry != null ? pricePlain(execAvgEntry) : "-"}</div>
+                  <div class="fcomp" id="epx-${p.id}" style="${compactBigValueStyle};color:var(--green);margin-top:3px">${execAvgEntry != null ? pricePlain(execAvgEntry) : "-"}</div>
                 </div>
-                <div class="field" style="min-height:0;padding:2px 10px 1px;background:transparent;border:none;box-shadow:none;">
+                <div class="field" style="min-height:0;padding:1px 10px 0;background:transparent;border:none;box-shadow:none;">
                   <div class="flabel" style="font-size:9px;line-height:1.05;letter-spacing:.12em;color:#7c8aa3">AVG SL</div>
-                  <div class="fcomp" id="psize-${p.id}" style="${compactBigValueStyle};color:var(--t1);margin-top:5px">${execAvgEntry != null && p._avgSL != null ? `${pricePlain(Math.abs(Number(execAvgEntry) - Number(p._avgSL)))}${execAvgEntry > 0 ? ` (${(Math.abs(Number(execAvgEntry) - Number(p._avgSL)) / Number(execAvgEntry) * 100).toFixed(1)}%)` : ""}` : "-"}</div>
+                  <div class="fcomp" id="psize-${p.id}" style="${compactBigValueStyle};color:var(--t1);margin-top:3px">${execAvgEntry != null && p._avgSL != null ? `${pricePlain(Math.abs(Number(execAvgEntry) - Number(p._avgSL)))}${execAvgEntry > 0 ? ` (${(Math.abs(Number(execAvgEntry) - Number(p._avgSL)) / Number(execAvgEntry) * 100).toFixed(1)}%)` : ""}` : "-"}</div>
                 </div>
               </div>
             </div>
